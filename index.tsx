@@ -23,24 +23,36 @@ const URCHIN_SCORE_THRESHOLD = 1000;
 // --- Audio System ---
 const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
 let audioCtx: AudioContext | null = null;
+let audioUnlocked = false;
 
 const initAudio = () => {
   if (!audioCtx && AudioContextClass) {
     audioCtx = new AudioContextClass();
   }
   if (audioCtx && audioCtx.state === 'suspended') {
-    audioCtx.resume();
+    audioCtx.resume().then(() => {
+      audioUnlocked = true;
+    }).catch(err => {
+      console.warn('Audio resume failed:', err);
+    });
+  } else if (audioCtx && audioCtx.state === 'running') {
+    audioUnlocked = true;
   }
 };
 
 const playSound = (type: 'jump' | 'oxygen' | 'swordfish' | 'die_fall' | 'die_urchin' | 'die_quicksand') => {
-  if (!audioCtx) return;
-  
+  if (!audioCtx || !audioUnlocked) return;
+
+  // Ensure audio context is running before playing
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+
   const osc = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
   osc.connect(gain);
   gain.connect(audioCtx.destination);
-  
+
   const now = audioCtx.currentTime;
   
   switch (type) {
@@ -261,13 +273,16 @@ const DeepDiveGame = () => {
     } catch (e) {
       console.error("Failed to load leaderboard", e);
     }
-    
+
+    // Initialize audio eagerly for better mobile support
+    initAudio();
+
     // Attempt to focus the window/canvas on mount to ensure keyboard events are received immediately
     window.focus();
     if (canvasRef.current) {
         canvasRef.current.focus();
     }
-    
+
     return () => cancelAnimationFrame(requestRef.current);
   }, []);
 
@@ -339,16 +354,22 @@ const DeepDiveGame = () => {
         isJumpInputActiveRef.current = false;
     };
 
+    const handleClick = () => {
+      initAudio(); // Unlock audio on click for mobile devices
+    };
+
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
     // passive: false is required to use preventDefault() in touch listeners
     window.addEventListener("touchstart", handleTouchStart, { passive: false });
     window.addEventListener("touchend", handleTouchEnd, { passive: false });
+    window.addEventListener("click", handleClick);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("touchstart", handleTouchStart);
       window.removeEventListener("touchend", handleTouchEnd);
+      window.removeEventListener("click", handleClick);
     };
   }, []);
 
