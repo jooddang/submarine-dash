@@ -2,9 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Deep Dive Dash</title>
     <style>
+      html {
+        /* Prevent mobile keyboard from resizing viewport */
+        height: 100%;
+        overflow: hidden;
+        position: fixed;
+        width: 100%;
+      }
       body {
         margin: 0;
         padding: 0;
@@ -17,6 +24,12 @@
         -moz-user-select: none;
         -ms-user-select: none;
         -webkit-touch-callout: none;
+        /* Fix for mobile keyboard scroll issue */
+        height: 100%;
+        width: 100%;
+        position: fixed;
+        top: 0;
+        left: 0;
       }
       #root {
         width: 100vw;
@@ -26,6 +39,7 @@
         align-items: center;
         /* Prevent default touch actions like scrolling/zooming */
         touch-action: none;
+        overflow: hidden;
       }
       canvas {
         touch-action: none;
