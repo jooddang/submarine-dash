@@ -127,8 +127,6 @@ export const DeepDiveGame = () => {
     };
 
     const handleTouchStart = (e: TouchEvent) => {
-      initAudio(); // Ensure audio context is ready
-
       // Allow typing in name input by not preventing default behavior on form elements
       if (gameStateRef.current === "INPUT_NAME") {
         const target = e.target as HTMLElement;
@@ -136,6 +134,9 @@ export const DeepDiveGame = () => {
           return;
         }
       }
+
+      // Initialize audio BEFORE preventing default to ensure it's treated as user interaction
+      initAudio();
 
       if (e.cancelable) {
         e.preventDefault();
