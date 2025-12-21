@@ -262,6 +262,12 @@ const DeepDiveGame = () => {
       console.error("Failed to load leaderboard", e);
     }
     
+    // Attempt to focus the window/canvas on mount to ensure keyboard events are received immediately
+    window.focus();
+    if (canvasRef.current) {
+        canvasRef.current.focus();
+    }
+    
     return () => cancelAnimationFrame(requestRef.current);
   }, []);
 
@@ -272,6 +278,7 @@ const DeepDiveGame = () => {
       if (gameStateRef.current === "INPUT_NAME") return;
 
       if (e.code === "Space" || e.code === "ArrowUp") {
+        e.preventDefault(); // Prevent default scrolling
         if (!e.repeat) { // Ignore key repeat
             isJumpInputActiveRef.current = true;
             jumpBufferTimerRef.current = JUMP_BUFFER_TIME;
@@ -294,6 +301,15 @@ const DeepDiveGame = () => {
 
     const handleTouchStart = (e: TouchEvent) => {
        initAudio(); // Ensure audio context is ready
+       
+       // Allow typing in name input by not preventing default behavior on form elements
+       if (gameStateRef.current === "INPUT_NAME") {
+           const target = e.target as HTMLElement;
+           if (target.tagName === "INPUT" || target.tagName === "BUTTON") {
+               return;
+           }
+       }
+
        if (e.cancelable) {
            e.preventDefault();
        }
@@ -309,6 +325,14 @@ const DeepDiveGame = () => {
     };
 
     const handleTouchEnd = (e: TouchEvent) => {
+        // Allow typing in name input
+        if (gameStateRef.current === "INPUT_NAME") {
+           const target = e.target as HTMLElement;
+           if (target.tagName === "INPUT" || target.tagName === "BUTTON") {
+               return;
+           }
+        }
+
         if (e.cancelable) {
             e.preventDefault();
         }
@@ -1344,6 +1368,7 @@ const DeepDiveGame = () => {
         width={window.innerWidth}
         height={window.innerHeight}
         style={{ display: "block" }}
+        tabIndex={0}
       />
       
       {gameState === "PLAYING" && (
@@ -1423,7 +1448,8 @@ const DeepDiveGame = () => {
                      borderRadius: "5px",
                      border: "none",
                      textAlign: "center",
-                     width: "300px"
+                     width: "300px",
+                     touchAction: "auto"
                  }}
                />
                <button 
@@ -1436,7 +1462,8 @@ const DeepDiveGame = () => {
                      border: "none",
                      borderRadius: "5px",
                      cursor: "pointer",
-                     fontWeight: "bold"
+                     fontWeight: "bold",
+                     touchAction: "auto"
                  }}
                >
                    SUBMIT
