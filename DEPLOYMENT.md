@@ -8,33 +8,41 @@ This guide will walk you through deploying the Submarine Dash game to Vercel wit
 2. [Vercel CLI](https://vercel.com/cli) installed (optional but recommended)
 3. Git repository (GitHub, GitLab, or Bitbucket)
 
-## Setup Vercel KV Database
+## Setup Redis Database
 
-The application uses Vercel KV (Redis) for persistent leaderboard storage.
+The application uses Redis for persistent leaderboard storage. You can use any Redis provider.
 
-### 1. Create a KV Database
+### Recommended Redis Providers
 
-1. Go to your [Vercel Dashboard](https://vercel.com/dashboard)
-2. Navigate to **Storage** tab
-3. Click **Create Database**
-4. Select **KV** (Redis-compatible)
-5. Name it `submarine-dash-kv` (or any name you prefer)
-6. Choose your region (select the one closest to your users)
-7. Click **Create**
+- **Upstash** (Free tier, serverless Redis) - https://upstash.com
+- **RedisLabs** (Free tier available) - https://redis.com
+- **Railway** (Free tier) - https://railway.app
+- **Render** (Free tier) - https://render.com
 
-### 2. Connect KV to Your Project
+### 1. Create a Redis Database
 
-After deployment, you need to connect the KV database:
+#### Option A: Upstash (Recommended for Vercel)
+1. Go to [Upstash Console](https://console.upstash.com)
+2. Click **Create Database**
+3. Choose a name: `submarine-dash`
+4. Select region closest to your Vercel deployment
+5. Click **Create**
+6. Copy the **REDIS_URL** from the connection details
 
-1. Go to your project in Vercel Dashboard
-2. Navigate to **Storage** tab
-3. Click **Connect Store**
-4. Select your KV database
-5. This will automatically add the required environment variables:
-   - `KV_URL`
-   - `KV_REST_API_URL`
-   - `KV_REST_API_TOKEN`
-   - `KV_REST_API_READ_ONLY_TOKEN`
+#### Option B: RedisLabs
+1. Go to [RedisLabs](https://app.redislabs.com)
+2. Create a new database
+3. Copy the connection URL (format: `redis://default:PASSWORD@HOST:PORT`)
+
+### 2. Add Environment Variable to Vercel
+
+1. Go to your project in [Vercel Dashboard](https://vercel.com/dashboard)
+2. Navigate to **Settings** → **Environment Variables**
+3. Click **Add New**
+4. Name: `REDIS_URL`
+5. Value: Your Redis connection URL (e.g., `redis://default:PASSWORD@HOST:PORT`)
+6. Select all environments (Production, Preview, Development)
+7. Click **Save**
 
 ## Deployment Methods
 
@@ -96,11 +104,10 @@ After deployment, you need to connect the KV database:
 
 ## Environment Variables
 
-### Required (Auto-configured when connecting KV)
-- `KV_URL` - Vercel KV connection URL
-- `KV_REST_API_URL` - REST API endpoint
-- `KV_REST_API_TOKEN` - Authentication token
-- `KV_REST_API_READ_ONLY_TOKEN` - Read-only token
+### Required
+- `REDIS_URL` - Redis connection URL from your Redis provider
+  - Format: `redis://default:PASSWORD@HOST:PORT`
+  - Example: `redis://default:abc123@redis-10391.c60.us-west-1-2.ec2.cloud.redislabs.com:10391`
 
 ### Optional
 - `VITE_API_URL` - Custom API base URL (not needed for Vercel deployment)
@@ -150,19 +157,24 @@ npm run dev
 
 ## Troubleshooting
 
-### "KV is not defined" error
-- Make sure you've connected the KV database in Vercel Dashboard
-- Environment variables should be automatically added
-- Redeploy after connecting KV
+### "REDIS_URL environment variable is not set" error
+- Make sure you've added `REDIS_URL` in Vercel Environment Variables
+- Go to **Settings** → **Environment Variables**
+- Add the variable and redeploy
+
+### Connection timeout or Redis errors
+- Verify your Redis instance is running
+- Check that the Redis URL is correct
+- Make sure your Redis provider allows connections from Vercel IPs
 
 ### CORS errors
 - Check that `vercel.json` includes CORS headers
 - Verify API endpoints are accessible
 
 ### Leaderboard not persisting
-- Ensure KV database is connected
+- Ensure `REDIS_URL` environment variable is set correctly
 - Check Vercel Function logs for errors
-- Verify environment variables are set
+- Test Redis connection using your provider's dashboard
 
 ### Build failures
 - Make sure all dependencies are in `package.json`
@@ -192,8 +204,9 @@ Vercel Deployment
 │   ├── /api/health.ts
 │   └── Served at: https://your-project.vercel.app/api/*
 │
-└── Database (Vercel KV)
-    └── Redis-compatible key-value store
+└── Database (Redis)
+    └── Any Redis provider (Upstash, RedisLabs, etc.)
+    └── Connected via REDIS_URL environment variable
 ```
 
 ## Cost
@@ -203,10 +216,11 @@ Vercel Deployment
   - Unlimited deployments
   - Automatic HTTPS
 
-- **Vercel KV**: Free tier includes:
-  - 256MB storage
-  - 10k commands/day
-  - Enough for thousands of leaderboard entries
+- **Redis Providers**:
+  - **Upstash**: Free tier includes 10k commands/day
+  - **RedisLabs**: Free tier includes 30MB storage
+  - **Railway**: Free tier with $5/month credit
+  - All free tiers are sufficient for a leaderboard with thousands of entries
 
 ## Support
 

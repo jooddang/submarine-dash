@@ -56,21 +56,19 @@ This project is optimized for deployment on Vercel with serverless functions.
 ### Manual Deployment
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed instructions on:
-- Setting up Vercel KV database
+- Setting up Redis database (Upstash, RedisLabs, etc.)
 - Configuring environment variables
 - Deploying via CLI or Dashboard
 - Custom domain setup
 
 **TL;DR:**
 ```bash
-# Install Vercel CLI
+# 1. Get Redis URL from your provider
+# 2. Add REDIS_URL to Vercel environment variables
+# 3. Deploy
 npm install -g vercel
-
-# Deploy
 vercel --prod
 ```
-
-Then connect Vercel KV database in your project dashboard.
 
 ## 🎯 How to Play
 
@@ -123,7 +121,7 @@ submarine-dash/
 
 ### Backend
 - **Vercel Serverless Functions** - API endpoints (production)
-- **Vercel KV (Redis)** - Leaderboard storage
+- **Redis** - Leaderboard storage (works with any Redis provider)
 - **Express.js** - Local development server
 - **CORS** - Cross-origin support
 
@@ -149,7 +147,7 @@ Audio is optimized for mobile devices with proper unlock handling.
 
 The leaderboard is globally shared across all players:
 - Top 5 scores displayed
-- Persistent storage using Vercel KV
+- Persistent storage using Redis
 - Real-time updates
 - Name submission for high scores
 
