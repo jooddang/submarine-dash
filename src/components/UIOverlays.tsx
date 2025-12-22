@@ -14,17 +14,22 @@ const overlayStyle: React.CSSProperties = {
   flexDirection: "column",
   justifyContent: "center",
   alignItems: "center",
+  padding: "24px 16px",
+  boxSizing: "border-box",
   color: "white",
   textAlign: "center",
   zIndex: 10
 };
 
 const titleStyle: React.CSSProperties = {
-  fontSize: "4rem",
+  fontSize: "clamp(2.2rem, 7vw, 4rem)",
   margin: "0 0 20px 0",
   color: "#00ffff",
   textShadow: "0 0 20px rgba(0,255,255,0.5)",
-  letterSpacing: "4px",
+  letterSpacing: "clamp(1px, 0.8vw, 4px)",
+  lineHeight: 1.05,
+  maxWidth: "min(760px, 92vw)",
+  overflowWrap: "anywhere",
 };
 
 const subtitleStyle: React.CSSProperties = {
@@ -52,8 +57,8 @@ interface LeaderboardProps {
 }
 
 export const Leaderboard: React.FC<LeaderboardProps> = ({ leaderboard, lastSubmittedId }) => (
-  <div style={{ marginTop: "20px", textAlign: "left", background: "rgba(0,0,0,0.3)", padding: "20px", borderRadius: "10px" }}>
-    <h3 style={{ borderBottom: "1px solid #00ffff", paddingBottom: "10px", color: "#00ffff", margin: "0 0 10px 0" }}>LEADERBOARD</h3>
+  <div style={{ marginTop: "20px", textAlign: "left", background: "rgba(0,0,0,0.3)", padding: "20px", borderRadius: "10px", width: "min(560px, 92vw)", boxSizing: "border-box" }}>
+    <h3 style={{ borderBottom: "1px solid #00ffff", paddingBottom: "10px", color: "#00ffff", margin: "0 0 10px 0", fontSize: "clamp(1.1rem, 4.2vw, 1.5rem)", letterSpacing: "clamp(0.5px, 0.4vw, 1px)", overflowWrap: "anywhere" }}>LEADERBOARD</h3>
     <table style={{ width: "100%", borderCollapse: "collapse" }}>
       <tbody>
         {leaderboard.length === 0 ? (
