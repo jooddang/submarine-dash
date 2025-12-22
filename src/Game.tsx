@@ -6,6 +6,7 @@ import { interpolateColor } from "./graphics";
 import { createBubble, spawnBackgroundEntity } from "./entities";
 import { drawSwordfish, drawUrchin, drawBackgroundEntities } from "./drawing";
 import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay } from "./components/UIOverlays";
+import { leaderboardAPI } from "./api";
 
 export const DeepDiveGame = () => {
   // --- Refs for Game Loop ---
@@ -63,28 +64,18 @@ export const DeepDiveGame = () => {
   const [playerName, setPlayerName] = useState("");
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("deep-dive-leaderboard");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        // Ensure IDs exist for migration
-        const withIds = parsed.map((e: any, idx: number) => ({
-          ...e,
-          id: e.id || Date.now() + idx
-        }));
-        setLeaderboard(withIds);
-        leaderboardRef.current = withIds;
-      } else {
-        const oldHigh = localStorage.getItem("deep-dive-highscore");
-        if (oldHigh) {
-          const parsed = [{ id: Date.now(), name: "Player", score: parseInt(oldHigh) }];
-          setLeaderboard(parsed);
-          leaderboardRef.current = parsed;
-        }
+    // Load leaderboard from backend API
+    const loadLeaderboard = async () => {
+      try {
+        const data = await leaderboardAPI.getLeaderboard();
+        setLeaderboard(data);
+        leaderboardRef.current = data;
+      } catch (e) {
+        console.error("Failed to load leaderboard", e);
       }
-    } catch (e) {
-      console.error("Failed to load leaderboard", e);
-    }
+    };
+
+    loadLeaderboard();
 
     // Initialize audio eagerly for better mobile support
     initAudio();
@@ -278,21 +269,21 @@ export const DeepDiveGame = () => {
     }
   };
 
-  const submitHighScore = (e: React.FormEvent) => {
+  const submitHighScore = async (e: React.FormEvent) => {
     e.preventDefault();
     const name = playerName.trim() || "Anonymous";
-    const id = Date.now();
-    const newEntry: LeaderboardEntry = { id, name, score: scoreRef.current };
 
-    const newLeaderboard = [...leaderboard, newEntry]
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 5);
+    try {
+      const result = await leaderboardAPI.submitScore(name, scoreRef.current);
 
-    setLeaderboard(newLeaderboard);
-    leaderboardRef.current = newLeaderboard;
-    localStorage.setItem("deep-dive-leaderboard", JSON.stringify(newLeaderboard));
-
-    setLastSubmittedId(id);
+      if (result) {
+        setLeaderboard(result.leaderboard);
+        leaderboardRef.current = result.leaderboard;
+        setLastSubmittedId(result.entry.id);
+      }
+    } catch (error) {
+      console.error("Failed to submit high score:", error);
+    }
 
     didSubmitRef.current = true;
     gameStateRef.current = "GAME_OVER";
