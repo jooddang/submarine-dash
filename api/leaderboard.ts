@@ -11,6 +11,27 @@ interface LeaderboardEntry {
   score: number;
 }
 
+function parseLeaderboard(data: unknown): LeaderboardEntry[] {
+  if (!data) return [];
+
+  // @upstash/redis may return already-parsed JSON (arrays/objects) for JSON values.
+  if (Array.isArray(data)) return data as LeaderboardEntry[];
+
+  if (typeof data === 'string') {
+    const trimmed = data.trim();
+    if (!trimmed) return [];
+    // If it looks like JSON, parse it; otherwise treat as corrupt/legacy value.
+    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+      const parsed = JSON.parse(trimmed);
+      return Array.isArray(parsed) ? (parsed as LeaderboardEntry[]) : [];
+    }
+    return [];
+  }
+
+  // Any other type: treat as invalid/corrupt
+  return [];
+}
+
 let redisReadOnly: Redis | null = null;
 let redisReadWrite: Redis | null = null;
 
@@ -54,8 +75,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method === 'GET') {
       // Get leaderboard
       const client = getUpstashRedisClient(true);
-      const data = await client.get<string>(LEADERBOARD_KEY);
-      const leaderboard: LeaderboardEntry[] = data ? JSON.parse(data) : [];
+      const data = await client.get(LEADERBOARD_KEY);
+      const leaderboard = parseLeaderboard(data);
       // Sanitize names on read so previously-saved bad words don't show up.
       const sanitized = await Promise.all(
         leaderboard.map(async (e) => ({
@@ -75,8 +96,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const client = getUpstashRedisClient(false);
-      const data = await client.get<string>(LEADERBOARD_KEY);
-      const leaderboard: LeaderboardEntry[] = data ? JSON.parse(data) : [];
+      const data = await client.get(LEADERBOARD_KEY);
+      const leaderboard = parseLeaderboard(data);
 
       const newEntry: LeaderboardEntry = {
         id: Date.now(),
