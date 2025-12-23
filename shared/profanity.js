@@ -10,7 +10,6 @@ const EXTRA_WORDS_FILE_URL = new URL("./profanity-words.txt", import.meta.url);
 
 const profanityEn = new ProfanityEngine({ language: "en" });
 
-let cachedEnNorms = null;
 let cachedKoNorms = null;
 let cachedExtraNorms = null;
 
@@ -45,17 +44,6 @@ function loadNormsFromFile(fileUrl) {
     .filter((l) => l.length > 0 && !l.startsWith("#"))
     .map(normalizeForMatch)
     .filter(Boolean);
-}
-
-async function loadEnglishNorms() {
-  if (cachedEnNorms) return cachedEnNorms;
-  const words = await profanityEn.all();
-  // Avoid extremely short entries (1-2 chars) which create lots of false-positives,
-  // especially when combined with approximate matching.
-  cachedEnNorms = words
-    .map(normalizeForMatch)
-    .filter((w) => w && w.length >= 3);
-  return cachedEnNorms;
 }
 
 function loadKoreanNorms() {
@@ -139,26 +127,30 @@ function containsApproxOrExact(haystackNorm, needleNorm) {
   return false;
 }
 
-function isProfaneNormalized(norm) {
-  if (!norm) return false;
-  // Not used anymore (kept for backwards compatibility)
-  return false;
-}
+async function isProfaneTokenAsync(token) {
+  if (!token) return false;
 
-async function isProfaneNormalizedAsync(norm) {
-  if (!norm) return false;
-  const [en, extra] = await Promise.all([loadEnglishNorms(), Promise.resolve(loadExtraNorms())]);
+  // 1) English: use the library's exact matching (no fuzzy, no substring) to avoid false positives.
+  // This means "roar" will NOT be flagged by an entry like "hoar".
+  try {
+    if (await profanityEn.search(token)) return true;
+  } catch {
+    // ignore; fall through to local lists
+  }
+
+  // 2) Korean: exact token match against our local list (no fuzzy/substring).
   const ko = loadKoreanNorms();
-
-  for (const term of en) {
-    if (containsApproxOrExact(norm, term)) return true;
-  }
+  const norm = normalizeForMatch(token);
   for (const term of ko) {
-    if (containsApproxOrExact(norm, term)) return true;
+    if (norm === term) return true;
   }
+
+  // 3) Extra stopwords (curated): allow fuzzy/substring to catch evasions like fuxking/focking.
+  const extra = loadExtraNorms();
   for (const term of extra) {
     if (containsApproxOrExact(norm, term)) return true;
   }
+
   return false;
 }
 
@@ -179,23 +171,39 @@ export async function sanitizeLeaderboardName(name) {
   const trimmed = name.trim();
   if (!trimmed) return "Anonymous";
 
-  // If the full normalized string is profane (e.g. "f u c k" or "ㅅ ㅂ"), reject the whole name.
-  const fullNorm = normalizeForMatch(trimmed);
-  if (await isProfaneNormalizedAsync(fullNorm)) return "Anonymous";
-
   const tokens = splitNameTokens(trimmed);
   const kept = [];
   for (const token of tokens) {
-    const norm = normalizeForMatch(token);
-    if (await isProfaneNormalizedAsync(norm)) continue;
+    if (await isProfaneTokenAsync(token)) continue;
     kept.push(token);
   }
 
   const result = kept.join(" ").trim();
   if (!result) return "Anonymous";
 
-  // Defensive: if token filtering still leaves a profane normalized name, reject.
-  if (await isProfaneNormalizedAsync(normalizeForMatch(result))) return "Anonymous";
+  // Catch "spaced out" profanity evasions like "f u c k" without creating cross-token false positives.
+  // Only apply when the name is made of very short tokens (<= 2 chars each).
+  const allTokensShort = tokens.length > 1 && tokens.every((t) => t.length <= 2);
+  if (allTokensShort) {
+    const combinedNorm = normalizeForMatch(tokens.join(""));
+    // For combined short tokens, check:
+    // - English exact match via library
+    // - Korean exact match via local list
+    // - Extra fuzzy list (for evasions)
+    try {
+      if (await profanityEn.search(combinedNorm)) return "Anonymous";
+    } catch {
+      // ignore
+    }
+    const ko = loadKoreanNorms();
+    for (const term of ko) {
+      if (combinedNorm === term) return "Anonymous";
+    }
+    const extra = loadExtraNorms();
+    for (const term of extra) {
+      if (containsApproxOrExact(combinedNorm, term)) return "Anonymous";
+    }
+  }
 
   return result.slice(0, 40);
 }
