@@ -50,14 +50,18 @@ function loadNormsFromFile(fileUrl) {
 async function loadEnglishNorms() {
   if (cachedEnNorms) return cachedEnNorms;
   const words = await profanityEn.all();
-  cachedEnNorms = words.map(normalizeForMatch).filter(Boolean);
+  // Avoid extremely short entries (1-2 chars) which create lots of false-positives,
+  // especially when combined with approximate matching.
+  cachedEnNorms = words
+    .map(normalizeForMatch)
+    .filter((w) => w && w.length >= 3);
   return cachedEnNorms;
 }
 
 function loadKoreanNorms() {
   if (cachedKoNorms) return cachedKoNorms;
   try {
-    cachedKoNorms = loadNormsFromFile(KO_WORDS_FILE_URL);
+    cachedKoNorms = loadNormsFromFile(KO_WORDS_FILE_URL).filter((w) => w && w.length >= 2);
   } catch {
     cachedKoNorms = [];
   }
@@ -67,7 +71,7 @@ function loadKoreanNorms() {
 function loadExtraNorms() {
   if (cachedExtraNorms) return cachedExtraNorms;
   try {
-    cachedExtraNorms = loadNormsFromFile(EXTRA_WORDS_FILE_URL);
+    cachedExtraNorms = loadNormsFromFile(EXTRA_WORDS_FILE_URL).filter((w) => w && w.length >= 2);
   } catch {
     cachedExtraNorms = [];
   }
@@ -115,6 +119,12 @@ function levenshteinWithin1(a, b) {
 
 function containsApproxOrExact(haystackNorm, needleNorm) {
   if (!needleNorm) return false;
+  // For short needles, only do exact substring match to avoid false-positives.
+  // Approx matching is only meaningful for longer terms.
+  if (needleNorm.length < 4) {
+    return haystackNorm.includes(needleNorm);
+  }
+
   if (haystackNorm.includes(needleNorm)) return true;
 
   const minLen = Math.max(1, needleNorm.length - 1);
