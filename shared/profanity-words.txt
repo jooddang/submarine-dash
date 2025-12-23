@@ -1,0 +1,18 @@
+# One term per line. Lines starting with # are comments.
+# Keep entries lowercase; matching will also detect common leetspeak + 1-char variants.
+
+fuck
+fucking
+motherfucker
+shit
+bitch
+asshole
+cunt
+dick
+penis
+vagina
+slut
+whore
+nigger
+faggot
+

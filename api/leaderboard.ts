@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { Redis } from '@upstash/redis';
+import { sanitizeLeaderboardName } from '../shared/profanity.js';
 
 const LEADERBOARD_KEY = 'submarine-dash:leaderboard';
 const MAX_ENTRIES = 5;
@@ -55,7 +56,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const client = getUpstashRedisClient(true);
       const data = await client.get<string>(LEADERBOARD_KEY);
       const leaderboard: LeaderboardEntry[] = data ? JSON.parse(data) : [];
-      return res.status(200).json(leaderboard);
+      // Sanitize names on read so previously-saved bad words don't show up.
+      const sanitized = await Promise.all(
+        leaderboard.map(async (e) => ({
+          ...e,
+          name: await sanitizeLeaderboardName(e.name),
+        }))
+      );
+      return res.status(200).json(sanitized);
     }
 
     if (req.method === 'POST') {
@@ -72,7 +80,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const newEntry: LeaderboardEntry = {
         id: Date.now(),
-        name: name.trim() || 'Anonymous',
+        name: await sanitizeLeaderboardName(name),
         score
       };
 

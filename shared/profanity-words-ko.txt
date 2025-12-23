@@ -1,0 +1,14 @@
+# One term per line. Lines starting with # are comments.
+# Keep entries in native form; the sanitizer will normalize punctuation/spacing.
+
+씨발
+시발
+ㅅㅂ
+병신
+ㅂㅅ
+좆
+존나
+개새끼
+새끼
+엿먹
+

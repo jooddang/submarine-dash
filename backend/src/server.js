@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import Redis from 'ioredis';
 import dotenv from 'dotenv';
+import { sanitizeLeaderboardName } from '../../shared/profanity.js';
 
 // Load environment variables from parent directory
 dotenv.config({ path: '../.env' });
@@ -89,7 +90,7 @@ app.post('/api/leaderboard', async (req, res) => {
     const leaderboard = await getLeaderboard();
     const newEntry = {
       id: Date.now(),
-      name: name.trim() || 'Anonymous',
+      name: await sanitizeLeaderboardName(name),
       score
     };
 

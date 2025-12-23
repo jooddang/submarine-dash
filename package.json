@@ -12,6 +12,7 @@
     "backend:install": "cd backend && npm install"
   },
   "dependencies": {
+    "@coffeeandfun/google-profanity-words": "^3.0.0",
     "@upstash/redis": "^1.35.8",
     "ioredis": "^5.3.2",
     "react": "^19.2.3",
