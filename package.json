@@ -12,9 +12,10 @@
     "backend:install": "cd backend && npm install"
   },
   "dependencies": {
+    "@upstash/redis": "^1.35.8",
+    "ioredis": "^5.3.2",
     "react": "^19.2.3",
-    "react-dom": "^19.2.3",
-    "ioredis": "^5.3.2"
+    "react-dom": "^19.2.3"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

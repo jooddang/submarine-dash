@@ -25,7 +25,8 @@ export const leaderboardAPI = {
     try {
       const response = await fetch(`${API_BASE_URL}/api/leaderboard`);
       if (!response.ok) {
-        throw new Error('Failed to fetch leaderboard');
+        const text = await response.text().catch(() => '');
+        throw new Error(`Failed to fetch leaderboard (status=${response.status}) ${text}`);
       }
       return await response.json();
     } catch (error) {
@@ -51,7 +52,8 @@ export const leaderboardAPI = {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to submit score');
+        const text = await response.text().catch(() => '');
+        throw new Error(`Failed to submit score (status=${response.status}) ${text}`);
       }
 
       return await response.json();

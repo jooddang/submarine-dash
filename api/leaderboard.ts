@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import Redis from 'ioredis';
+import { Redis } from '@upstash/redis';
 
 const LEADERBOARD_KEY = 'submarine-dash:leaderboard';
 const MAX_ENTRIES = 5;
@@ -10,21 +10,33 @@ interface LeaderboardEntry {
   score: number;
 }
 
-// Create Redis client
-let redis: Redis | null = null;
+let redisReadOnly: Redis | null = null;
+let redisReadWrite: Redis | null = null;
 
-function getRedisClient(): Redis {
-  if (!redis) {
-    const redisUrl = process.env.REDIS_URL;
-    if (!redisUrl) {
-      throw new Error('REDIS_URL environment variable is not set');
-    }
-    redis = new Redis(redisUrl, {
-      maxRetriesPerRequest: 3,
-      enableOfflineQueue: false,
-    });
+function getUpstashRedisClient(readOnly: boolean): Redis {
+  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const token = readOnly
+    ? (process.env.KV_REST_API_READ_ONLY_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN)
+    : (process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN);
+
+  if (!url) {
+    throw new Error('KV_REST_API_URL (or UPSTASH_REDIS_REST_URL) environment variable is not set');
   }
-  return redis;
+  if (!token) {
+    throw new Error('KV_REST_API_TOKEN (or UPSTASH_REDIS_REST_TOKEN) environment variable is not set');
+  }
+
+  if (readOnly) {
+    if (!redisReadOnly) {
+      redisReadOnly = new Redis({ url, token });
+    }
+    return redisReadOnly;
+  }
+
+  if (!redisReadWrite) {
+    redisReadWrite = new Redis({ url, token });
+  }
+  return redisReadWrite;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -38,11 +50,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const client = getRedisClient();
-
     if (req.method === 'GET') {
       // Get leaderboard
-      const data = await client.get(LEADERBOARD_KEY);
+      const client = getUpstashRedisClient(true);
+      const data = await client.get<string>(LEADERBOARD_KEY);
       const leaderboard: LeaderboardEntry[] = data ? JSON.parse(data) : [];
       return res.status(200).json(leaderboard);
     }
@@ -55,7 +66,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json({ error: 'Invalid name or score' });
       }
 
-      const data = await client.get(LEADERBOARD_KEY);
+      const client = getUpstashRedisClient(false);
+      const data = await client.get<string>(LEADERBOARD_KEY);
       const leaderboard: LeaderboardEntry[] = data ? JSON.parse(data) : [];
 
       const newEntry: LeaderboardEntry = {
@@ -83,6 +95,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (req.method === 'DELETE') {
       // Clear leaderboard (for testing)
+      const client = getUpstashRedisClient(false);
       await client.set(LEADERBOARD_KEY, JSON.stringify([]));
       return res.status(200).json({ message: 'Leaderboard cleared' });
     }
