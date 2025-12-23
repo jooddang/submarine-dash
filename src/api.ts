@@ -4,13 +4,14 @@ import type { LeaderboardEntry } from "./types";
 // In production (Vercel), use relative path which will hit Vercel serverless functions
 // In development, use local backend server
 const getApiBaseUrl = () => {
-  if (import.meta.env.VITE_API_URL) {
-    return import.meta.env.VITE_API_URL;
-  }
-
   // In production on Vercel, use relative path
   if (import.meta.env.PROD) {
     return '';
+  }
+
+  // Allow override only in non-production (helps local dev without triggering "local network" prompts in prod)
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
   }
 
   // In development, use local backend
