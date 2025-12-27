@@ -4,9 +4,26 @@ import * as Constants from "./constants";
 import { initAudio, playSound } from "./audio";
 import { interpolateColor } from "./graphics";
 import { createBubble, spawnBackgroundEntity } from "./entities";
-import { drawSwordfish, drawUrchin, drawBackgroundEntities } from "./drawing";
+import { drawSwordfish, drawUrchin, drawBackgroundEntities, drawTurtleShell, drawRescueTurtle } from "./drawing";
 import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay } from "./components/UIOverlays";
 import { leaderboardAPI } from "./api";
+
+type RescuePhase = "FLY_IN" | "HOOK" | "TOW" | "COUNTDOWN";
+type RescueState =
+  | { active: false }
+  | {
+    active: true;
+    phase: RescuePhase;
+    phaseT: number; // seconds
+    turtleX: number;
+    turtleY: number;
+    targetPlayerX: number;
+    targetPlayerY: number;
+    hookPointX: number;
+    hookPointY: number;
+    countdownMs: number;
+    lastCountdownDisplay: number | null;
+  };
 
 export const DeepDiveGame = () => {
   // --- Refs for Game Loop ---
@@ -51,11 +68,19 @@ export const DeepDiveGame = () => {
   const swordfishTimerRef = useRef<number>(0);
   const isSwordfishActiveRef = useRef<boolean>(false);
 
+  // Turtle Shell (saved item) + rarity tracking
+  const turtleShellSavedRef = useRef<boolean>(false);
+  const turtleShellUseCountRef = useRef<number>(0);
+  const rescueRef = useRef<RescueState>({ active: false });
+  const devForceLongQuickSandOnceRef = useRef<boolean>(false);
+
   // --- React State for UI ---
   const [gameState, setGameState] = useState<GameState>("MENU");
   const [score, setScore] = useState(0);
   const [oxygen, setOxygen] = useState(Constants.OXYGEN_MAX);
   const [level, setLevel] = useState(1);
+  const [hasTurtleShell, setHasTurtleShell] = useState(false);
+  const [restartCountdown, setRestartCountdown] = useState<number | null>(null);
 
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const leaderboardRef = useRef<LeaderboardEntry[]>([]);
@@ -216,6 +241,17 @@ export const DeepDiveGame = () => {
     jumpBufferTimerRef.current = 0;
     gameTimeRef.current = 0;
 
+    turtleShellSavedRef.current = false;
+    setHasTurtleShell(false);
+    rescueRef.current = { active: false };
+    setRestartCountdown(null);
+
+    // Dev/testing: start with a saved Turtle Shell
+    if (Constants.DEV_FORCE_TURTLE_SHELL_ON_START) {
+      turtleShellSavedRef.current = true;
+      setHasTurtleShell(true);
+    }
+
     setLastSubmittedId(null); // Reset highlight for new game
 
     playerRef.current = {
@@ -249,6 +285,135 @@ export const DeepDiveGame = () => {
     lastTimeRef.current = performance.now();
     cancelAnimationFrame(requestRef.current);
     requestRef.current = requestAnimationFrame(gameLoop);
+  };
+
+  const startRescueFromQuickSand = (trappedQuickSand: Platform) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    if (!turtleShellSavedRef.current) return;
+    if (rescueRef.current.active) return;
+
+    // Consume shell
+    turtleShellSavedRef.current = false;
+    setHasTurtleShell(false);
+    turtleShellUseCountRef.current += 1;
+
+    // Find the next NORMAL platform after the quicksand they fell from
+    const targetPlat = platformsRef.current
+      .filter(p => p.type === "NORMAL" && p.x > trappedQuickSand.x + trappedQuickSand.width + 1)
+      .sort((a, b) => a.x - b.x)[0];
+
+    const player = playerRef.current;
+    const fallbackX = Math.min(canvas.width - player.width - 40, Math.max(40, player.x));
+    const fallbackY = canvas.height - 100 - player.height;
+
+    const targetPlayerX = targetPlat
+      ? Math.min(canvas.width - player.width - 40, Math.max(40, targetPlat.x + targetPlat.width / 2 - player.width / 2))
+      : fallbackX;
+    const targetPlayerY = targetPlat ? (targetPlat.y - player.height) : fallbackY;
+
+    // Initialize rescue animation from top-right
+    rescueRef.current = {
+      active: true,
+      phase: "FLY_IN",
+      phaseT: 0,
+      turtleX: canvas.width + 120,
+      turtleY: -80,
+      targetPlayerX,
+      targetPlayerY,
+      hookPointX: player.x + player.width / 2,
+      hookPointY: player.y + player.height / 2,
+      countdownMs: 3000,
+      lastCountdownDisplay: null,
+    };
+
+    // Stabilize player immediately (stop sinking/falling)
+    player.isTrapped = false;
+    player.dy = 0;
+    isSwordfishActiveRef.current = false;
+    swordfishTimerRef.current = 0;
+  };
+
+  const updateRescue = (dt: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rescue = rescueRef.current;
+    if (!rescue.active) return;
+
+    rescue.phaseT += dt;
+
+    const player = playerRef.current;
+    rescue.hookPointX = player.x + player.width / 2;
+    rescue.hookPointY = player.y + player.height / 2;
+
+    if (rescue.phase === "FLY_IN") {
+      const targetX = player.x + 160;
+      const targetY = Math.max(40, player.y - 140);
+      const speed = 6; // higher is faster
+      rescue.turtleX += (targetX - rescue.turtleX) * Math.min(1, dt * speed);
+      rescue.turtleY += (targetY - rescue.turtleY) * Math.min(1, dt * speed);
+
+      const closeEnough = Math.hypot(rescue.turtleX - targetX, rescue.turtleY - targetY) < 12;
+      if (closeEnough || rescue.phaseT > 1.2) {
+        rescue.phase = "HOOK";
+        rescue.phaseT = 0;
+      }
+      return;
+    }
+
+    if (rescue.phase === "HOOK") {
+      // Hold for a brief moment to emphasize the hook
+      if (rescue.phaseT > 0.6) {
+        rescue.phase = "TOW";
+        rescue.phaseT = 0;
+      }
+      return;
+    }
+
+    if (rescue.phase === "TOW") {
+      const t = Math.min(1, rescue.phaseT / 1.1);
+      // Ease in-out
+      const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+
+      const startPX = player.x;
+      const startPY = player.y;
+
+      const nextPX = startPX + (rescue.targetPlayerX - startPX) * ease;
+      const nextPY = startPY + (rescue.targetPlayerY - startPY) * ease;
+      player.x = nextPX;
+      player.y = nextPY;
+      player.dy = 0;
+      player.grounded = true;
+      player.rotation = 0;
+
+      // Turtle stays slightly ahead/up of the submarine while towing
+      rescue.turtleX = player.x + 140;
+      rescue.turtleY = Math.max(30, player.y - 130);
+
+      if (t >= 1) {
+        rescue.phase = "COUNTDOWN";
+        rescue.phaseT = 0;
+        rescue.countdownMs = 3000;
+        rescue.lastCountdownDisplay = null;
+        setRestartCountdown(3);
+      }
+      return;
+    }
+
+    if (rescue.phase === "COUNTDOWN") {
+      rescue.countdownMs -= dt * 1000;
+      const display = Math.max(0, Math.ceil(rescue.countdownMs / 1000));
+      if (rescue.lastCountdownDisplay !== display) {
+        rescue.lastCountdownDisplay = display;
+        setRestartCountdown(display > 0 ? display : null);
+      }
+      if (rescue.countdownMs <= 0) {
+        // Resume the current run from the next sand (no reset, keep speed/score/oxygen)
+        rescueRef.current = { active: false };
+        setRestartCountdown(null);
+        quickSandTimerRef.current = null;
+      }
+    }
   };
 
   const gameOver = () => {
@@ -307,6 +472,12 @@ export const DeepDiveGame = () => {
   const update = (dt: number, time: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    // If we're mid-rescue, pause normal gameplay updates and run the rescue animation/state machine.
+    if (rescueRef.current.active) {
+      updateRescue(dt);
+      return;
+    }
 
     const player = playerRef.current;
 
@@ -433,6 +604,7 @@ export const DeepDiveGame = () => {
     // 6. Ground Collision & Logic
     let onGround = false;
     let touchingQuickSand = false;
+    let trappedQuickSand: Platform | null = null;
     player.isTrapped = false;
 
     for (const plat of platformsRef.current) {
@@ -455,6 +627,7 @@ export const DeepDiveGame = () => {
 
         if (plat.sinking) {
           player.isTrapped = true;
+          if (plat.type === "QUICKSAND") trappedQuickSand = plat;
           if (player.dy >= 0 || player.grounded) {
             player.y = plat.y - player.height + 15;
             player.dy = 0;
@@ -486,6 +659,12 @@ export const DeepDiveGame = () => {
 
     if (!touchingQuickSand) {
       quickSandTimerRef.current = null;
+    }
+
+    // Auto-use Turtle Shell to escape quicksand
+    if (player.isTrapped && trappedQuickSand && turtleShellSavedRef.current) {
+      startRescueFromQuickSand(trappedQuickSand);
+      return;
     }
 
     if (player.y > canvas.height) {
@@ -541,12 +720,20 @@ export const DeepDiveGame = () => {
       }
 
       const platTiles = Math.floor(Math.random() * (maxPlatTiles - minPlatTiles + 1)) + minPlatTiles;
-      const isQuickSand = Math.random() < 0.25;
+      let isQuickSand = Math.random() < 0.25;
+      let effectivePlatTiles = platTiles;
+
+      // Dev/testing: after picking up a turtle shell, force a long quicksand once
+      if (Constants.DEV_FORCE_LONG_QUICKSAND_AFTER_TURTLE_SHELL && devForceLongQuickSandOnceRef.current) {
+        isQuickSand = true;
+        effectivePlatTiles = Math.max(effectivePlatTiles, Constants.DEV_LONG_QUICKSAND_TILES);
+        devForceLongQuickSandOnceRef.current = false;
+      }
 
       const newPlat: Platform = {
         x: nextX,
         y: groundY,
-        width: platTiles * Constants.TILE_SIZE,
+        width: effectivePlatTiles * Constants.TILE_SIZE,
         height: 100,
         type: isQuickSand ? "QUICKSAND" : "NORMAL",
         sinking: false
@@ -574,26 +761,51 @@ export const DeepDiveGame = () => {
         }
 
         if (!spawnedUrchin) {
-          const rand = Math.random();
-          if (rand < Constants.SWORDFISH_CHANCE) {
-            itemsRef.current.push({
-              x: newPlat.x + newPlat.width / 2 - 25,
-              y: newPlat.y - 120 - (Math.random() * 80),
-              width: 50,
-              height: 30,
-              collected: false,
-              type: "SWORDFISH"
-            });
+          let spawnedRegularItem = false;
+
+          // Turtle Shell spawn (only after unlock score, and only if player doesn't already have one saved)
+          if (
+            scoreRef.current >= Constants.TURTLE_SHELL_UNLOCK_SCORE &&
+            !turtleShellSavedRef.current &&
+            !rescueRef.current.active
+          ) {
+            const uses = turtleShellUseCountRef.current;
+            const turtleChance = Constants.TURTLE_SHELL_BASE_CHANCE / (1 + uses * Constants.TURTLE_SHELL_RARITY_DECAY_PER_USE);
+            if (Math.random() < turtleChance) {
+              itemsRef.current.push({
+                x: newPlat.x + newPlat.width / 2 - 22,
+                y: newPlat.y - 90 - (Math.random() * 70),
+                width: 44,
+                height: 34,
+                collected: false,
+                type: "TURTLE_SHELL"
+              });
+              spawnedRegularItem = true;
+            }
           }
-          else if (rand < Constants.SWORDFISH_CHANCE + Constants.TANK_CHANCE) {
-            itemsRef.current.push({
-              x: newPlat.x + newPlat.width / 2 - 15,
-              y: newPlat.y - 60 - (Math.random() * 100),
-              width: 30,
-              height: 40,
-              collected: false,
-              type: "OXYGEN"
-            });
+
+          if (!spawnedRegularItem) {
+            const rand = Math.random();
+            if (rand < Constants.SWORDFISH_CHANCE) {
+              itemsRef.current.push({
+                x: newPlat.x + newPlat.width / 2 - 25,
+                y: newPlat.y - 120 - (Math.random() * 80),
+                width: 50,
+                height: 30,
+                collected: false,
+                type: "SWORDFISH"
+              });
+            }
+            else if (rand < Constants.SWORDFISH_CHANCE + Constants.TANK_CHANCE) {
+              itemsRef.current.push({
+                x: newPlat.x + newPlat.width / 2 - 15,
+                y: newPlat.y - 60 - (Math.random() * 100),
+                width: 30,
+                height: 40,
+                collected: false,
+                type: "OXYGEN"
+              });
+            }
           }
         }
       }
@@ -636,6 +848,14 @@ export const DeepDiveGame = () => {
           isSwordfishActiveRef.current = true;
           swordfishTimerRef.current = Constants.SWORDFISH_DURATION;
           playSound('swordfish');
+          return false;
+        } else if (item.type === "TURTLE_SHELL") {
+          turtleShellSavedRef.current = true;
+          setHasTurtleShell(true);
+          // Dev/testing: make the next generated platform a long quicksand
+          if (Constants.DEV_FORCE_LONG_QUICKSAND_AFTER_TURTLE_SHELL) {
+            devForceLongQuickSandOnceRef.current = true;
+          }
           return false;
         } else if (item.type === "URCHIN") {
           if (item.isDead) return true; // Already dead, ignore
@@ -748,6 +968,8 @@ export const DeepDiveGame = () => {
         ctx.fillText("O2", item.x + 8, item.y + 25);
       } else if (item.type === "SWORDFISH") {
         drawSwordfish(ctx, item.x, item.y, item.width, item.height);
+      } else if (item.type === "TURTLE_SHELL") {
+        drawTurtleShell(ctx, item.x, item.y, item.width, item.height);
       } else if (item.type === "URCHIN") {
         drawUrchin(ctx, item);
       }
@@ -782,6 +1004,13 @@ export const DeepDiveGame = () => {
     ctx.fillRect(-p.width / 2 - 5, -5, 5, 10);
 
     ctx.restore();
+
+    // Rescue turtle overlay (draw last so it sits on top)
+    const rescue = rescueRef.current;
+    if (rescue.active) {
+      const hookTarget = rescue.phase === "HOOK" || rescue.phase === "TOW" ? { x: rescue.hookPointX, y: rescue.hookPointY } : undefined;
+      drawRescueTurtle(ctx, rescue.turtleX, rescue.turtleY, 1.0, hookTarget);
+    }
   };
 
   return (
@@ -795,7 +1024,28 @@ export const DeepDiveGame = () => {
       />
 
       {gameState === "PLAYING" && (
-        <HUD score={score} level={level} oxygen={oxygen} />
+        <HUD score={score} level={level} oxygen={oxygen} hasTurtleShell={hasTurtleShell} />
+      )}
+
+      {restartCountdown !== null && (
+        <div style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 20,
+          pointerEvents: "none",
+          color: "white",
+          fontFamily: "monospace",
+          textShadow: "0 6px 0 rgba(0,0,0,0.6)",
+          fontSize: "clamp(64px, 14vw, 140px)",
+        }}>
+          {restartCountdown}
+        </div>
       )}
 
       {gameState === "MENU" && (

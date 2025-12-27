@@ -44,6 +44,121 @@ export const drawSwordfish = (ctx: CanvasRenderingContext2D, x: number, y: numbe
   ctx.fill();
 };
 
+// Draw Turtle Shell Item (a turtle in a shell)
+export const drawTurtleShell = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) => {
+  // Shell
+  ctx.fillStyle = "#8d6e63";
+  ctx.beginPath();
+  ctx.ellipse(x + w * 0.55, y + h * 0.55, w * 0.42, h * 0.35, -0.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Shell pattern
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
+  ctx.lineWidth = Math.max(1, Math.floor(w * 0.05));
+  ctx.beginPath();
+  ctx.moveTo(x + w * 0.42, y + h * 0.55);
+  ctx.lineTo(x + w * 0.70, y + h * 0.55);
+  ctx.moveTo(x + w * 0.52, y + h * 0.42);
+  ctx.lineTo(x + w * 0.60, y + h * 0.68);
+  ctx.stroke();
+
+  // Turtle head peeking out
+  ctx.fillStyle = "#2ecc71";
+  ctx.beginPath();
+  ctx.ellipse(x + w * 0.22, y + h * 0.55, w * 0.18, h * 0.14, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Eye
+  ctx.fillStyle = "black";
+  ctx.beginPath();
+  ctx.arc(x + w * 0.18, y + h * 0.52, Math.max(1, w * 0.03), 0, Math.PI * 2);
+  ctx.fill();
+};
+
+// Draw Rescue Turtle (simple flying turtle holding a rod) + optional hook line
+export const drawRescueTurtle = (
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  scale: number,
+  hookTo?: { x: number; y: number }
+) => {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+
+  // Fishing rod (clearly held)
+  const rodBase = { x: -12, y: 6 };
+  const rodTip = { x: 44, y: 22 };
+
+  // Handle / grip
+  ctx.fillStyle = "#8e5a2b";
+  ctx.fillRect(rodBase.x - 2, rodBase.y - 2, 10, 6);
+
+  // Rod pole
+  ctx.strokeStyle = "#c49a6c";
+  ctx.lineWidth = 4;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(rodBase.x + 8, rodBase.y + 1);
+  ctx.lineTo(rodTip.x, rodTip.y);
+  ctx.stroke();
+
+  // Reel
+  ctx.fillStyle = "#444";
+  ctx.beginPath();
+  ctx.arc(rodBase.x + 10, rodBase.y + 2, 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Line + hook (originates from rod tip)
+  if (hookTo) {
+    const hx = (hookTo.x - x) / scale;
+    const hy = (hookTo.y - y) / scale;
+    ctx.strokeStyle = "rgba(255,255,255,0.85)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(rodTip.x, rodTip.y);
+    ctx.lineTo(hx, hy);
+    ctx.stroke();
+
+    // Hook
+    ctx.strokeStyle = "#ddd";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(hx, hy, 4, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(hx + 2.5, hy + 2.5);
+    ctx.quadraticCurveTo(hx + 7, hy + 7, hx + 2, hy + 10);
+    ctx.stroke();
+  }
+
+  // Wings (tiny fins)
+  ctx.fillStyle = "rgba(46, 204, 113, 0.7)";
+  ctx.beginPath();
+  ctx.ellipse(-10, 10, 14, 6, -0.3, 0, Math.PI * 2);
+  ctx.ellipse(10, 12, 14, 6, 0.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Shell
+  ctx.fillStyle = "#8d6e63";
+  ctx.beginPath();
+  ctx.ellipse(0, 10, 22, 16, -0.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Head
+  ctx.fillStyle = "#2ecc71";
+  ctx.beginPath();
+  ctx.ellipse(-24, 12, 10, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "black";
+  ctx.beginPath();
+  ctx.arc(-27, 10, 2.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+};
+
 // Draw Urchin Item
 export const drawUrchin = (ctx: CanvasRenderingContext2D, item: Item) => {
   const cx = item.x + item.width / 2;

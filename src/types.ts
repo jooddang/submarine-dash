@@ -32,7 +32,7 @@ export interface Item {
   width: number;
   height: number;
   collected: boolean;
-  type: "OXYGEN" | "SWORDFISH" | "URCHIN";
+  type: "OXYGEN" | "SWORDFISH" | "URCHIN" | "TURTLE_SHELL";
   rotation?: number;
   isDead?: boolean;
   dy?: number;

@@ -82,9 +82,10 @@ interface HUDProps {
   score: number;
   level: number;
   oxygen: number;
+  hasTurtleShell?: boolean;
 }
 
-export const HUD: React.FC<HUDProps> = ({ score, level, oxygen }) => (
+export const HUD: React.FC<HUDProps> = ({ score, level, oxygen, hasTurtleShell }) => (
   <div style={{
     position: "absolute",
     top: 20,
@@ -124,6 +125,32 @@ export const HUD: React.FC<HUDProps> = ({ score, level, oxygen }) => (
           color: "white",
           textShadow: "1px 1px 1px black"
         }}>{Math.ceil(oxygen)}s</span>
+      </div>
+    </div>
+    <div style={{ marginTop: "8px", display: "flex", alignItems: "center", gap: "8px" }}>
+      <span style={{ fontSize: "14px", opacity: 0.9 }}>SAVED:</span>
+      <div style={{
+        width: 28,
+        height: 28,
+        borderRadius: 8,
+        border: "2px solid rgba(255,255,255,0.9)",
+        background: hasTurtleShell ? "rgba(0,0,0,0.35)" : "rgba(0,0,0,0.15)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        boxShadow: hasTurtleShell ? "0 0 12px rgba(0,255,255,0.35)" : "none"
+      }}>
+        {hasTurtleShell ? (
+          <svg width="22" height="22" viewBox="0 0 24 24" aria-label="Turtle shell saved">
+            <ellipse cx="13" cy="13" rx="8" ry="6.2" fill="#8d6e63" />
+            <ellipse cx="6" cy="13" rx="3.5" ry="2.6" fill="#2ecc71" />
+            <circle cx="5" cy="12.2" r="0.8" fill="#111" />
+            <path d="M8 13h10" stroke="rgba(255,255,255,0.55)" strokeWidth="1.2" />
+            <path d="M11 9.5l3 7" stroke="rgba(255,255,255,0.35)" strokeWidth="1.2" />
+          </svg>
+        ) : (
+          <span style={{ fontSize: "14px", opacity: 0.4 }}>—</span>
+        )}
       </div>
     </div>
   </div>
