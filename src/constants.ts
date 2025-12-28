@@ -22,13 +22,13 @@ export const TANK_CHANCE = 0.15;
 export const SWORDFISH_CHANCE = 0.03;
 export const SWORDFISH_DURATION = 5000; // milliseconds
 export const SWORDFISH_SPEED_MULT = 3.0;
-export const URCHIN_CHANCE = 0.04;
+export const URCHIN_CHANCE = 0.05;
 export const URCHIN_SCORE_THRESHOLD = 1000;
 
 // Turtle Shell Item (rescue-from-quicksand)
 export const TURTLE_SHELL_UNLOCK_SCORE = 1500;
 // "1.5x higher rarity than swordfish" => 1.5x rarer => lower spawn chance
-export const TURTLE_SHELL_BASE_CHANCE = SWORDFISH_CHANCE / 1.5;
+export const TURTLE_SHELL_BASE_CHANCE = SWORDFISH_CHANCE;
 // Gets rarer every time user uses it (monotonic decrease)
 export const TURTLE_SHELL_RARITY_DECAY_PER_USE = 1; // chance = baseChance / (1 + uses * decay)
 
