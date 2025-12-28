@@ -4,9 +4,10 @@ import * as Constants from "./constants";
 import { initAudio, playSound } from "./audio";
 import { interpolateColor } from "./graphics";
 import { createBubble, spawnBackgroundEntity } from "./entities";
-import { drawSwordfish, drawUrchin, drawBackgroundEntities, drawTurtleShell, drawRescueTurtle } from "./drawing";
+import { drawSwordfish, drawUrchin, drawBackgroundEntities, drawTurtleShell } from "./drawing";
 import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay } from "./components/UIOverlays";
 import { leaderboardAPI } from "./api";
+import turtleRescueImg from "../turtle.png";
 
 type RescuePhase = "FLY_IN" | "HOOK" | "TOW" | "COUNTDOWN";
 type RescueState =
@@ -19,6 +20,10 @@ type RescueState =
     turtleY: number;
     targetPlayerX: number;
     targetPlayerY: number;
+    // Fairness: keep the submarine's on-screen X fixed; shift the world instead during tow.
+    playerXFixed: number;
+    towStartY: number;
+    worldShiftApplied: number;
     hookPointX: number;
     hookPointY: number;
     countdownMs: number;
@@ -73,6 +78,7 @@ export const DeepDiveGame = () => {
   const turtleShellUseCountRef = useRef<number>(0);
   const rescueRef = useRef<RescueState>({ active: false });
   const devForceLongQuickSandOnceRef = useRef<boolean>(false);
+  const rescueTurtleImgRef = useRef<HTMLImageElement | null>(null);
 
   // --- React State for UI ---
   const [gameState, setGameState] = useState<GameState>("MENU");
@@ -112,6 +118,12 @@ export const DeepDiveGame = () => {
     }
 
     return () => cancelAnimationFrame(requestRef.current);
+  }, []);
+
+  useEffect(() => {
+    const img = new Image();
+    img.src = turtleRescueImg;
+    rescueTurtleImgRef.current = img;
   }, []);
 
   // --- Input Handling ---
@@ -321,6 +333,9 @@ export const DeepDiveGame = () => {
       turtleY: -80,
       targetPlayerX,
       targetPlayerY,
+      playerXFixed: player.x,
+      towStartY: player.y,
+      worldShiftApplied: 0,
       hookPointX: player.x + player.width / 2,
       hookPointY: player.y + player.height / 2,
       countdownMs: 3000,
@@ -339,6 +354,15 @@ export const DeepDiveGame = () => {
     if (!canvas) return;
     const rescue = rescueRef.current;
     if (!rescue.active) return;
+
+    const shiftWorldX = (dx: number) => {
+      if (dx === 0) return;
+      platformsRef.current.forEach(p => { p.x -= dx; });
+      itemsRef.current.forEach(it => { it.x -= dx; });
+      // Light parallax so the whole scene reads as fast-forwarding together
+      bubblesRef.current.forEach(b => { b.x -= dx * 0.2; });
+      bgEntitiesRef.current.forEach(e => { e.x -= dx * 0.2; });
+    };
 
     rescue.phaseT += dt;
 
@@ -366,6 +390,9 @@ export const DeepDiveGame = () => {
       if (rescue.phaseT > 0.6) {
         rescue.phase = "TOW";
         rescue.phaseT = 0;
+        rescue.towStartY = player.y;
+        rescue.playerXFixed = player.x;
+        rescue.worldShiftApplied = 0;
       }
       return;
     }
@@ -375,13 +402,15 @@ export const DeepDiveGame = () => {
       // Ease in-out
       const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 
-      const startPX = player.x;
-      const startPY = player.y;
+      // Keep submarine X fixed for fairness; shift the whole map instead.
+      const desiredShift = rescue.targetPlayerX - rescue.playerXFixed;
+      const shiftNow = desiredShift * ease;
+      const shiftStep = shiftNow - rescue.worldShiftApplied;
+      shiftWorldX(shiftStep);
+      rescue.worldShiftApplied = shiftNow;
 
-      const nextPX = startPX + (rescue.targetPlayerX - startPX) * ease;
-      const nextPY = startPY + (rescue.targetPlayerY - startPY) * ease;
-      player.x = nextPX;
-      player.y = nextPY;
+      player.x = rescue.playerXFixed;
+      player.y = rescue.towStartY + (rescue.targetPlayerY - rescue.towStartY) * ease;
       player.dy = 0;
       player.grounded = true;
       player.rotation = 0;
@@ -407,6 +436,11 @@ export const DeepDiveGame = () => {
         rescue.lastCountdownDisplay = display;
         setRestartCountdown(display > 0 ? display : null);
       }
+
+      // After rescuing, turtle flies off to the left and disappears.
+      rescue.turtleX -= dt * 650;
+      rescue.turtleY -= dt * 120;
+
       if (rescue.countdownMs <= 0) {
         // Resume the current run from the next sand (no reset, keep speed/score/oxygen)
         rescueRef.current = { active: false };
@@ -1008,8 +1042,46 @@ export const DeepDiveGame = () => {
     // Rescue turtle overlay (draw last so it sits on top)
     const rescue = rescueRef.current;
     if (rescue.active) {
-      const hookTarget = rescue.phase === "HOOK" || rescue.phase === "TOW" ? { x: rescue.hookPointX, y: rescue.hookPointY } : undefined;
-      drawRescueTurtle(ctx, rescue.turtleX, rescue.turtleY, 1.0, hookTarget);
+      const img = rescueTurtleImgRef.current;
+      const source: CanvasImageSource | null = img;
+
+      if (source && img && img.complete && img.naturalWidth > 0) {
+        // Size tuned to feel readable without covering the entire screen
+        const w = 80; // half size
+        const h = (img.naturalHeight / img.naturalWidth) * w;
+        const drawX = rescue.turtleX - w / 2;
+        const drawY = rescue.turtleY - h / 2;
+
+        // Fishing line during hook/tow so it reads like the turtle is pulling the sub
+        const isPulling = rescue.phase === "HOOK" || rescue.phase === "TOW";
+        if (isPulling) {
+          // Approximate rod tip position within the sprite
+          const rodTipX = drawX + w * 0.20;
+          const rodTipY = drawY + h * 0.56;
+
+          ctx.save();
+          ctx.strokeStyle = "rgba(255,255,255,0.9)";
+          ctx.lineWidth = 2.5;
+          ctx.shadowColor = "rgba(0,0,0,0.45)";
+          ctx.shadowBlur = 2;
+          ctx.beginPath();
+          ctx.moveTo(rodTipX, rodTipY);
+          ctx.lineTo(rescue.hookPointX, rescue.hookPointY);
+          ctx.stroke();
+
+          // Hook dot
+          ctx.fillStyle = "rgba(255,255,255,0.95)";
+          ctx.beginPath();
+          ctx.arc(rescue.hookPointX, rescue.hookPointY, 4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        // Don't draw once the turtle has flown off-screen
+        if (drawX + w > -20) {
+          ctx.drawImage(source, drawX, drawY, w, h);
+        }
+      }
     }
   };
 

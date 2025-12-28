@@ -1,6 +1,7 @@
 import React from "react";
 import type { LeaderboardEntry } from "../types";
 import { OXYGEN_MAX } from "../constants";
+import turtleShellItemImg from "../../turtle-shell-item.png";
 
 // Styles
 const overlayStyle: React.CSSProperties = {
@@ -141,13 +142,20 @@ export const HUD: React.FC<HUDProps> = ({ score, level, oxygen, hasTurtleShell }
         boxShadow: hasTurtleShell ? "0 0 12px rgba(0,255,255,0.35)" : "none"
       }}>
         {hasTurtleShell ? (
-          <svg width="22" height="22" viewBox="0 0 24 24" aria-label="Turtle shell saved">
-            <ellipse cx="13" cy="13" rx="8" ry="6.2" fill="#8d6e63" />
-            <ellipse cx="6" cy="13" rx="3.5" ry="2.6" fill="#2ecc71" />
-            <circle cx="5" cy="12.2" r="0.8" fill="#111" />
-            <path d="M8 13h10" stroke="rgba(255,255,255,0.55)" strokeWidth="1.2" />
-            <path d="M11 9.5l3 7" stroke="rgba(255,255,255,0.35)" strokeWidth="1.2" />
-          </svg>
+          <img
+            src={turtleShellItemImg}
+            alt="Turtle shell saved"
+            width={22}
+            height={22}
+            style={{
+              display: "block",
+              width: 22,
+              height: 22,
+              objectFit: "contain",
+              filter: "drop-shadow(0 2px 0 rgba(0,0,0,0.35))"
+            }}
+            draggable={false}
+          />
         ) : (
           <span style={{ fontSize: "14px", opacity: 0.4 }}>—</span>
         )}
