@@ -8,6 +8,7 @@ import { drawSwordfish, drawUrchin, drawBackgroundEntities, drawTurtleShell } fr
 import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay } from "./components/UIOverlays";
 import { leaderboardAPI } from "./api";
 import turtleRescueImg from "../turtle.png";
+import turtleShellItemImg from "../turtle-shell-item.png";
 
 type RescuePhase = "FLY_IN" | "HOOK" | "TOW" | "COUNTDOWN";
 type RescueState =
@@ -79,6 +80,7 @@ export const DeepDiveGame = () => {
   const rescueRef = useRef<RescueState>({ active: false });
   const devForceLongQuickSandOnceRef = useRef<boolean>(false);
   const rescueTurtleImgRef = useRef<HTMLImageElement | null>(null);
+  const turtleShellItemImgRef = useRef<HTMLImageElement | null>(null);
 
   // --- React State for UI ---
   const [gameState, setGameState] = useState<GameState>("MENU");
@@ -124,6 +126,12 @@ export const DeepDiveGame = () => {
     const img = new Image();
     img.src = turtleRescueImg;
     rescueTurtleImgRef.current = img;
+  }, []);
+
+  useEffect(() => {
+    const img = new Image();
+    img.src = turtleShellItemImg;
+    turtleShellItemImgRef.current = img;
   }, []);
 
   // --- Input Handling ---
@@ -1003,7 +1011,24 @@ export const DeepDiveGame = () => {
       } else if (item.type === "SWORDFISH") {
         drawSwordfish(ctx, item.x, item.y, item.width, item.height);
       } else if (item.type === "TURTLE_SHELL") {
-        drawTurtleShell(ctx, item.x, item.y, item.width, item.height);
+        const img = turtleShellItemImgRef.current;
+        if (img && img.complete && img.naturalWidth > 0) {
+          // Draw sprite (contain) inside the item bounding box
+          const r = img.naturalWidth / img.naturalHeight;
+          let w = item.width;
+          let h = item.height;
+          if (w / h > r) {
+            w = h * r;
+          } else {
+            h = w / r;
+          }
+          const dx = item.x + (item.width - w) / 2;
+          const dy = item.y + (item.height - h) / 2;
+          ctx.drawImage(img, dx, dy, w, h);
+        } else {
+          // Fallback if image not ready yet
+          drawTurtleShell(ctx, item.x, item.y, item.width, item.height);
+        }
       } else if (item.type === "URCHIN") {
         drawUrchin(ctx, item);
       }
