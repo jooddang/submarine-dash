@@ -1,7 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getUser, getUserIdForSession } from '../_lib/auth';
+import { RedisConfigError } from '../_lib/redis';
 
-export const config = { runtime: 'nodejs' };
+export const config = { runtime: 'nodejs20.x' };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -25,6 +26,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
     });
   } catch (error) {
+    if (error instanceof RedisConfigError) {
+      console.error('Auth me API redis config error:', error.message);
+      return res.status(503).json({ error: 'Server not configured', details: error.message });
+    }
     console.error('Auth me API error:', error);
     return res.status(500).json({
       error: 'Internal server error',

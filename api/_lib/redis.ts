@@ -3,6 +3,10 @@ import { Redis } from '@upstash/redis';
 let redisReadOnly: Redis | null = null;
 let redisReadWrite: Redis | null = null;
 
+export class RedisConfigError extends Error {
+  name = 'RedisConfigError';
+}
+
 export function getUpstashRedisClient(readOnly: boolean): Redis {
   const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
   const writeToken = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -11,10 +15,14 @@ export function getUpstashRedisClient(readOnly: boolean): Redis {
   const token = readOnly ? readToken : writeToken;
 
   if (!url) {
-    throw new Error('KV_REST_API_URL (or UPSTASH_REDIS_REST_URL) environment variable is not set');
+    throw new RedisConfigError(
+      'Missing Redis URL. Set KV_REST_API_URL (Vercel KV) or UPSTASH_REDIS_REST_URL (Upstash).'
+    );
   }
   if (!token) {
-    throw new Error('KV_REST_API_TOKEN (or UPSTASH_REDIS_REST_TOKEN) environment variable is not set');
+    throw new RedisConfigError(
+      'Missing Redis token. Set KV_REST_API_TOKEN (Vercel KV) or UPSTASH_REDIS_REST_TOKEN (Upstash).'
+    );
   }
 
   if (readOnly) {

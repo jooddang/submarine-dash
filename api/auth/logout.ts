@@ -1,7 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { clearSessionCookie, deleteSession } from '../_lib/auth';
+import { RedisConfigError } from '../_lib/redis';
 
-export const config = { runtime: 'nodejs' };
+export const config = { runtime: 'nodejs20.x' };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -15,6 +16,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     clearSessionCookie(res);
     return res.status(200).json({ ok: true });
   } catch (error) {
+    if (error instanceof RedisConfigError) {
+      console.error('Auth logout API redis config error:', error.message);
+      // Logout is best-effort; if storage isn't configured, just clear the cookie.
+      clearSessionCookie(res);
+      return res.status(200).json({ ok: true });
+    }
     console.error('Auth logout API error:', error);
     return res.status(500).json({
       error: 'Internal server error',

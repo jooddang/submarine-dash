@@ -3,7 +3,7 @@ import { sanitizeLeaderboardName } from '../shared/profanity.js';
 import { getUser, getUserIdForSession } from './_lib/auth';
 import { getUpstashRedisClient } from './_lib/redis';
 
-export const config = { runtime: 'nodejs' };
+export const config = { runtime: 'nodejs20.x' };
 
 const LEADERBOARD_KEY = 'submarine-dash:leaderboard';
 const MAX_ENTRIES = 5;

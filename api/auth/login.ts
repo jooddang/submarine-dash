@@ -6,9 +6,9 @@ import {
   keyLoginId,
   verifyPassword,
 } from '../_lib/auth';
-import { getUpstashRedisClient } from '../_lib/redis';
+import { getUpstashRedisClient, RedisConfigError } from '../_lib/redis';
 
-export const config = { runtime: 'nodejs' };
+export const config = { runtime: 'nodejs20.x' };
 
 type LoginBody = {
   loginId: string;
@@ -63,6 +63,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       refCode: user.refCode,
     });
   } catch (error) {
+    if (error instanceof RedisConfigError) {
+      console.error('Auth login API redis config error:', error.message);
+      return res.status(503).json({ error: 'Server not configured', details: error.message });
+    }
     console.error('Auth login API error:', error);
     return res.status(500).json({
       error: 'Internal server error',

@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getUserIdForSession, KEY_PREFIX } from '../_lib/auth';
 import { getUpstashRedisClient } from '../_lib/redis';
 
-export const config = { runtime: 'nodejs' };
+export const config = { runtime: 'nodejs20.x' };
 
 type MissionType = 'reach_score' | 'play_runs' | 'collect_oxygen';
 
