@@ -8,7 +8,7 @@ import {
 } from '../_lib/auth';
 import { getUpstashRedisClient, RedisConfigError } from '../_lib/redis';
 
-export const config = { runtime: 'nodejs20.x' };
+export const config = { runtime: 'nodejs' };
 
 type LoginBody = {
   loginId: string;
