@@ -5,8 +5,8 @@ import { initAudio, playSound } from "./audio";
 import { interpolateColor } from "./graphics";
 import { createBubble, spawnBackgroundEntity } from "./entities";
 import { drawSwordfish, drawUrchin, drawBackgroundEntities, drawTurtleShell } from "./drawing";
-import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay } from "./components/UIOverlays";
-import { leaderboardAPI } from "./api";
+import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, AuthModal } from "./components/UIOverlays";
+import { authAPI, leaderboardAPI } from "./api";
 import turtleRescueImg from "../turtle.png";
 import turtleShellItemImg from "../turtle-shell-item.png";
 
@@ -95,6 +95,14 @@ export const DeepDiveGame = () => {
   const [lastSubmittedId, setLastSubmittedId] = useState<number | null>(null);
 
   const [playerName, setPlayerName] = useState("");
+  const [authUser, setAuthUser] = useState<{ userId: string; loginId: string; refCode: string } | null>(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [authLoginId, setAuthLoginId] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authBusy, setAuthBusy] = useState(false);
+  const pendingSubmitRef = useRef<boolean>(false);
 
   useEffect(() => {
     // Load leaderboard from backend API
@@ -109,6 +117,13 @@ export const DeepDiveGame = () => {
     };
 
     loadLeaderboard();
+
+    // Load auth session (if any)
+    const loadMe = async () => {
+      const me = await authAPI.me();
+      setAuthUser(me);
+    };
+    loadMe();
 
     // Initialize audio eagerly for better mobile support
     initAudio();
@@ -163,12 +178,10 @@ export const DeepDiveGame = () => {
     };
 
     const handleTouchStart = (e: TouchEvent) => {
-      // Allow typing in name input by not preventing default behavior on form elements
-      if (gameStateRef.current === "INPUT_NAME") {
-        const target = e.target as HTMLElement;
-        if (target.tagName === "INPUT" || target.tagName === "BUTTON") {
-          return;
-        }
+      // Allow interacting with UI controls (login button, inputs, etc.) without starting the run.
+      const target = e.target as HTMLElement;
+      if (target?.tagName === "INPUT" || target?.tagName === "BUTTON") {
+        return;
       }
 
       // Initialize audio BEFORE preventing default to ensure it's treated as user interaction
@@ -189,12 +202,10 @@ export const DeepDiveGame = () => {
     };
 
     const handleTouchEnd = (e: TouchEvent) => {
-      // Allow typing in name input
-      if (gameStateRef.current === "INPUT_NAME") {
-        const target = e.target as HTMLElement;
-        if (target.tagName === "INPUT" || target.tagName === "BUTTON") {
-          return;
-        }
+      // Allow interacting with UI controls (login button, inputs, etc.)
+      const target = e.target as HTMLElement;
+      if (target?.tagName === "INPUT" || target?.tagName === "BUTTON") {
+        return;
       }
 
       if (e.cancelable) {
@@ -478,7 +489,16 @@ export const DeepDiveGame = () => {
 
   const submitHighScore = async (e: React.FormEvent) => {
     e.preventDefault();
-    const name = playerName.trim() || "Anonymous";
+    // Logged-in users may choose a different leaderboard name per submission.
+    // If blank, server will default it to the user's loginId.
+    const name = playerName.trim();
+
+    if (!authUser) {
+      pendingSubmitRef.current = true;
+      setAuthMode("login");
+      setAuthModalOpen(true);
+      return;
+    }
 
     try {
       const result = await leaderboardAPI.submitScore(name, scoreRef.current);
@@ -495,6 +515,40 @@ export const DeepDiveGame = () => {
     didSubmitRef.current = true;
     gameStateRef.current = "GAME_OVER";
     setGameState("GAME_OVER");
+  };
+
+  const handleAuthSubmit = async () => {
+    setAuthError(null);
+    setAuthBusy(true);
+    try {
+      const loginId = authLoginId.trim();
+      const password = authPassword;
+      const user =
+        authMode === "signup"
+          ? await authAPI.register(loginId, password)
+          : await authAPI.login(loginId, password);
+      setAuthUser(user);
+      setAuthModalOpen(false);
+      setAuthLoginId("");
+      setAuthPassword("");
+      if (pendingSubmitRef.current) {
+        pendingSubmitRef.current = false;
+        // Retry submit (now authenticated). Keep the same score + chosen name.
+        const result = await leaderboardAPI.submitScore(playerName.trim(), scoreRef.current);
+        if (result) {
+          setLeaderboard(result.leaderboard);
+          leaderboardRef.current = result.leaderboard;
+          setLastSubmittedId(result.entry.id);
+        }
+        didSubmitRef.current = true;
+        gameStateRef.current = "GAME_OVER";
+        setGameState("GAME_OVER");
+      }
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "Auth failed");
+    } finally {
+      setAuthBusy(false);
+    }
   };
 
   // --- Main Game Loop ---
@@ -1146,7 +1200,20 @@ export const DeepDiveGame = () => {
       )}
 
       {gameState === "MENU" && (
-        <MenuOverlay leaderboard={leaderboard} lastSubmittedId={lastSubmittedId} />
+        <MenuOverlay
+          leaderboard={leaderboard}
+          lastSubmittedId={lastSubmittedId}
+          loginId={authUser?.loginId ?? null}
+          onLogoutClick={async () => {
+            await authAPI.logout();
+            setAuthUser(null);
+          }}
+          onLoginClick={() => {
+            setAuthError(null);
+            setAuthMode("login");
+            setAuthModalOpen(true);
+          }}
+        />
       )}
 
       {gameState === "INPUT_NAME" && (
@@ -1154,6 +1221,13 @@ export const DeepDiveGame = () => {
           score={score}
           playerName={playerName}
           setPlayerName={setPlayerName}
+          isLoggedIn={!!authUser}
+          loginId={authUser?.loginId ?? null}
+          onOpenLogin={() => {
+            setAuthError(null);
+            setAuthMode("login");
+            setAuthModalOpen(true);
+          }}
           onSubmit={submitHighScore}
         />
       )}
@@ -1166,6 +1240,23 @@ export const DeepDiveGame = () => {
           lastSubmittedId={lastSubmittedId}
         />
       )}
+
+      <AuthModal
+        open={authModalOpen}
+        mode={authMode}
+        setMode={setAuthMode}
+        loginId={authLoginId}
+        setLoginId={setAuthLoginId}
+        password={authPassword}
+        setPassword={setAuthPassword}
+        error={authError}
+        isBusy={authBusy}
+        onClose={() => {
+          pendingSubmitRef.current = false;
+          setAuthModalOpen(false);
+        }}
+        onSubmit={handleAuthSubmit}
+      />
     </div>
   );
 };

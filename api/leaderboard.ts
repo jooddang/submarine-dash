@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { Redis } from '@upstash/redis';
 import { sanitizeLeaderboardName } from '../shared/profanity.js';
+import { getUser, getUserIdForSession } from './_lib/auth';
+import { getUpstashRedisClient } from './_lib/redis';
 
 const LEADERBOARD_KEY = 'submarine-dash:leaderboard';
 const MAX_ENTRIES = 5;
@@ -8,6 +9,7 @@ const MAX_ENTRIES = 5;
 interface LeaderboardEntry {
   id: number;
   name: string;
+  userId?: string; // loginId
   score: number;
 }
 
@@ -30,35 +32,6 @@ function parseLeaderboard(data: unknown): LeaderboardEntry[] {
 
   // Any other type: treat as invalid/corrupt
   return [];
-}
-
-let redisReadOnly: Redis | null = null;
-let redisReadWrite: Redis | null = null;
-
-function getUpstashRedisClient(readOnly: boolean): Redis {
-  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-  const token = readOnly
-    ? (process.env.KV_REST_API_READ_ONLY_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN)
-    : (process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN);
-
-  if (!url) {
-    throw new Error('KV_REST_API_URL (or UPSTASH_REDIS_REST_URL) environment variable is not set');
-  }
-  if (!token) {
-    throw new Error('KV_REST_API_TOKEN (or UPSTASH_REDIS_REST_TOKEN) environment variable is not set');
-  }
-
-  if (readOnly) {
-    if (!redisReadOnly) {
-      redisReadOnly = new Redis({ url, token });
-    }
-    return redisReadOnly;
-  }
-
-  if (!redisReadWrite) {
-    redisReadWrite = new Redis({ url, token });
-  }
-  return redisReadWrite;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -88,10 +61,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (req.method === 'POST') {
-      // Submit new score
+      // Submit new score (requires login)
+      const userId = await getUserIdForSession(req);
+      if (!userId) {
+        return res.status(401).json({ error: 'Login required' });
+      }
+      const user = await getUser(userId);
+      if (!user) {
+        return res.status(401).json({ error: 'Login required' });
+      }
+
       const { name, score } = req.body;
 
-      if (!name || typeof score !== 'number') {
+      if (typeof score !== 'number') {
         return res.status(400).json({ error: 'Invalid name or score' });
       }
 
@@ -99,9 +81,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const data = await client.get(LEADERBOARD_KEY);
       const leaderboard = parseLeaderboard(data);
 
+      const requestedName = typeof name === 'string' ? name.trim() : '';
+      const finalName = requestedName ? await sanitizeLeaderboardName(requestedName) : user.loginId;
+
       const newEntry: LeaderboardEntry = {
         id: Date.now(),
-        name: await sanitizeLeaderboardName(name),
+        name: finalName,
+        userId: user.loginId,
         score
       };
 

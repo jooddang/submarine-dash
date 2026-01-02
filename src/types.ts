@@ -66,5 +66,6 @@ export interface BackgroundEntity {
 export interface LeaderboardEntry {
   id: number;
   name: string;
+  userId?: string; // loginId (shown alongside name when a custom name is used)
   score: number;
 }

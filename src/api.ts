@@ -20,6 +20,12 @@ const getApiBaseUrl = () => {
 
 const API_BASE_URL = getApiBaseUrl();
 
+export type AuthUser = {
+  userId: string;
+  loginId: string;
+  refCode: string;
+};
+
 export const leaderboardAPI = {
   // Get current leaderboard
   async getLeaderboard(): Promise<LeaderboardEntry[]> {
@@ -49,6 +55,7 @@ export const leaderboardAPI = {
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({ name, score }),
       });
 
@@ -74,4 +81,52 @@ export const leaderboardAPI = {
       return false;
     }
   }
+};
+
+export const authAPI = {
+  async me(): Promise<AuthUser | null> {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/me`, { credentials: 'include' });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data?.user ?? null;
+    } catch {
+      return null;
+    }
+  },
+
+  async register(loginId: string, password: string): Promise<AuthUser> {
+    const res = await fetch(`${API_BASE_URL}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ loginId, password }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Register failed (status=${res.status}) ${text}`);
+    }
+    return await res.json();
+  },
+
+  async login(loginId: string, password: string): Promise<AuthUser> {
+    const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ loginId, password }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Login failed (status=${res.status}) ${text}`);
+    }
+    return await res.json();
+  },
+
+  async logout(): Promise<void> {
+    await fetch(`${API_BASE_URL}/api/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+    }).catch(() => undefined);
+  },
 };
