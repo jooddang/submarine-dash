@@ -502,7 +502,10 @@ export const DeepDiveGame = () => {
     const au = authUserRef.current;
     if (au && !didSendRunEndRef.current) {
       didSendRunEndRef.current = true;
-      missionsAPI.postEvent({ type: "run_end", score: finalScore });
+      missionsAPI
+        .postEvent({ type: "run_end", score: finalScore })
+        .then(() => refreshDailyMissions())
+        .catch(() => undefined);
     }
 
     const lb = leaderboardRef.current;

@@ -172,6 +172,15 @@ export const missionsAPI = {
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
       body: JSON.stringify(event),
-    }).catch(() => undefined);
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          throw new Error(`Failed to post mission event (status=${res.status}) ${text}`);
+        }
+      })
+      .catch((err) => {
+        console.warn('Mission event failed:', err);
+      });
   },
 };
