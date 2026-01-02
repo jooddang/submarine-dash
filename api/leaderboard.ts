@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { sanitizeLeaderboardName } from '../shared/profanity.js';
-import { getUser, getUserIdForSession } from './_lib/auth';
-import { getUpstashRedisClient } from './_lib/redis';
+import { getUser, getUserIdForSession } from './_lib/auth.js';
+import { getUpstashRedisClient } from './_lib/redis.js';
 
 export const config = { runtime: 'nodejs' };
 

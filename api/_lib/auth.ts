@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getUpstashRedisClient } from './redis';
+import { getUpstashRedisClient } from './redis.js';
 
 export const KEY_PREFIX = 'sd:';
 export const SESSION_COOKIE_NAME = 'sd_session';

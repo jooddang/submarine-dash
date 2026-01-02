@@ -5,8 +5,8 @@ import {
   isRateLimited,
   keyLoginId,
   verifyPassword,
-} from '../_lib/auth';
-import { getUpstashRedisClient, RedisConfigError } from '../_lib/redis';
+} from '../_lib/auth.js';
+import { getUpstashRedisClient, RedisConfigError } from '../_lib/redis.js';
 
 export const config = { runtime: 'nodejs' };
 

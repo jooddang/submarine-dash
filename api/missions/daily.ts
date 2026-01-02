@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getUserIdForSession, KEY_PREFIX } from '../_lib/auth';
-import { getUpstashRedisClient } from '../_lib/redis';
+import { getUserIdForSession, KEY_PREFIX } from '../_lib/auth.js';
+import { getUpstashRedisClient } from '../_lib/redis.js';
 
 export const config = { runtime: 'nodejs' };
 
