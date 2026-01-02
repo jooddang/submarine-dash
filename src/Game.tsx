@@ -5,8 +5,8 @@ import { initAudio, playSound } from "./audio";
 import { interpolateColor } from "./graphics";
 import { createBubble, spawnBackgroundEntity } from "./entities";
 import { drawSwordfish, drawUrchin, drawBackgroundEntities, drawTurtleShell } from "./drawing";
-import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, AuthModal } from "./components/UIOverlays";
-import { authAPI, leaderboardAPI } from "./api";
+import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, AuthModal, DailyMissionsPanel } from "./components/UIOverlays";
+import { authAPI, leaderboardAPI, missionsAPI, type DailyMissionsResponse } from "./api";
 import turtleRescueImg from "../turtle.png";
 import turtleShellItemImg from "../turtle-shell-item.png";
 
@@ -38,6 +38,7 @@ export const DeepDiveGame = () => {
   const scoreRef = useRef<number>(0);
   const gameStateRef = useRef<GameState>("MENU");
   const didSubmitRef = useRef<boolean>(false);
+  const didSendRunEndRef = useRef<boolean>(false);
 
   // Input Ref
   const isJumpInputActiveRef = useRef<boolean>(false);
@@ -96,6 +97,9 @@ export const DeepDiveGame = () => {
 
   const [playerName, setPlayerName] = useState("");
   const [authUser, setAuthUser] = useState<{ userId: string; loginId: string; refCode: string } | null>(null);
+  // Important: the game loop + global event listeners are registered once and can capture stale state.
+  // Mirror auth state into a ref so gameplay-side logic always sees the latest auth status.
+  const authUserRef = useRef<{ userId: string; loginId: string; refCode: string } | null>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [authLoginId, setAuthLoginId] = useState("");
@@ -103,6 +107,17 @@ export const DeepDiveGame = () => {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
   const pendingSubmitRef = useRef<boolean>(false);
+  const [streakOpen, setStreakOpen] = useState(false);
+  const [dailyMissions, setDailyMissions] = useState<DailyMissionsResponse | null>(null);
+
+  const refreshDailyMissions = async () => {
+    try {
+      const data = await missionsAPI.getDaily();
+      setDailyMissions(data);
+    } catch (e) {
+      console.error("Failed to fetch daily missions:", e);
+    }
+  };
 
   useEffect(() => {
     // Load leaderboard from backend API
@@ -124,6 +139,7 @@ export const DeepDiveGame = () => {
       setAuthUser(me);
     };
     loadMe();
+    refreshDailyMissions();
 
     // Initialize audio eagerly for better mobile support
     initAudio();
@@ -136,6 +152,16 @@ export const DeepDiveGame = () => {
 
     return () => cancelAnimationFrame(requestRef.current);
   }, []);
+
+  useEffect(() => {
+    authUserRef.current = authUser;
+  }, [authUser]);
+
+  useEffect(() => {
+    // Refresh missions when auth changes (login/logout)
+    refreshDailyMissions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUser?.userId]);
 
   useEffect(() => {
     const img = new Image();
@@ -265,6 +291,7 @@ export const DeepDiveGame = () => {
     distanceRef.current = 0;
     quickSandTimerRef.current = null;
     didSubmitRef.current = false;
+    didSendRunEndRef.current = false;
 
     swordfishTimerRef.current = 0;
     isSwordfishActiveRef.current = false;
@@ -472,6 +499,11 @@ export const DeepDiveGame = () => {
   const gameOver = () => {
     const finalScore = scoreRef.current;
     didSubmitRef.current = false;
+    const au = authUserRef.current;
+    if (au && !didSendRunEndRef.current) {
+      didSendRunEndRef.current = true;
+      missionsAPI.postEvent({ type: "run_end", score: finalScore });
+    }
 
     const lb = leaderboardRef.current;
     const isQualified = finalScore > 0 && (lb.length < 5 || finalScore > lb[lb.length - 1].score);
@@ -531,6 +563,7 @@ export const DeepDiveGame = () => {
       setAuthModalOpen(false);
       setAuthLoginId("");
       setAuthPassword("");
+      refreshDailyMissions();
       if (pendingSubmitRef.current) {
         pendingSubmitRef.current = false;
         // Retry submit (now authenticated). Keep the same score + chosen name.
@@ -939,6 +972,9 @@ export const DeepDiveGame = () => {
           oxygenRef.current = Math.min(Constants.OXYGEN_MAX, oxygenRef.current + Constants.OXYGEN_RESTORE);
           setOxygen(oxygenRef.current);
           playSound('oxygen');
+          if (authUserRef.current) {
+            missionsAPI.postEvent({ type: "oxygen_collected", count: 1 });
+          }
           return false;
         } else if (item.type === "SWORDFISH") {
           isSwordfishActiveRef.current = true;
@@ -1207,11 +1243,16 @@ export const DeepDiveGame = () => {
           onLogoutClick={async () => {
             await authAPI.logout();
             setAuthUser(null);
+            refreshDailyMissions();
           }}
           onLoginClick={() => {
             setAuthError(null);
             setAuthMode("login");
             setAuthModalOpen(true);
+          }}
+          onStreakClick={() => {
+            setStreakOpen(true);
+            refreshDailyMissions();
           }}
         />
       )}
@@ -1256,6 +1297,15 @@ export const DeepDiveGame = () => {
           setAuthModalOpen(false);
         }}
         onSubmit={handleAuthSubmit}
+      />
+
+      <DailyMissionsPanel
+        open={streakOpen}
+        onClose={() => setStreakOpen(false)}
+        date={dailyMissions?.date ?? null}
+        streakCurrent={dailyMissions?.user ? dailyMissions.user.streak.current : 0}
+        missions={dailyMissions?.missions ?? []}
+        progress={dailyMissions?.user ? dailyMissions.user.progress : null}
       />
     </div>
   );

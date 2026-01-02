@@ -79,6 +79,18 @@ const modalCardStyle: React.CSSProperties = {
   textAlign: "center",
 };
 
+const panelTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: "1.35rem",
+  color: "#00ffff",
+};
+
+const panelSubtitleStyle: React.CSSProperties = {
+  margin: "6px 0 0 0",
+  fontSize: "0.95rem",
+  color: "rgba(255,255,255,0.8)",
+};
+
 interface AuthModalProps {
   open: boolean;
   mode: AuthMode;
@@ -233,6 +245,121 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   );
 };
 
+type DailyMission = {
+  id: string;
+  title: string;
+  target: number;
+  type: "reach_score" | "play_runs" | "collect_oxygen";
+};
+
+type DailyMissionsPanelProps = {
+  open: boolean;
+  onClose: () => void;
+  date: string | null;
+  streakCurrent: number | null;
+  missions: DailyMission[];
+  progress: { runs: number; oxygenCollected: number; maxScore: number; completedMissionIds: string[] } | null;
+};
+
+function missionProgressLabel(m: DailyMission, progress: DailyMissionsPanelProps["progress"]) {
+  if (!progress) return "—";
+  if (m.type === "reach_score") return `${Math.min(progress.maxScore, m.target)}/${m.target}`;
+  if (m.type === "play_runs") return `${Math.min(progress.runs, m.target)}/${m.target}`;
+  return `${Math.min(progress.oxygenCollected, m.target)}/${m.target}`;
+}
+
+export const DailyMissionsPanel: React.FC<DailyMissionsPanelProps> = ({
+  open,
+  onClose,
+  date,
+  streakCurrent,
+  missions,
+  progress,
+}) => {
+  if (!open) return null;
+  const completed = new Set(progress?.completedMissionIds || []);
+  return (
+    <div style={modalBackdropStyle} onMouseDown={onClose}>
+      <div style={modalCardStyle} onMouseDown={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <div style={{ textAlign: "left" }}>
+            <h2 style={panelTitleStyle}>STREAK</h2>
+            <p style={panelSubtitleStyle}>
+              {date ? `Today (${date})` : "Today"} ·{" "}
+              <span style={{ color: "#ffd700", fontWeight: 800 }}>{streakCurrent ?? 0} day</span>
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "rgba(255,255,255,0.85)",
+              fontSize: "20px",
+              cursor: "pointer",
+              padding: "6px 10px",
+            }}
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div style={{ marginTop: 14, textAlign: "left" }}>
+          {missions.length === 0 ? (
+            <div style={{ color: "rgba(255,255,255,0.75)" }}>No missions found.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {missions.map((m) => {
+                const isDone = completed.has(m.id);
+                return (
+                  <div
+                    key={m.id}
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 12,
+                      border: `1px solid ${isDone ? "rgba(0,255,255,0.65)" : "rgba(255,255,255,0.18)"}`,
+                      background: isDone ? "rgba(0,255,255,0.08)" : "rgba(0,0,0,0.22)",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 12,
+                    }}
+                  >
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <div style={{ fontWeight: 800, color: isDone ? "#00ffff" : "rgba(255,255,255,0.95)" }}>
+                        {m.title}
+                      </div>
+                      <div style={{ fontSize: "0.9rem", color: "rgba(255,255,255,0.75)" }}>
+                        Progress: {missionProgressLabel(m, progress)}
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "0.9rem",
+                        fontWeight: 900,
+                        color: isDone ? "#00ffff" : "rgba(255,255,255,0.55)",
+                      }}
+                    >
+                      {isDone ? "DONE" : ""}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {!progress && (
+            <div style={{ marginTop: 12, fontSize: "0.95rem", color: "rgba(255,255,255,0.8)" }}>
+              Log in to track progress.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // Leaderboard Component
 interface LeaderboardProps {
   leaderboard: LeaderboardEntry[];
@@ -362,9 +489,21 @@ interface MenuOverlayProps {
   onLoginClick?: () => void;
   loginId?: string | null;
   onLogoutClick?: () => void;
+  onStreakClick?: () => void;
+  onInboxClick?: () => void;
+  inboxCount?: number;
 }
 
-export const MenuOverlay: React.FC<MenuOverlayProps> = ({ leaderboard, lastSubmittedId, onLoginClick, loginId, onLogoutClick }) => (
+export const MenuOverlay: React.FC<MenuOverlayProps> = ({
+  leaderboard,
+  lastSubmittedId,
+  onLoginClick,
+  loginId,
+  onLogoutClick,
+  onStreakClick,
+  onInboxClick,
+  inboxCount,
+}) => (
   <div style={overlayStyle}>
     <h1 style={titleStyle}>DEEP DIVE DASH</h1>
     <p style={subtitleStyle}>Press SPACE to Start</p>
@@ -373,6 +512,66 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({ leaderboard, lastSubmi
       Beware of <span style={{ color: "#a67b5b", fontWeight: "bold" }}>Quick Sand</span> and <span style={{ color: "#e67e22", fontWeight: "bold" }}>Urchins</span>!<br />
       Collect <span style={{ color: "#5dade2", fontWeight: "bold" }}>Swordfish</span> for 3x SPEED & INVINCIBILITY!<br />
       Controls: Spacebar (Hold for High Jump) / Arrow Up
+    </div>
+
+    <div style={{ marginTop: "18px", display: "flex", flexDirection: "column", gap: "10px", alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
+        {onStreakClick && (
+          <button
+            type="button"
+            onClick={onStreakClick}
+            style={{
+              padding: "10px 18px",
+              fontSize: "1.05rem",
+              background: "rgba(0,0,0,0.25)",
+              color: "rgba(255,255,255,0.9)",
+              border: "1px solid rgba(255,255,255,0.25)",
+              borderRadius: "10px",
+              cursor: "pointer",
+              fontWeight: 700,
+            }}
+          >
+            STREAK
+          </button>
+        )}
+        {onInboxClick && (
+          <button
+            type="button"
+            onClick={onInboxClick}
+            style={{
+              padding: "10px 18px",
+              fontSize: "1.05rem",
+              background: "rgba(0,0,0,0.25)",
+              color: "rgba(255,255,255,0.9)",
+              border: "1px solid rgba(255,255,255,0.25)",
+              borderRadius: "10px",
+              cursor: "pointer",
+              fontWeight: 700,
+              position: "relative",
+            }}
+          >
+            INBOX
+            {!!inboxCount && inboxCount > 0 && (
+              <span
+                style={{
+                  position: "absolute",
+                  top: -8,
+                  right: -8,
+                  background: "#ff6b6b",
+                  color: "white",
+                  borderRadius: 999,
+                  padding: "2px 7px",
+                  fontSize: 12,
+                  fontWeight: 900,
+                  border: "2px solid rgba(0, 20, 40, 0.95)",
+                }}
+              >
+                {inboxCount}
+              </span>
+            )}
+          </button>
+        )}
+      </div>
     </div>
 
     {loginId ? (

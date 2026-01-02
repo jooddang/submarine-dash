@@ -130,3 +130,48 @@ export const authAPI = {
     }).catch(() => undefined);
   },
 };
+
+export type DailyMission = {
+  id: string;
+  type: 'reach_score' | 'play_runs' | 'collect_oxygen';
+  title: string;
+  target: number;
+};
+
+export type DailyMissionsResponse =
+  | { date: string; missions: DailyMission[]; user: null }
+  | {
+      date: string;
+      missions: DailyMission[];
+      user: {
+        progress: {
+          runs: number;
+          oxygenCollected: number;
+          maxScore: number;
+          completedMissionIds: string[];
+          keptAt?: number;
+        };
+        streak: { current: number; lastKeptDate: string | null; updatedAt: number };
+      };
+    };
+
+export const missionsAPI = {
+  async getDaily(): Promise<DailyMissionsResponse> {
+    const res = await fetch(`${API_BASE_URL}/api/missions/daily`, { credentials: 'include' });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Failed to fetch daily missions (status=${res.status}) ${text}`);
+    }
+    return await res.json();
+  },
+
+  async postEvent(event: { type: 'run_end'; score: number } | { type: 'oxygen_collected'; count?: number }): Promise<void> {
+    // Best-effort; mission tracking should not block gameplay.
+    await fetch(`${API_BASE_URL}/api/missions/event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(event),
+    }).catch(() => undefined);
+  },
+};

@@ -174,6 +174,76 @@ async function getUser(userId) {
   return JSON.parse(raw);
 }
 
+// --- Missions (dev backend) ---
+function todayKeyUTC(d = new Date()) {
+  return d.toISOString().slice(0, 10);
+}
+
+function yesterdayKeyUTC(d = new Date()) {
+  const t = new Date(d);
+  t.setUTCDate(t.getUTCDate() - 1);
+  return t.toISOString().slice(0, 10);
+}
+
+function keyDailyMissions(date) {
+  return `${KEY_PREFIX}missions:daily:${date}`;
+}
+
+function keyUserDaily(userId, date) {
+  return `${KEY_PREFIX}user:${userId}:daily:${date}`;
+}
+
+function keyUserStreak(userId) {
+  return `${KEY_PREFIX}user:${userId}:streak`;
+}
+
+function defaultMissions() {
+  return [
+    { id: 'reach_800', type: 'reach_score', title: 'Reach 800 points', target: 800 },
+    { id: 'runs_3', type: 'play_runs', title: 'Play 3 runs', target: 3 },
+    { id: 'oxygen_3', type: 'collect_oxygen', title: 'Collect 3 oxygen tanks', target: 3 },
+  ];
+}
+
+function computeCompleted(missions, progress) {
+  const out = new Set(progress.completedMissionIds || []);
+  for (const m of missions) {
+    if (m.type === 'reach_score' && (progress.maxScore || 0) >= m.target) out.add(m.id);
+    if (m.type === 'play_runs' && (progress.runs || 0) >= m.target) out.add(m.id);
+    if (m.type === 'collect_oxygen' && (progress.oxygenCollected || 0) >= m.target) out.add(m.id);
+  }
+  return [...out];
+}
+
+function hasAnyCompletion(before, after) {
+  if (!after || after.length === 0) return false;
+  if (!before || before.length === 0) return after.length > 0;
+  const b = new Set(before);
+  for (const a of after) if (!b.has(a)) return true;
+  return false;
+}
+
+function areAllMissionsCompleted(missions, completedMissionIds) {
+  if (!missions || missions.length === 0) return false;
+  const done = new Set(completedMissionIds || []);
+  return missions.every((m) => done.has(m.id));
+}
+
+async function keepTodayAndUpdateStreak(userId, date, progress) {
+  const streakKey = keyUserStreak(userId);
+  const streakRaw = await redis.get(streakKey);
+  const streak = streakRaw ? JSON.parse(streakRaw) : { current: 0, lastKeptDate: null, updatedAt: Date.now() };
+
+  if (streak.lastKeptDate === date) return streak;
+
+  const yday = yesterdayKeyUTC();
+  const next = streak.lastKeptDate === yday ? (streak.current + 1) : 1;
+  const updated = { current: next, lastKeptDate: date, updatedAt: Date.now() };
+  progress.keptAt = Date.now();
+  await redis.set(streakKey, JSON.stringify(updated));
+  return updated;
+}
+
 // Helper functions
 async function getLeaderboard() {
   if (!redis) {
@@ -295,6 +365,85 @@ app.get('/api/auth/me', async (req, res) => {
     return res.json({ user: { userId: user.userId, loginId: user.loginId, refCode: user.refCode } });
   } catch (e) {
     console.error('GET /api/auth/me error:', e);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/missions/daily', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const date = todayKeyUTC();
+
+    const missionsRaw = await redis.get(keyDailyMissions(date));
+    const missions = missionsRaw ? JSON.parse(missionsRaw) : defaultMissions();
+
+    const userId = await getUserIdForSession(req);
+    if (!userId) {
+      return res.json({ date, missions, user: null });
+    }
+
+    const progressRaw = await redis.get(keyUserDaily(userId, date));
+    const progress = progressRaw
+      ? JSON.parse(progressRaw)
+      : { runs: 0, oxygenCollected: 0, maxScore: 0, completedMissionIds: [] };
+    progress.completedMissionIds = computeCompleted(missions, progress);
+
+    const streakRaw = await redis.get(keyUserStreak(userId));
+    const streak = streakRaw ? JSON.parse(streakRaw) : { current: 0, lastKeptDate: null, updatedAt: Date.now() };
+
+    return res.json({ date, missions, user: { progress, streak } });
+  } catch (e) {
+    console.error('GET /api/missions/daily error:', e);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/missions/event', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Login required' });
+
+    const body = req.body || {};
+    if (!body.type) return res.status(400).json({ error: 'Invalid event' });
+
+    const date = todayKeyUTC();
+    const missionsRaw = await redis.get(keyDailyMissions(date));
+    const missions = missionsRaw ? JSON.parse(missionsRaw) : defaultMissions();
+
+    const progressKey = keyUserDaily(userId, date);
+    const progressRaw = await redis.get(progressKey);
+    const progress = progressRaw
+      ? JSON.parse(progressRaw)
+      : { runs: 0, oxygenCollected: 0, maxScore: 0, completedMissionIds: [] };
+
+    const completedBefore = computeCompleted(missions, progress);
+
+    if (body.type === 'run_end') {
+      const score = typeof body.score === 'number' ? body.score : 0;
+      progress.runs += 1;
+      progress.maxScore = Math.max(progress.maxScore, score);
+    } else if (body.type === 'oxygen_collected') {
+      const count = typeof body.count === 'number' && body.count > 0 ? Math.floor(body.count) : 1;
+      progress.oxygenCollected += count;
+    } else {
+      return res.status(400).json({ error: 'Invalid event' });
+    }
+
+    const completedAfter = computeCompleted(missions, progress);
+    progress.completedMissionIds = completedAfter;
+
+    // Kept/Streak rule (per ticket): only when ALL daily missions are completed.
+    const shouldKeepToday = areAllMissionsCompleted(missions, completedAfter);
+    if (shouldKeepToday) {
+      await keepTodayAndUpdateStreak(userId, date, progress);
+    }
+
+    await redis.set(progressKey, JSON.stringify(progress));
+    return res.json({ date, progress });
+  } catch (e) {
+    console.error('POST /api/missions/event error:', e);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
