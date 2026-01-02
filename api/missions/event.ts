@@ -56,7 +56,11 @@ function parseJson<T>(raw: unknown, fallback: T): T {
   if (typeof raw === 'string') {
     const t = raw.trim();
     if (!t) return fallback;
-    return JSON.parse(t) as T;
+    try {
+      return JSON.parse(t) as T;
+    } catch {
+      return fallback;
+    }
   }
   return raw as T;
 }
@@ -128,54 +132,60 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const userId = await getUserIdForSession(req);
-  if (!userId) return res.status(401).json({ error: 'Login required' });
+  try {
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Login required' });
 
-  const body = (req.body || {}) as Partial<MissionEvent>;
-  if (!body.type) return res.status(400).json({ error: 'Invalid event' });
+    const body = (req.body || {}) as Partial<MissionEvent>;
+    if (!body.type) return res.status(400).json({ error: 'Invalid event' });
 
-  const date = todayKeyUTC();
-  const redisRO = getUpstashRedisClient(true);
-  const redisRW = getUpstashRedisClient(false);
+    const date = todayKeyUTC();
+    const redisRO = getUpstashRedisClient(true);
+    const redisRW = getUpstashRedisClient(false);
 
-  const missionsRaw = await redisRO.get(keyDailyMissions(date));
-  const missions = parseJson<DailyMission[]>(missionsRaw, defaultMissions());
+    const missionsRaw = await redisRO.get(keyDailyMissions(date));
+    const missions = parseJson<DailyMission[]>(missionsRaw, defaultMissions());
 
-  const progressKey = keyUserDaily(userId, date);
-  const progressRaw = await redisRO.get(progressKey);
-  const progress = parseJson<DailyProgress>(
-    progressRaw,
-    { runs: 0, oxygenCollected: 0, maxScore: 0, completedMissionIds: [] }
-  );
+    const progressKey = keyUserDaily(userId, date);
+    const progressRaw = await redisRO.get(progressKey);
+    const progress = parseJson<DailyProgress>(
+      progressRaw,
+      { runs: 0, oxygenCollected: 0, maxScore: 0, completedMissionIds: [] }
+    );
 
-  const completedBefore = computeCompleted(missions, progress);
+    if (body.type === 'run_end') {
+      const score = typeof body.score === 'number' ? body.score : 0;
+      progress.runs += 1;
+      progress.maxScore = Math.max(progress.maxScore, score);
+    } else if (body.type === 'oxygen_collected') {
+      const count = typeof body.count === 'number' && body.count > 0 ? Math.floor(body.count) : 1;
+      progress.oxygenCollected += count;
+    } else {
+      return res.status(400).json({ error: 'Invalid event' });
+    }
 
-  if (body.type === 'run_end') {
-    const score = typeof body.score === 'number' ? body.score : 0;
-    progress.runs += 1;
-    progress.maxScore = Math.max(progress.maxScore, score);
-  } else if (body.type === 'oxygen_collected') {
-    const count = typeof body.count === 'number' && body.count > 0 ? Math.floor(body.count) : 1;
-    progress.oxygenCollected += count;
-  } else {
-    return res.status(400).json({ error: 'Invalid event' });
+    const completedAfter = computeCompleted(missions, progress);
+    progress.completedMissionIds = completedAfter;
+
+    // Kept/Streak rule (per ticket): only when ALL daily missions are completed.
+    const shouldKeepToday = areAllMissionsCompleted(missions, completedAfter);
+    if (shouldKeepToday) {
+      await keepTodayAndUpdateStreak({ userId, date, progress });
+    }
+
+    await redisRW.set(progressKey, JSON.stringify(progress));
+
+    return res.status(200).json({
+      date,
+      progress,
+    });
+  } catch (error) {
+    console.error('Missions event API error:', error);
+    return res.status(500).json({
+      error: 'Internal server error',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
   }
-
-  const completedAfter = computeCompleted(missions, progress);
-  progress.completedMissionIds = completedAfter;
-
-  // Kept/Streak rule (per ticket): only when ALL daily missions are completed.
-  const shouldKeepToday = areAllMissionsCompleted(missions, completedAfter);
-  if (shouldKeepToday) {
-    await keepTodayAndUpdateStreak({ userId, date, progress });
-  }
-
-  await redisRW.set(progressKey, JSON.stringify(progress));
-
-  return res.status(200).json({
-    date,
-    progress,
-  });
 }
 
 

@@ -54,7 +54,11 @@ function parseJson<T>(raw: unknown, fallback: T): T {
   if (typeof raw === 'string') {
     const t = raw.trim();
     if (!t) return fallback;
-    return JSON.parse(t) as T;
+    try {
+      return JSON.parse(t) as T;
+    } catch {
+      return fallback;
+    }
   }
   return raw as T;
 }
@@ -76,43 +80,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
-  const userId = await getUserIdForSession(req);
-  if (!userId) {
-    // Guests can still fetch the mission definitions for UI (progress requires login).
+  try {
+    const userId = await getUserIdForSession(req);
+    if (!userId) {
+      // Guests can still fetch the mission definitions for UI (progress requires login).
+      const date = todayKeyUTC();
+      const redisRO = getUpstashRedisClient(true);
+      const missionsRaw = await redisRO.get(keyDailyMissions(date));
+      const missions = parseJson<DailyMission[]>(missionsRaw, defaultMissions());
+      return res.status(200).json({
+        date,
+        missions,
+        user: null,
+      });
+    }
+
     const date = todayKeyUTC();
     const redisRO = getUpstashRedisClient(true);
     const missionsRaw = await redisRO.get(keyDailyMissions(date));
+    const progressRaw = await redisRO.get(keyUserDaily(userId, date));
+    const streakRaw = await redisRO.get(keyUserStreak(userId));
+
     const missions = parseJson<DailyMission[]>(missionsRaw, defaultMissions());
+    const progress = parseJson<DailyProgress>(
+      progressRaw,
+      { runs: 0, oxygenCollected: 0, maxScore: 0, completedMissionIds: [] }
+    );
+    const streak = parseJson<StreakRecord>(streakRaw, { current: 0, lastKeptDate: null, updatedAt: Date.now() });
+
+    const completedMissionIds = computeCompleted(missions, progress);
+
     return res.status(200).json({
       date,
       missions,
-      user: null,
+      user: {
+        progress: { ...progress, completedMissionIds },
+        streak,
+      },
+    });
+  } catch (error) {
+    console.error('Missions daily API error:', error);
+    return res.status(500).json({
+      error: 'Internal server error',
+      details: error instanceof Error ? error.message : 'Unknown error',
     });
   }
-
-  const date = todayKeyUTC();
-  const redisRO = getUpstashRedisClient(true);
-  const missionsRaw = await redisRO.get(keyDailyMissions(date));
-  const progressRaw = await redisRO.get(keyUserDaily(userId, date));
-  const streakRaw = await redisRO.get(keyUserStreak(userId));
-
-  const missions = parseJson<DailyMission[]>(missionsRaw, defaultMissions());
-  const progress = parseJson<DailyProgress>(
-    progressRaw,
-    { runs: 0, oxygenCollected: 0, maxScore: 0, completedMissionIds: [] }
-  );
-  const streak = parseJson<StreakRecord>(streakRaw, { current: 0, lastKeptDate: null, updatedAt: Date.now() });
-
-  const completedMissionIds = computeCompleted(missions, progress);
-
-  return res.status(200).json({
-    date,
-    missions,
-    user: {
-      progress: { ...progress, completedMissionIds },
-      streak,
-    },
-  });
 }
 
 

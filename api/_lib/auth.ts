@@ -120,7 +120,11 @@ export async function getUser(userId: string): Promise<UserRecord | null> {
   const raw = await redis.get(keyUser(userId));
   if (!raw) return null;
   if (typeof raw === 'string') {
-    return JSON.parse(raw) as UserRecord;
+    try {
+      return JSON.parse(raw) as UserRecord;
+    } catch {
+      return null;
+    }
   }
   return raw as UserRecord;
 }
