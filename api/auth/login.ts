@@ -8,6 +8,8 @@ import {
 } from '../_lib/auth';
 import { getUpstashRedisClient } from '../_lib/redis';
 
+export const config = { runtime: 'nodejs' };
+
 type LoginBody = {
   loginId: string;
   password: string;
