@@ -433,6 +433,48 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+app.post('/api/auth/change-password', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+
+    const ip = (req.headers['x-forwarded-for'] || '').toString().split(',')[0]?.trim() || req.ip || 'unknown';
+    if (await isRateLimited(`changePassword:${ip}`, 10, 60)) return res.status(429).json({ error: 'Too many requests' });
+
+    const loginId = (req.body?.loginId || '').toString().trim();
+    const currentPassword = (req.body?.currentPassword || '').toString();
+    const newPassword = (req.body?.newPassword || '').toString();
+
+    if (!loginId || !currentPassword || !newPassword) return res.status(400).json({ error: 'Invalid request' });
+    if (newPassword.length < 8 || newPassword.length > 72) return res.status(400).json({ error: 'Invalid new password' });
+
+    const loginIdLower = loginId.toLowerCase();
+    if (await isRateLimited(`changePassword:${ip}:${loginIdLower}`, 5, 60)) return res.status(429).json({ error: 'Too many requests' });
+
+    const userId = await redis.get(keyLoginId(loginIdLower));
+    if (!userId) return res.status(401).json({ error: 'Invalid credentials' });
+
+    const user = await getUser(userId);
+    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+
+    const ok = await verifyPassword(currentPassword, user.passwordSalt, user.passwordHash);
+    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+
+    const { saltB64, hashB64 } = await hashPassword(newPassword);
+    user.passwordSalt = saltB64;
+    user.passwordHash = hashB64;
+    await redis.set(keyUser(user.userId), JSON.stringify(user));
+
+    const token = generateId('sess');
+    await redis.set(keySession(token), user.userId, 'EX', SESSION_TTL_SECONDS);
+    setSessionCookie(req, res, token);
+
+    return res.json({ userId: user.userId, loginId: user.loginId, refCode: user.refCode });
+  } catch (e) {
+    console.error('POST /api/auth/change-password error:', e);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.post('/api/auth/logout', async (req, res) => {
   try {
     if (!redis) return res.json({ ok: true });

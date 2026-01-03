@@ -157,6 +157,20 @@ export const authAPI = {
       credentials: 'include',
     }).catch(() => undefined);
   },
+
+  async changePassword(loginId: string, currentPassword: string, newPassword: string): Promise<AuthUser> {
+    const res = await fetch(`${API_BASE_URL}/api/auth/change-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ loginId, currentPassword, newPassword }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Change password failed (status=${res.status}) ${text}`);
+    }
+    return await res.json();
+  },
 };
 
 export type DailyMission = {

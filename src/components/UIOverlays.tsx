@@ -4,7 +4,7 @@ import { OXYGEN_MAX } from "../constants";
 import turtleShellItemImg from "../../turtle-shell-item.png";
 import dolphinItemImg from "../../dolphin.png";
 
-type AuthMode = "login" | "signup";
+type AuthMode = "login" | "signup" | "changePassword";
 
 // Styles
 const overlayStyle: React.CSSProperties = {
@@ -105,6 +105,10 @@ interface AuthModalProps {
   setLoginId: (v: string) => void;
   password: string;
   setPassword: (v: string) => void;
+  newPassword: string;
+  setNewPassword: (v: string) => void;
+  newPasswordConfirm: string;
+  setNewPasswordConfirm: (v: string) => void;
   error: string | null;
   isBusy: boolean;
   onClose: () => void;
@@ -120,6 +124,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   setLoginId,
   password,
   setPassword,
+  newPassword,
+  setNewPassword,
+  newPasswordConfirm,
+  setNewPasswordConfirm,
   error,
   isBusy,
   onClose,
@@ -132,7 +140,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       <div style={modalCardStyle} onMouseDown={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
           <h2 style={{ margin: 0, fontSize: "1.4rem", color: "#00ffff" }}>
-            {mode === "login" ? "LOG IN" : "SIGN UP"}
+            {mode === "login" ? "LOG IN" : mode === "signup" ? "SIGN UP" : "CHANGE PASSWORD"}
           </h2>
           <button
             type="button"
@@ -168,21 +176,71 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               textAlign: "center",
             }}
           />
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Password (min 8 chars)"
-            maxLength={72}
-            style={{
-              width: "min(380px, 100%)",
-              padding: "10px",
-              fontSize: "1.05rem",
-              borderRadius: 8,
-              border: "none",
-              textAlign: "center",
-            }}
-          />
+          {mode !== "changePassword" ? (
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Password (min 8 chars)"
+              maxLength={72}
+              style={{
+                width: "min(380px, 100%)",
+                padding: "10px",
+                fontSize: "1.05rem",
+                borderRadius: 8,
+                border: "none",
+                textAlign: "center",
+              }}
+            />
+          ) : (
+            <>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Current password"
+                maxLength={72}
+                style={{
+                  width: "min(380px, 100%)",
+                  padding: "10px",
+                  fontSize: "1.05rem",
+                  borderRadius: 8,
+                  border: "none",
+                  textAlign: "center",
+                }}
+              />
+              <input
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="New password (min 8 chars)"
+                maxLength={72}
+                style={{
+                  width: "min(380px, 100%)",
+                  padding: "10px",
+                  fontSize: "1.05rem",
+                  borderRadius: 8,
+                  border: "none",
+                  textAlign: "center",
+                }}
+              />
+              <input
+                type="password"
+                value={newPasswordConfirm}
+                onChange={(e) => setNewPasswordConfirm(e.target.value)}
+                placeholder="Confirm new password"
+                maxLength={72}
+                style={{
+                  width: "min(380px, 100%)",
+                  padding: "10px",
+                  fontSize: "1.05rem",
+                  borderRadius: 8,
+                  border: "none",
+                  textAlign: "center",
+                }}
+              />
+            </>
+          )}
 
           {error && (
             <div style={{ color: "#ff6b6b", fontSize: "0.95rem" }}>{error}</div>
@@ -206,26 +264,102 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               opacity: isBusy ? 0.7 : 1,
             }}
           >
-            {isBusy ? "PLEASE WAIT..." : (mode === "login" ? "LOG IN" : "SIGN UP")}
+            {isBusy ? "PLEASE WAIT..." : (mode === "login" ? "LOG IN" : mode === "signup" ? "SIGN UP" : "CHANGE PASSWORD")}
           </button>
 
           <div style={{ marginTop: 6, fontSize: "0.95rem", color: "rgba(255,255,255,0.8)" }}>
-            {mode === "login" ? "New here?" : "Already have an account?"}{" "}
-            <button
-              type="button"
-              onClick={() => setMode(mode === "login" ? "signup" : "login")}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "#00ffff",
-                cursor: "pointer",
-                fontWeight: 800,
-                textDecoration: "underline",
-                padding: 0,
-              }}
-            >
-              {mode === "login" ? "Sign up" : "Log in"}
-            </button>
+            {mode === "login" ? (
+              <>
+                New here?{" "}
+                <button
+                  type="button"
+                  onClick={() => setMode("signup")}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#00ffff",
+                    cursor: "pointer",
+                    fontWeight: 800,
+                    textDecoration: "underline",
+                    padding: 0,
+                  }}
+                >
+                  Sign up
+                </button>
+                {" · "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("changePassword");
+                  }}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#00ffff",
+                    cursor: "pointer",
+                    fontWeight: 800,
+                    textDecoration: "underline",
+                    padding: 0,
+                  }}
+                >
+                  Change password
+                </button>
+              </>
+            ) : mode === "signup" ? (
+              <>
+                Already have an account?{" "}
+                <button
+                  type="button"
+                  onClick={() => setMode("login")}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#00ffff",
+                    cursor: "pointer",
+                    fontWeight: 800,
+                    textDecoration: "underline",
+                    padding: 0,
+                  }}
+                >
+                  Log in
+                </button>
+              </>
+            ) : (
+              <>
+                Back to{" "}
+                <button
+                  type="button"
+                  onClick={() => setMode("login")}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#00ffff",
+                    cursor: "pointer",
+                    fontWeight: 800,
+                    textDecoration: "underline",
+                    padding: 0,
+                  }}
+                >
+                  Log in
+                </button>
+                {" · "}
+                <button
+                  type="button"
+                  onClick={() => setMode("signup")}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#00ffff",
+                    cursor: "pointer",
+                    fontWeight: 800,
+                    textDecoration: "underline",
+                    padding: 0,
+                  }}
+                >
+                  Sign up
+                </button>
+              </>
+            )}
           </div>
 
           {onContinueAsGuest && (

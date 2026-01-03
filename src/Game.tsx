@@ -110,9 +110,11 @@ export const DeepDiveGame = () => {
   // Mirror auth state into a ref so gameplay-side logic always sees the latest auth status.
   const authUserRef = useRef<AuthUser | null>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [authMode, setAuthMode] = useState<"login" | "signup" | "changePassword">("login");
   const [authLoginId, setAuthLoginId] = useState("");
   const [authPassword, setAuthPassword] = useState("");
+  const [authNewPassword, setAuthNewPassword] = useState("");
+  const [authNewPasswordConfirm, setAuthNewPasswordConfirm] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
   const pendingSubmitRef = useRef<boolean>(false);
@@ -838,18 +840,55 @@ export const DeepDiveGame = () => {
 
   const handleAuthSubmit = async () => {
     setAuthError(null);
+
+    const loginId = authLoginId.trim();
+    if (!loginId) {
+      setAuthError("Login ID is required");
+      return;
+    }
+
+    if (authMode === "changePassword") {
+      const currentPassword = authPassword;
+      const newPassword = authNewPassword;
+      const newPasswordConfirm = authNewPasswordConfirm;
+
+      if (!currentPassword) {
+        setAuthError("Current password is required");
+        return;
+      }
+      if (!newPassword || newPassword.length < 8) {
+        setAuthError("New password must be at least 8 characters");
+        return;
+      }
+      if (newPassword !== newPasswordConfirm) {
+        setAuthError("New password confirmation does not match");
+        return;
+      }
+    } else {
+      const password = authPassword;
+      if (!password || password.length < 8) {
+        setAuthError("Password must be at least 8 characters");
+        return;
+      }
+    }
+
     setAuthBusy(true);
     try {
-      const loginId = authLoginId.trim();
-      const password = authPassword;
-      const user =
-        authMode === "signup"
-          ? await authAPI.register(loginId, password)
-          : await authAPI.login(loginId, password);
+      let user: AuthUser;
+      if (authMode === "signup") {
+        user = await authAPI.register(loginId, authPassword);
+      } else if (authMode === "changePassword") {
+        user = await authAPI.changePassword(loginId, authPassword, authNewPassword);
+      } else {
+        user = await authAPI.login(loginId, authPassword);
+      }
+
       setAuthUser(user);
       setAuthModalOpen(false);
       setAuthLoginId("");
       setAuthPassword("");
+      setAuthNewPassword("");
+      setAuthNewPasswordConfirm("");
       refreshDailyMissions();
       if (pendingSubmitRef.current) {
         pendingSubmitRef.current = false;
@@ -1594,6 +1633,10 @@ export const DeepDiveGame = () => {
         setLoginId={setAuthLoginId}
         password={authPassword}
         setPassword={setAuthPassword}
+        newPassword={authNewPassword}
+        setNewPassword={setAuthNewPassword}
+        newPasswordConfirm={authNewPasswordConfirm}
+        setNewPasswordConfirm={setAuthNewPasswordConfirm}
         error={authError}
         isBusy={authBusy}
         onClose={() => {
