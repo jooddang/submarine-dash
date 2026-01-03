@@ -118,6 +118,18 @@ export const DeepDiveGame = () => {
   const pendingSubmitRef = useRef<boolean>(false);
   const [streakOpen, setStreakOpen] = useState(false);
   const [dailyMissions, setDailyMissions] = useState<DailyMissionsResponse | null>(null);
+  const initialPageStyleRef = useRef<{
+    bodyOverflow: string;
+    htmlOverflow: string;
+    bodyTouchAction: string;
+  } | null>(null);
+  const touchGestureRef = useRef<{
+    active: boolean;
+    moved: boolean;
+    allowScroll: boolean;
+    startX: number;
+    startY: number;
+  }>({ active: false, moved: false, allowScroll: false, startX: 0, startY: 0 });
   const pendingDolphinRewardRef = useRef<boolean>(false);
   const lastSeenStreakRef = useRef<number | null>(null);
   const lastAwardedStreakRef = useRef<number>(0);
@@ -314,25 +326,34 @@ export const DeepDiveGame = () => {
   // --- Input Handling ---
   useEffect(() => {
     // Hard lock page scroll during gameplay (prevents wheel/trackpad scroll and mobile overscroll).
-    // Keep enabled scrolling on MENU / GAME_OVER so the weekly history panel can be scrolled.
-    const prev = {
-      bodyOverflow: document.body.style.overflow,
-      htmlOverflow: document.documentElement.style.overflow,
-      bodyTouchAction: document.body.style.touchAction,
-    };
+    // MENU/GAME_OVER scroll is handled inside the overlay containers.
+    if (!initialPageStyleRef.current) {
+      initialPageStyleRef.current = {
+        bodyOverflow: document.body.style.overflow,
+        htmlOverflow: document.documentElement.style.overflow,
+        bodyTouchAction: document.body.style.touchAction,
+      };
+    }
+    const initial = initialPageStyleRef.current;
+    if (!initial) return;
+
     if (gameState === "PLAYING") {
       document.body.style.overflow = "hidden";
       document.documentElement.style.overflow = "hidden";
       document.body.style.touchAction = "none";
     } else {
-      document.body.style.overflow = prev.bodyOverflow;
-      document.documentElement.style.overflow = prev.htmlOverflow;
-      document.body.style.touchAction = prev.bodyTouchAction;
+      document.body.style.overflow = initial.bodyOverflow;
+      document.documentElement.style.overflow = initial.htmlOverflow;
+      document.body.style.touchAction = initial.bodyTouchAction;
     }
+
     return () => {
-      document.body.style.overflow = prev.bodyOverflow;
-      document.documentElement.style.overflow = prev.htmlOverflow;
-      document.body.style.touchAction = prev.bodyTouchAction;
+      // On unmount, restore initial styles.
+      const init = initialPageStyleRef.current;
+      if (!init) return;
+      document.body.style.overflow = init.bodyOverflow;
+      document.documentElement.style.overflow = init.htmlOverflow;
+      document.body.style.touchAction = init.bodyTouchAction;
     };
   }, [gameState]);
 
@@ -369,10 +390,18 @@ export const DeepDiveGame = () => {
       if (target?.tagName === "INPUT" || target?.tagName === "BUTTON") {
         return;
       }
-      // Allow scrolling inside the historical leaderboard panel on MENU/GAME_OVER.
-      // We mark the scroll container with data-allow-scroll="1".
-      const inScrollablePanel = !!target?.closest?.('[data-allow-scroll="1"]');
-      if (inScrollablePanel && gameStateRef.current !== "PLAYING") {
+      const allowScroll = !!target?.closest?.('[data-allow-scroll="1"]');
+      const isMenuLike = gameStateRef.current === "MENU" || gameStateRef.current === "GAME_OVER";
+      if (isMenuLike) {
+        // Don't start immediately on touchstart; allow scroll gestures.
+        const t = e.touches && e.touches[0];
+        touchGestureRef.current = {
+          active: true,
+          moved: false,
+          allowScroll,
+          startX: t ? t.clientX : 0,
+          startY: t ? t.clientY : 0,
+        };
         return;
       }
 
@@ -388,8 +417,6 @@ export const DeepDiveGame = () => {
       if (gameStateRef.current === "PLAYING") {
         const jumped = attemptJump();
         if (jumped) jumpBufferTimerRef.current = 0;
-      } else if (gameStateRef.current === "MENU" || gameStateRef.current === "GAME_OVER") {
-        startGame();
       }
     };
 
@@ -399,8 +426,15 @@ export const DeepDiveGame = () => {
       if (target?.tagName === "INPUT" || target?.tagName === "BUTTON") {
         return;
       }
-      const inScrollablePanel = !!target?.closest?.('[data-allow-scroll="1"]');
-      if (inScrollablePanel && gameStateRef.current !== "PLAYING") {
+      const isMenuLike = gameStateRef.current === "MENU" || gameStateRef.current === "GAME_OVER";
+      if (isMenuLike) {
+        // Start game only on a tap (no meaningful movement).
+        const g = touchGestureRef.current;
+        touchGestureRef.current.active = false;
+        if (!g.moved) {
+          initAudio();
+          startGame();
+        }
         return;
       }
 
@@ -411,6 +445,18 @@ export const DeepDiveGame = () => {
     };
 
     const handleTouchMove = (e: TouchEvent) => {
+      const isMenuLike = gameStateRef.current === "MENU" || gameStateRef.current === "GAME_OVER";
+      if (isMenuLike) {
+        const g = touchGestureRef.current;
+        if (!g.active) return;
+        const t = e.touches && e.touches[0];
+        if (!t) return;
+        const dx = Math.abs(t.clientX - g.startX);
+        const dy = Math.abs(t.clientY - g.startY);
+        if (dx + dy > 10) g.moved = true; // treat as scroll gesture
+        return; // allow overlay scroll
+      }
+
       // While playing, never allow page scroll / drag.
       if (gameStateRef.current !== "PLAYING") return;
       if (e.cancelable) e.preventDefault();

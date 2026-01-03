@@ -16,13 +16,18 @@ const overlayStyle: React.CSSProperties = {
   background: "rgba(0, 30, 54, 0.85)",
   display: "flex",
   flexDirection: "column",
-  justifyContent: "center",
+  justifyContent: "flex-start",
   alignItems: "center",
   padding: "24px 16px",
+  paddingBottom: "40px",
   boxSizing: "border-box",
   color: "white",
   textAlign: "center",
-  zIndex: 10
+  zIndex: 10,
+  overflowY: "auto",
+  WebkitOverflowScrolling: "touch",
+  touchAction: "pan-y",
+  overscrollBehavior: "contain",
 };
 
 const titleStyle: React.CSSProperties = {
@@ -797,7 +802,7 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
   inboxCount,
   streakCurrent,
 }) => (
-  <div style={overlayStyle}>
+  <div style={overlayStyle} data-allow-scroll="1">
     <h1 style={titleStyle}>DEEP DIVE DASH</h1>
     <p style={subtitleStyle}>Press SPACE to Start</p>
     <div style={instructionStyle}>
@@ -990,7 +995,7 @@ interface InputNameOverlayProps {
 }
 
 export const InputNameOverlay: React.FC<InputNameOverlayProps> = ({ score, playerName, setPlayerName, isLoggedIn, loginId, onOpenLogin, onSubmit }) => (
-  <div style={overlayStyle}>
+  <div style={{ ...overlayStyle, justifyContent: "center" }}>
     <h1 style={{ ...titleStyle, fontSize: "3rem", color: "#ffd700" }}>NEW HIGH SCORE!</h1>
     <p style={{ fontSize: "1.5rem", marginBottom: "20px" }}>Score: {score}</p>
     <form onSubmit={onSubmit} style={{ display: "flex", flexDirection: "column", gap: "10px", alignItems: "center" }}>
@@ -1065,7 +1070,7 @@ interface GameOverOverlayProps {
 }
 
 export const GameOverOverlay: React.FC<GameOverOverlayProps> = ({ score, didSubmit, leaderboard, lastSubmittedId, weeklyLeaderboards, currentWeekId }) => (
-  <div style={overlayStyle}>
+  <div style={overlayStyle} data-allow-scroll="1">
     <h1 style={{ ...titleStyle, color: didSubmit ? "#ffd700" : "#ff6b6b" }}>
       {didSubmit ? "LEADERBOARD" : "GAME OVER"}
     </h1>
