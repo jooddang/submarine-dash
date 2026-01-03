@@ -82,6 +82,8 @@ export const DeepDiveGame = () => {
   const devForceLongQuickSandOnceRef = useRef<boolean>(false);
   const rescueTurtleImgRef = useRef<HTMLImageElement | null>(null);
   const turtleShellItemImgRef = useRef<HTMLImageElement | null>(null);
+  // Dolphin (saved item): allows 1x mid-air double jump, then consumed
+  const dolphinSavedRef = useRef<boolean>(false);
 
   // --- React State for UI ---
   const [gameState, setGameState] = useState<GameState>("MENU");
@@ -89,6 +91,7 @@ export const DeepDiveGame = () => {
   const [oxygen, setOxygen] = useState(Constants.OXYGEN_MAX);
   const [level, setLevel] = useState(1);
   const [hasTurtleShell, setHasTurtleShell] = useState(false);
+  const [hasDolphin, setHasDolphin] = useState(false);
   const [restartCountdown, setRestartCountdown] = useState<number | null>(null);
 
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
@@ -261,8 +264,41 @@ export const DeepDiveGame = () => {
 
   const attemptJump = () => {
     const player = playerRef.current;
+    if (player.isTrapped || isSwordfishActiveRef.current) return false;
+
+    const isImminentLandingWhileFalling = (): boolean => {
+      // If we're not falling, there's no risk of "buffered landing jump" consuming the dolphin.
+      if (player.dy <= 0) return false;
+
+      // Find the nearest platform directly below the player (by horizontal overlap).
+      const playerLeft = player.x;
+      const playerRight = player.x + player.width;
+      const playerBottom = player.y + player.height;
+
+      let minFramesToLand: number | null = null;
+      for (const plat of platformsRef.current) {
+        const overlapsX = playerRight > plat.x && playerLeft < plat.x + plat.width;
+        if (!overlapsX) continue;
+
+        const dist = plat.y - playerBottom; // vertical gap to the platform top
+        if (dist < 0) continue; // already intersecting/inside; collision system will resolve
+
+        // Estimate frames until contact using discrete kinematics (dy increases by GRAVITY per frame).
+        // Solve: dist ≈ n*dy + 0.5*GRAVITY*n^2  for n >= 0
+        const g = Constants.GRAVITY;
+        const disc = (player.dy * player.dy) + (2 * g * dist);
+        const n = (-player.dy + Math.sqrt(disc)) / g;
+
+        if (!Number.isFinite(n) || n < 0) continue;
+        if (minFramesToLand === null || n < minFramesToLand) minFramesToLand = n;
+      }
+
+      // If landing is imminent, treat jump input as a buffered ground jump rather than a dolphin double jump.
+      return minFramesToLand !== null && minFramesToLand <= 8;
+    };
+
     // Initial Jump Logic
-    if (player.grounded && !player.isTrapped && !isSwordfishActiveRef.current) {
+    if (player.grounded) {
       player.dy = Constants.JUMP_FORCE_INITIAL;
       player.grounded = false;
       player.rotation = -20;
@@ -270,6 +306,22 @@ export const DeepDiveGame = () => {
       player.isBoosting = true;
       player.boostTimer = 0;
       playSound('jump'); // Play Jump Sound
+      return true;
+    }
+
+    // Dolphin Double Jump (mid-air). Consumes the saved dolphin.
+    // Important: allow during falling too, but DO NOT consume dolphin when a landing is imminent
+    // (common "press jump slightly before landing" behavior should use the jump buffer instead).
+    if (dolphinSavedRef.current && !isImminentLandingWhileFalling()) {
+      dolphinSavedRef.current = false;
+      setHasDolphin(false);
+
+      player.dy = Constants.JUMP_FORCE_INITIAL;
+      player.grounded = false;
+      player.rotation = -20;
+      player.isBoosting = true;
+      player.boostTimer = 0;
+      playSound('jump');
       return true;
     }
     return false;
@@ -301,6 +353,8 @@ export const DeepDiveGame = () => {
 
     turtleShellSavedRef.current = false;
     setHasTurtleShell(false);
+    dolphinSavedRef.current = false;
+    setHasDolphin(false);
     rescueRef.current = { active: false };
     setRestartCountdown(null);
 
@@ -308,6 +362,11 @@ export const DeepDiveGame = () => {
     if (Constants.DEV_FORCE_TURTLE_SHELL_ON_START) {
       turtleShellSavedRef.current = true;
       setHasTurtleShell(true);
+    }
+    // Dev/testing: start with a saved Dolphin (double jump)
+    if (Constants.DEV_FORCE_DOLPHIN_ON_START) {
+      dolphinSavedRef.current = true;
+      setHasDolphin(true);
     }
 
     setLastSubmittedId(null); // Reset highlight for new game
@@ -1214,7 +1273,7 @@ export const DeepDiveGame = () => {
       />
 
       {gameState === "PLAYING" && (
-        <HUD score={score} level={level} oxygen={oxygen} hasTurtleShell={hasTurtleShell} />
+        <HUD score={score} level={level} oxygen={oxygen} hasTurtleShell={hasTurtleShell} hasDolphin={hasDolphin} />
       )}
 
       {restartCountdown !== null && (

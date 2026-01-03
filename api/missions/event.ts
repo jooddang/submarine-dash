@@ -41,6 +41,24 @@ function yesterdayKeyUTC(d = new Date()): string {
   return t.toISOString().slice(0, 10);
 }
 
+function tzOffsetFromReq(req: VercelRequest): number | null {
+  const raw = req.headers['x-tz-offset-min'];
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  if (!v) return null;
+  const n = Number.parseInt(v, 10);
+  if (!Number.isFinite(n)) return null;
+  // Clamp to plausible range [-14h, +14h]
+  if (n < -14 * 60 || n > 14 * 60) return null;
+  return n;
+}
+
+function dateKeyFromOffsetMinutes(offsetMin: number, nowMs = Date.now()): string {
+  // offsetMin is minutes to add to local time to get UTC (Date.getTimezoneOffset()).
+  // local = utc - offsetMin
+  const localMs = nowMs - offsetMin * 60_000;
+  return new Date(localMs).toISOString().slice(0, 10);
+}
+
 function keyDailyMissions(date: string) {
   return `${KEY_PREFIX}missions:daily:${date}`;
 }
@@ -112,7 +130,8 @@ async function keepTodayAndUpdateStreak(params: {
   const today = date;
   if (streak.lastKeptDate === today) return;
 
-  const yday = yesterdayKeyUTC();
+  // Compute "yesterday" based on the provided `date` to avoid edge cases around midnight.
+  const yday = yesterdayKeyUTC(new Date(`${date}T00:00:00Z`));
   const next = streak.lastKeptDate === yday ? (streak.current + 1) : 1;
   streak.current = next;
   streak.lastKeptDate = today;
@@ -130,7 +149,7 @@ function areAllMissionsCompleted(missions: DailyMission[], completedMissionIds: 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-TZ-Offset-Min');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -141,7 +160,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const body = (req.body || {}) as Partial<MissionEvent>;
     if (!body.type) return res.status(400).json({ error: 'Invalid event' });
 
-    const date = todayKeyUTC();
+    const tzOffsetMin = tzOffsetFromReq(req);
+    const date = tzOffsetMin !== null ? dateKeyFromOffsetMinutes(tzOffsetMin) : todayKeyUTC();
     const redisRO = getUpstashRedisClient(true);
     const redisRW = getUpstashRedisClient(false);
 

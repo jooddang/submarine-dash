@@ -185,6 +185,28 @@ function yesterdayKeyUTC(d = new Date()) {
   return t.toISOString().slice(0, 10);
 }
 
+function tzOffsetFromReq(req) {
+  const raw = req?.headers?.['x-tz-offset-min'];
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  if (!v) return null;
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n)) return null;
+  if (n < -14 * 60 || n > 14 * 60) return null;
+  return n;
+}
+
+function dateKeyFromOffsetMinutes(offsetMin, nowMs = Date.now()) {
+  // offsetMin is minutes to add to local time to get UTC (Date.getTimezoneOffset()).
+  // local = utc - offsetMin
+  const localMs = nowMs - offsetMin * 60_000;
+  return new Date(localMs).toISOString().slice(0, 10);
+}
+
+function todayKeyForReq(req) {
+  const off = tzOffsetFromReq(req);
+  return off !== null ? dateKeyFromOffsetMinutes(off) : todayKeyUTC();
+}
+
 function keyDailyMissions(date) {
   return `${KEY_PREFIX}missions:daily:${date}`;
 }
@@ -236,7 +258,8 @@ async function keepTodayAndUpdateStreak(userId, date, progress) {
 
   if (streak.lastKeptDate === date) return streak;
 
-  const yday = yesterdayKeyUTC();
+  // Compute "yesterday" based on the provided `date` to avoid edge cases around midnight.
+  const yday = yesterdayKeyUTC(new Date(`${date}T00:00:00Z`));
   const next = streak.lastKeptDate === yday ? (streak.current + 1) : 1;
   const updated = { current: next, lastKeptDate: date, updatedAt: Date.now() };
   progress.keptAt = Date.now();
@@ -372,7 +395,7 @@ app.get('/api/auth/me', async (req, res) => {
 app.get('/api/missions/daily', async (req, res) => {
   try {
     if (!redis) return res.status(503).json({ error: 'Redis not connected' });
-    const date = todayKeyUTC();
+    const date = todayKeyForReq(req);
 
     const missionsRaw = await redis.get(keyDailyMissions(date));
     const missions = missionsRaw ? JSON.parse(missionsRaw) : defaultMissions();
@@ -408,7 +431,7 @@ app.post('/api/missions/event', async (req, res) => {
     const body = req.body || {};
     if (!body.type) return res.status(400).json({ error: 'Invalid event' });
 
-    const date = todayKeyUTC();
+    const date = todayKeyForReq(req);
     const missionsRaw = await redis.get(keyDailyMissions(date));
     const missions = missionsRaw ? JSON.parse(missionsRaw) : defaultMissions();
 

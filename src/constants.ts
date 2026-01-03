@@ -34,5 +34,6 @@ export const TURTLE_SHELL_RARITY_DECAY_PER_USE = 1; // chance = baseChance / (1 
 
 // --- Dev / Testing toggles (turn off before shipping) ---
 export const DEV_FORCE_TURTLE_SHELL_ON_START = false;
+export const DEV_FORCE_DOLPHIN_ON_START = true;
 export const DEV_FORCE_LONG_QUICKSAND_AFTER_TURTLE_SHELL = false;
 export const DEV_LONG_QUICKSAND_TILES = 18;

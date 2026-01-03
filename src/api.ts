@@ -20,6 +20,15 @@ const getApiBaseUrl = () => {
 
 const API_BASE_URL = getApiBaseUrl();
 
+function getTimezoneOffsetMinutes(): number {
+  // JS returns minutes to add to local time to get UTC (e.g., KST => -540)
+  return new Date().getTimezoneOffset();
+}
+
+function getTimezoneHeaders(): Record<string, string> {
+  return { 'x-tz-offset-min': String(getTimezoneOffsetMinutes()) };
+}
+
 export type AuthUser = {
   userId: string;
   loginId: string;
@@ -157,7 +166,10 @@ export type DailyMissionsResponse =
 
 export const missionsAPI = {
   async getDaily(): Promise<DailyMissionsResponse> {
-    const res = await fetch(`${API_BASE_URL}/api/missions/daily`, { credentials: 'include' });
+    const res = await fetch(`${API_BASE_URL}/api/missions/daily`, {
+      credentials: 'include',
+      headers: getTimezoneHeaders(),
+    });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       throw new Error(`Failed to fetch daily missions (status=${res.status}) ${text}`);
@@ -169,7 +181,7 @@ export const missionsAPI = {
     // Best-effort; mission tracking should not block gameplay.
     await fetch(`${API_BASE_URL}/api/missions/event`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getTimezoneHeaders() },
       credentials: 'include',
       body: JSON.stringify(event),
     })

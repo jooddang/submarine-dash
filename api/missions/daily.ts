@@ -31,6 +31,24 @@ function todayKeyUTC(d = new Date()): string {
   return d.toISOString().slice(0, 10);
 }
 
+function tzOffsetFromReq(req: VercelRequest): number | null {
+  const raw = req.headers['x-tz-offset-min'];
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  if (!v) return null;
+  const n = Number.parseInt(v, 10);
+  if (!Number.isFinite(n)) return null;
+  // Clamp to plausible range [-14h, +14h]
+  if (n < -14 * 60 || n > 14 * 60) return null;
+  return n;
+}
+
+function dateKeyFromOffsetMinutes(offsetMin: number, nowMs = Date.now()): string {
+  // offsetMin is minutes to add to local time to get UTC (Date.getTimezoneOffset()).
+  // local = utc - offsetMin
+  const localMs = nowMs - offsetMin * 60_000;
+  return new Date(localMs).toISOString().slice(0, 10);
+}
+
 function keyDailyMissions(date: string) {
   return `${KEY_PREFIX}missions:daily:${date}`;
 }
@@ -78,15 +96,17 @@ function computeCompleted(missions: DailyMission[], progress: DailyProgress): st
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-TZ-Offset-Min');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
+    const tzOffsetMin = tzOffsetFromReq(req);
+    const date = tzOffsetMin !== null ? dateKeyFromOffsetMinutes(tzOffsetMin) : todayKeyUTC();
+
     const userId = await getUserIdForSession(req);
     if (!userId) {
       // Guests can still fetch the mission definitions for UI (progress requires login).
-      const date = todayKeyUTC();
       const redisRO = getUpstashRedisClient(true);
       const missionsRaw = await redisRO.get(keyDailyMissions(date));
       const missions = parseJson<DailyMission[]>(missionsRaw, defaultMissions());
@@ -97,7 +117,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    const date = todayKeyUTC();
     const redisRO = getUpstashRedisClient(true);
     const missionsRaw = await redisRO.get(keyDailyMissions(date));
     const progressRaw = await redisRO.get(keyUserDaily(userId, date));

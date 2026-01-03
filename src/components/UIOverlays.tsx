@@ -2,6 +2,7 @@ import React from "react";
 import type { LeaderboardEntry } from "../types";
 import { OXYGEN_MAX } from "../constants";
 import turtleShellItemImg from "../../turtle-shell-item.png";
+import dolphinItemImg from "../../dolphin.png";
 
 type AuthMode = "login" | "signup";
 
@@ -402,9 +403,10 @@ interface HUDProps {
   level: number;
   oxygen: number;
   hasTurtleShell?: boolean;
+  hasDolphin?: boolean;
 }
 
-export const HUD: React.FC<HUDProps> = ({ score, level, oxygen, hasTurtleShell }) => (
+export const HUD: React.FC<HUDProps> = ({ score, level, oxygen, hasTurtleShell, hasDolphin }) => (
   <div style={{
     position: "absolute",
     top: 20,
@@ -448,36 +450,44 @@ export const HUD: React.FC<HUDProps> = ({ score, level, oxygen, hasTurtleShell }
     </div>
     <div style={{ marginTop: "8px", display: "flex", alignItems: "center", gap: "8px" }}>
       <span style={{ fontSize: "14px", opacity: 0.9 }}>SAVED:</span>
-      <div style={{
-        width: 28,
-        height: 28,
-        borderRadius: 8,
-        border: "2px solid rgba(255,255,255,0.9)",
-        background: hasTurtleShell ? "rgba(0,0,0,0.35)" : "rgba(0,0,0,0.15)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        boxShadow: hasTurtleShell ? "0 0 12px rgba(0,255,255,0.35)" : "none"
-      }}>
-        {hasTurtleShell ? (
-          <img
-            src={turtleShellItemImg}
-            alt="Turtle shell saved"
-            width={22}
-            height={22}
-            style={{
-              display: "block",
-              width: 22,
-              height: 22,
-              objectFit: "contain",
-              filter: "drop-shadow(0 2px 0 rgba(0,0,0,0.35))"
-            }}
-            draggable={false}
-          />
-        ) : (
-          <span style={{ fontSize: "14px", opacity: 0.4 }}>—</span>
-        )}
-      </div>
+      {[
+        { has: !!hasTurtleShell, img: turtleShellItemImg, alt: "Turtle shell saved" },
+        { has: !!hasDolphin, img: dolphinItemImg, alt: "Dolphin saved" },
+      ].map((slot, idx) => (
+        <div
+          key={idx}
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: 8,
+            border: "2px solid rgba(255,255,255,0.9)",
+            background: slot.has ? "rgba(0,0,0,0.35)" : "rgba(0,0,0,0.15)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            boxShadow: slot.has ? "0 0 12px rgba(0,255,255,0.35)" : "none"
+          }}
+        >
+          {slot.has ? (
+            <img
+              src={slot.img}
+              alt={slot.alt}
+              width={22}
+              height={22}
+              style={{
+                display: "block",
+                width: 22,
+                height: 22,
+                objectFit: "contain",
+                filter: "drop-shadow(0 2px 0 rgba(0,0,0,0.35))"
+              }}
+              draggable={false}
+            />
+          ) : (
+            <span style={{ fontSize: "14px", opacity: 0.4 }}>—</span>
+          )}
+        </div>
+      ))}
     </div>
   </div>
 );
