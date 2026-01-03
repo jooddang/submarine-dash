@@ -361,6 +361,173 @@ export const DailyMissionsPanel: React.FC<DailyMissionsPanelProps> = ({
   );
 };
 
+// --- Reward / FX overlays ---
+function rand(min: number, max: number) {
+  return Math.random() * (max - min) + min;
+}
+
+const confettiColors = ["#00ffff", "#ffd700", "#ff6b6b", "#7CFF6B", "#B36BFF", "#ffffff"];
+
+const ConfettiCanvas: React.FC<{ active: boolean; durationMs?: number }> = ({ active, durationMs = 2200 }) => {
+  const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
+
+  React.useEffect(() => {
+    if (!active) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const resize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+    resize();
+    window.addEventListener("resize", resize);
+
+    type P = {
+      x: number;
+      y: number;
+      vx: number;
+      vy: number;
+      size: number;
+      rot: number;
+      vr: number;
+      color: string;
+      life: number;
+    };
+
+    const particles: P[] = Array.from({ length: 160 }, () => ({
+      x: rand(0, canvas.width),
+      y: rand(-canvas.height * 0.2, canvas.height * 0.15),
+      vx: rand(-260, 260),
+      vy: rand(80, 420),
+      size: rand(5, 10),
+      rot: rand(0, Math.PI * 2),
+      vr: rand(-10, 10),
+      color: confettiColors[Math.floor(Math.random() * confettiColors.length)],
+      life: rand(0.7, 1.0),
+    }));
+
+    const start = performance.now();
+    let raf = 0;
+    const tick = (t: number) => {
+      const elapsed = t - start;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const dt = 1 / 60;
+      const g = 520;
+
+      for (const p of particles) {
+        p.vy += g * dt;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.rot += p.vr * dt;
+        p.life -= dt / (durationMs / 1000);
+
+        // Wrap horizontally for a fuller spread.
+        if (p.x < -20) p.x = canvas.width + 20;
+        if (p.x > canvas.width + 20) p.x = -20;
+
+        if (p.life <= 0) continue;
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rot);
+        ctx.globalAlpha = Math.max(0, Math.min(1, p.life));
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.65);
+        ctx.restore();
+      }
+
+      if (elapsed < durationMs) {
+        raf = requestAnimationFrame(tick);
+      }
+    };
+    raf = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", resize);
+    };
+  }, [active, durationMs]);
+
+  if (!active) return null;
+  return (
+    <canvas
+      ref={canvasRef}
+      style={{
+        position: "fixed",
+        inset: 0,
+        width: "100%",
+        height: "100%",
+        pointerEvents: "none",
+        zIndex: 80,
+      }}
+    />
+  );
+};
+
+export const DolphinStreakRewardOverlay: React.FC<{ open: boolean; streakDays?: number; onClose: () => void }> = ({ open, streakDays, onClose }) => {
+  if (!open) return null;
+  return (
+    <>
+      <ConfettiCanvas active={open} />
+      <div style={{ ...modalBackdropStyle, zIndex: 90 }} onMouseDown={onClose}>
+        <div style={modalCardStyle} onMouseDown={(e) => e.stopPropagation()}>
+          <h2 style={{ margin: 0, fontSize: "1.45rem", color: "#00ffff" }}>DOLPHIN UNLOCKED!</h2>
+          <p style={{ margin: "10px 0 0 0", color: "rgba(255,255,255,0.85)", lineHeight: 1.55 }}>
+            You earned a <b>Dolphin</b>{typeof streakDays === "number" ? <> for increasing your streak to <b>{streakDays} days</b>.</> : <> for increasing your streak.</>}
+          </p>
+          <p style={{ margin: "8px 0 0 0", color: "rgba(255,255,255,0.75)", lineHeight: 1.45, fontSize: "0.95rem" }}>
+            Streak bonus: once your streak is <b>5+</b>, you get <b>one Dolphin</b> each time your streak increases.
+          </p>
+          <div
+            style={{
+              marginTop: 14,
+              padding: "12px 12px",
+              borderRadius: 12,
+              border: "1px solid rgba(0,255,255,0.35)",
+              background: "rgba(0,255,255,0.08)",
+              textAlign: "left",
+              display: "flex",
+              gap: 12,
+              alignItems: "center",
+            }}
+          >
+            <img src={dolphinItemImg} alt="Dolphin item" width={34} height={34} style={{ width: 34, height: 34 }} draggable={false} />
+            <div>
+              <div style={{ fontWeight: 900, color: "#00ffff" }}>Double Jump</div>
+              <div style={{ marginTop: 3, fontSize: "0.95rem", color: "rgba(255,255,255,0.85)" }}>
+                Jump once more while you’re already in the air. The Dolphin is <b>consumed</b> when used.
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              marginTop: 14,
+              width: "100%",
+              padding: "10px 16px",
+              fontSize: "1.05rem",
+              background: "#00ffff",
+              color: "#001e36",
+              border: "none",
+              borderRadius: 10,
+              cursor: "pointer",
+              fontWeight: 900,
+            }}
+          >
+            OK
+          </button>
+        </div>
+      </div>
+    </>
+  );
+};
+
 // Leaderboard Component
 interface LeaderboardProps {
   leaderboard: LeaderboardEntry[];
@@ -502,6 +669,7 @@ interface MenuOverlayProps {
   onStreakClick?: () => void;
   onInboxClick?: () => void;
   inboxCount?: number;
+  streakCurrent?: number;
 }
 
 export const MenuOverlay: React.FC<MenuOverlayProps> = ({
@@ -513,6 +681,7 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
   onStreakClick,
   onInboxClick,
   inboxCount,
+  streakCurrent,
 }) => (
   <div style={overlayStyle}>
     <h1 style={titleStyle}>DEEP DIVE DASH</h1>
@@ -522,6 +691,60 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
       Beware of <span style={{ color: "#a67b5b", fontWeight: "bold" }}>Quick Sand</span> and <span style={{ color: "#e67e22", fontWeight: "bold" }}>Urchins</span>!<br />
       Collect <span style={{ color: "#5dade2", fontWeight: "bold" }}>Swordfish</span> for 3x SPEED & INVINCIBILITY!<br />
       Controls: Spacebar (Hold for High Jump) / Arrow Up
+    </div>
+
+    <div
+      style={{
+        marginTop: 14,
+        width: "min(760px, 92vw)",
+        borderRadius: 16,
+        border: "1px solid rgba(0,255,255,0.45)",
+        background: (typeof streakCurrent === "number" && streakCurrent >= 5)
+          ? "linear-gradient(135deg, rgba(0,255,255,0.18), rgba(255,215,0,0.12))"
+          : "linear-gradient(135deg, rgba(255,215,0,0.14), rgba(0,255,255,0.10))",
+        padding: "14px 16px",
+        boxSizing: "border-box",
+        display: "flex",
+        gap: 14,
+        alignItems: "center",
+        boxShadow: "0 0 26px rgba(0,255,255,0.18)",
+      }}
+    >
+      <img
+        src={dolphinItemImg}
+        alt="Dolphin item"
+        width={40}
+        height={40}
+        style={{ width: 40, height: 40, filter: "drop-shadow(0 6px 10px rgba(0,0,0,0.35))" }}
+        draggable={false}
+      />
+      <div style={{ textAlign: "left", flex: 1 }}>
+        {(typeof streakCurrent === "number" && streakCurrent >= 5) ? (
+          <>
+            <div style={{ fontWeight: 1000, color: "#00ffff", letterSpacing: 0.9, fontSize: "1.05rem" }}>
+              STREAK BONUS ACTIVE
+            </div>
+            <div style={{ marginTop: 3, color: "rgba(255,255,255,0.92)", lineHeight: 1.35, fontSize: "1.02rem" }}>
+              Each day your streak increases (5+), you earn a <b>Dolphin</b> — a <b>one‑time Double Jump</b>.
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ fontWeight: 1000, color: "#ffd700", letterSpacing: 0.9, fontSize: "1.05rem" }}>
+              HIT A 5‑DAY STREAK
+            </div>
+            <div style={{ marginTop: 3, color: "rgba(255,255,255,0.92)", lineHeight: 1.35, fontSize: "1.02rem" }}>
+              Reach <b>5 days</b> to unlock daily <b>Dolphin</b> rewards whenever your streak increases — a <b>one‑time Double Jump</b>.
+            </div>
+          </>
+        )}
+
+        {typeof streakCurrent === "number" && (
+          <div style={{ marginTop: 6, color: "rgba(255,255,255,0.75)", fontSize: "0.95rem" }}>
+            Current streak: <b style={{ color: "rgba(255,255,255,0.92)" }}>{streakCurrent}</b> day{streakCurrent === 1 ? "" : "s"}
+          </div>
+        )}
+      </div>
     </div>
 
     <div style={{ marginTop: "18px", display: "flex", flexDirection: "column", gap: "10px", alignItems: "center" }}>

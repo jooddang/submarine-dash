@@ -34,6 +34,9 @@ export const TURTLE_SHELL_RARITY_DECAY_PER_USE = 1; // chance = baseChance / (1 
 
 // --- Dev / Testing toggles (turn off before shipping) ---
 export const DEV_FORCE_TURTLE_SHELL_ON_START = false;
-export const DEV_FORCE_DOLPHIN_ON_START = true;
+export const DEV_FORCE_DOLPHIN_ON_START = false;
+// Dev/testing: force-show the "5 day streak reward" moment + grant dolphin (does NOT mark the reward as claimed,
+// so you can repeatedly debug the effect on reload).
+export const DEV_FORCE_DOLPHIN_STREAK_REWARD_MOMENT = false;
 export const DEV_FORCE_LONG_QUICKSAND_AFTER_TURTLE_SHELL = false;
 export const DEV_LONG_QUICKSAND_TILES = 18;

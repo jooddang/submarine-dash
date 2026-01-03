@@ -5,7 +5,7 @@ import { initAudio, playSound } from "./audio";
 import { interpolateColor } from "./graphics";
 import { createBubble, spawnBackgroundEntity } from "./entities";
 import { drawSwordfish, drawUrchin, drawBackgroundEntities, drawTurtleShell } from "./drawing";
-import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, AuthModal, DailyMissionsPanel } from "./components/UIOverlays";
+import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, AuthModal, DailyMissionsPanel, DolphinStreakRewardOverlay } from "./components/UIOverlays";
 import { authAPI, leaderboardAPI, missionsAPI, type DailyMissionsResponse } from "./api";
 import turtleRescueImg from "../turtle.png";
 import turtleShellItemImg from "../turtle-shell-item.png";
@@ -93,6 +93,7 @@ export const DeepDiveGame = () => {
   const [hasTurtleShell, setHasTurtleShell] = useState(false);
   const [hasDolphin, setHasDolphin] = useState(false);
   const [restartCountdown, setRestartCountdown] = useState<number | null>(null);
+  const [dolphinRewardOpen, setDolphinRewardOpen] = useState(false);
 
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const leaderboardRef = useRef<LeaderboardEntry[]>([]);
@@ -112,6 +113,35 @@ export const DeepDiveGame = () => {
   const pendingSubmitRef = useRef<boolean>(false);
   const [streakOpen, setStreakOpen] = useState(false);
   const [dailyMissions, setDailyMissions] = useState<DailyMissionsResponse | null>(null);
+  const pendingDolphinRewardRef = useRef<boolean>(false);
+  const lastSeenStreakRef = useRef<number | null>(null);
+  const lastAwardedStreakRef = useRef<number>(0);
+
+  const DOLPHIN_SAVED_KEY_BASE = "subdash:savedItem:dolphin";
+  const DOLPHIN_STREAK_LAST_AWARDED_KEY_BASE = "subdash:reward:dolphin:streak:lastAwarded";
+
+  const storageUserId = () => authUserRef.current?.userId ?? "guest";
+  const keyForUser = (base: string) => `${base}:${storageUserId()}`;
+
+  const setDolphinSaved = (value: boolean, opts?: { persist?: boolean }) => {
+    dolphinSavedRef.current = value;
+    setHasDolphin(value);
+    if (opts?.persist === false) return;
+    try {
+      localStorage.setItem(keyForUser(DOLPHIN_SAVED_KEY_BASE), value ? "1" : "0");
+    } catch {
+      // ignore (private mode / blocked storage)
+    }
+  };
+
+  const loadDolphinSavedFromStorage = () => {
+    try {
+      const raw = localStorage.getItem(keyForUser(DOLPHIN_SAVED_KEY_BASE));
+      setDolphinSaved(raw === "1", { persist: false });
+    } catch {
+      setDolphinSaved(false, { persist: false });
+    }
+  };
 
   const refreshDailyMissions = async () => {
     try {
@@ -161,10 +191,81 @@ export const DeepDiveGame = () => {
   }, [authUser]);
 
   useEffect(() => {
+    // Load saved dolphin per-user (persists across runs until consumed).
+    loadDolphinSavedFromStorage();
+    // Load last awarded streak per-user to prevent double-awards across reloads.
+    try {
+      const raw = localStorage.getItem(keyForUser(DOLPHIN_STREAK_LAST_AWARDED_KEY_BASE));
+      const n = raw ? Number.parseInt(raw, 10) : 0;
+      lastAwardedStreakRef.current = Number.isFinite(n) ? Math.max(0, n) : 0;
+    } catch {
+      lastAwardedStreakRef.current = 0;
+    }
+    lastSeenStreakRef.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUser?.userId]);
+
+  useEffect(() => {
     // Refresh missions when auth changes (login/logout)
     refreshDailyMissions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authUser?.userId]);
+
+  useEffect(() => {
+    // Dev/testing: force the streak reward moment (confetti + modal) and grant dolphin.
+    if (!Constants.DEV_FORCE_DOLPHIN_STREAK_REWARD_MOMENT) return;
+    setDolphinSaved(true);
+    if (gameStateRef.current === "PLAYING") {
+      pendingDolphinRewardRef.current = true;
+    } else {
+      setDolphinRewardOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    // If we deferred the reward during gameplay, show it as soon as we return to a non-playing screen.
+    if (gameState === "PLAYING") return;
+    if (!pendingDolphinRewardRef.current) return;
+    pendingDolphinRewardRef.current = false;
+    setDolphinRewardOpen(true);
+  }, [gameState]);
+
+  useEffect(() => {
+    // Streak reward: when streak increases AND the new value is 5+,
+    // grant a saved dolphin and celebrate (once per streak increment).
+    const streak = dailyMissions?.user?.streak?.current;
+    if (typeof streak !== "number") return;
+    if (streak < 5) {
+      lastSeenStreakRef.current = streak;
+      return;
+    }
+    if (!authUserRef.current) {
+      lastSeenStreakRef.current = streak;
+      return;
+    }
+
+    const prev = lastSeenStreakRef.current;
+    lastSeenStreakRef.current = streak;
+    if (prev === null) return; // first observation: don't award retroactively
+    if (streak <= prev) return; // only on increase
+    if (streak <= lastAwardedStreakRef.current) return; // already awarded (e.g., after reload)
+
+    lastAwardedStreakRef.current = streak;
+    try {
+      localStorage.setItem(keyForUser(DOLPHIN_STREAK_LAST_AWARDED_KEY_BASE), String(streak));
+    } catch {
+      // ignore (private mode / blocked storage)
+    }
+
+    setDolphinSaved(true);
+    if (gameStateRef.current === "PLAYING") {
+      pendingDolphinRewardRef.current = true;
+    } else {
+      setDolphinRewardOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dailyMissions?.user?.streak?.current]);
 
   useEffect(() => {
     const img = new Image();
@@ -313,8 +414,7 @@ export const DeepDiveGame = () => {
     // Important: allow during falling too, but DO NOT consume dolphin when a landing is imminent
     // (common "press jump slightly before landing" behavior should use the jump buffer instead).
     if (dolphinSavedRef.current && !isImminentLandingWhileFalling()) {
-      dolphinSavedRef.current = false;
-      setHasDolphin(false);
+      setDolphinSaved(false);
 
       player.dy = Constants.JUMP_FORCE_INITIAL;
       player.grounded = false;
@@ -353,8 +453,6 @@ export const DeepDiveGame = () => {
 
     turtleShellSavedRef.current = false;
     setHasTurtleShell(false);
-    dolphinSavedRef.current = false;
-    setHasDolphin(false);
     rescueRef.current = { active: false };
     setRestartCountdown(null);
 
@@ -365,8 +463,7 @@ export const DeepDiveGame = () => {
     }
     // Dev/testing: start with a saved Dolphin (double jump)
     if (Constants.DEV_FORCE_DOLPHIN_ON_START) {
-      dolphinSavedRef.current = true;
-      setHasDolphin(true);
+      setDolphinSaved(true);
     }
 
     setLastSubmittedId(null); // Reset highlight for new game
@@ -1297,10 +1394,17 @@ export const DeepDiveGame = () => {
         </div>
       )}
 
+      <DolphinStreakRewardOverlay
+        open={dolphinRewardOpen}
+        streakDays={dailyMissions?.user ? dailyMissions.user.streak.current : undefined}
+        onClose={() => setDolphinRewardOpen(false)}
+      />
+
       {gameState === "MENU" && (
         <MenuOverlay
           leaderboard={leaderboard}
           lastSubmittedId={lastSubmittedId}
+          streakCurrent={dailyMissions?.user ? dailyMissions.user.streak.current : 0}
           loginId={authUser?.loginId ?? null}
           onLogoutClick={async () => {
             await authAPI.logout();
