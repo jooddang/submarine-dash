@@ -313,6 +313,30 @@ export const DeepDiveGame = () => {
 
   // --- Input Handling ---
   useEffect(() => {
+    // Hard lock page scroll during gameplay (prevents wheel/trackpad scroll and mobile overscroll).
+    // Keep enabled scrolling on MENU / GAME_OVER so the weekly history panel can be scrolled.
+    const prev = {
+      bodyOverflow: document.body.style.overflow,
+      htmlOverflow: document.documentElement.style.overflow,
+      bodyTouchAction: document.body.style.touchAction,
+    };
+    if (gameState === "PLAYING") {
+      document.body.style.overflow = "hidden";
+      document.documentElement.style.overflow = "hidden";
+      document.body.style.touchAction = "none";
+    } else {
+      document.body.style.overflow = prev.bodyOverflow;
+      document.documentElement.style.overflow = prev.htmlOverflow;
+      document.body.style.touchAction = prev.bodyTouchAction;
+    }
+    return () => {
+      document.body.style.overflow = prev.bodyOverflow;
+      document.documentElement.style.overflow = prev.htmlOverflow;
+      document.body.style.touchAction = prev.bodyTouchAction;
+    };
+  }, [gameState]);
+
+  useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       initAudio(); // Ensure audio context is ready
       if (gameStateRef.current === "INPUT_NAME") return;
@@ -345,6 +369,12 @@ export const DeepDiveGame = () => {
       if (target?.tagName === "INPUT" || target?.tagName === "BUTTON") {
         return;
       }
+      // Allow scrolling inside the historical leaderboard panel on MENU/GAME_OVER.
+      // We mark the scroll container with data-allow-scroll="1".
+      const inScrollablePanel = !!target?.closest?.('[data-allow-scroll="1"]');
+      if (inScrollablePanel && gameStateRef.current !== "PLAYING") {
+        return;
+      }
 
       // Initialize audio BEFORE preventing default to ensure it's treated as user interaction
       initAudio();
@@ -369,11 +399,27 @@ export const DeepDiveGame = () => {
       if (target?.tagName === "INPUT" || target?.tagName === "BUTTON") {
         return;
       }
+      const inScrollablePanel = !!target?.closest?.('[data-allow-scroll="1"]');
+      if (inScrollablePanel && gameStateRef.current !== "PLAYING") {
+        return;
+      }
 
       if (e.cancelable) {
         e.preventDefault();
       }
       isJumpInputActiveRef.current = false;
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      // While playing, never allow page scroll / drag.
+      if (gameStateRef.current !== "PLAYING") return;
+      if (e.cancelable) e.preventDefault();
+    };
+
+    const handleWheel = (e: WheelEvent) => {
+      // While playing, never allow page scroll (trackpad / mouse wheel).
+      if (gameStateRef.current !== "PLAYING") return;
+      e.preventDefault();
     };
 
     const handleClick = () => {
@@ -385,12 +431,16 @@ export const DeepDiveGame = () => {
     // passive: false is required to use preventDefault() in touch listeners
     window.addEventListener("touchstart", handleTouchStart, { passive: false });
     window.addEventListener("touchend", handleTouchEnd, { passive: false });
+    window.addEventListener("touchmove", handleTouchMove, { passive: false });
+    window.addEventListener("wheel", handleWheel, { passive: false });
     window.addEventListener("click", handleClick);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("touchstart", handleTouchStart);
       window.removeEventListener("touchend", handleTouchEnd);
+      window.removeEventListener("touchmove", handleTouchMove);
+      window.removeEventListener("wheel", handleWheel);
       window.removeEventListener("click", handleClick);
     };
   }, []);

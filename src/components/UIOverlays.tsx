@@ -635,11 +635,14 @@ export const WeeklyLeaderboardHistory: React.FC<{ weeks: WeeklyLeaderboard[]; ex
         HISTORY (Weekly)
       </div>
       <div
+        data-allow-scroll="1"
         style={{
           marginTop: 8,
           maxHeight: "32vh",
           overflowY: "auto",
           WebkitOverflowScrolling: "touch",
+          touchAction: "pan-y",
+          overscrollBehavior: "contain",
           background: "rgba(0,0,0,0.22)",
           border: "1px solid rgba(255,255,255,0.12)",
           borderRadius: 12,
