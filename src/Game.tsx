@@ -845,7 +845,7 @@ export const DeepDiveGame = () => {
         const currentRightEdge = platformBelow.x + platformBelow.width;
         const futureRightEdge = currentRightEdge - (framesToFall * speedRef.current);
 
-        if (futureRightEdge > player.x + player.width + 30) {
+        if (futureRightEdge > player.x + player.width + 100) {
           isSwordfishActiveRef.current = false;
         } else {
           shouldDescend = true;
