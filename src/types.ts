@@ -69,3 +69,10 @@ export interface LeaderboardEntry {
   userId?: string; // loginId (shown alongside name when a custom name is used)
   score: number;
 }
+
+export type WeeklyLeaderboard = {
+  weekId: string; // YYYY-MM-DD (Monday start, PST/PDT)
+  startDate: string;
+  endDate: string; // Sunday
+  entries: LeaderboardEntry[];
+};

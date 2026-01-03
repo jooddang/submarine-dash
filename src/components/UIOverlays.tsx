@@ -1,5 +1,5 @@
 import React from "react";
-import type { LeaderboardEntry } from "../types";
+import type { LeaderboardEntry, WeeklyLeaderboard } from "../types";
 import { OXYGEN_MAX } from "../constants";
 import turtleShellItemImg from "../../turtle-shell-item.png";
 import dolphinItemImg from "../../dolphin.png";
@@ -528,6 +528,63 @@ export const DolphinStreakRewardOverlay: React.FC<{ open: boolean; streakDays?: 
   );
 };
 
+export const DolphinWeeklyWinnerRewardOverlay: React.FC<{ open: boolean; weekId?: string; onClose: () => void }> = ({ open, weekId, onClose }) => {
+  if (!open) return null;
+  return (
+    <>
+      <ConfettiCanvas active={open} />
+      <div style={{ ...modalBackdropStyle, zIndex: 90 }} onMouseDown={onClose}>
+        <div style={modalCardStyle} onMouseDown={(e) => e.stopPropagation()}>
+          <h2 style={{ margin: 0, fontSize: "1.45rem", color: "#00ffff" }}>WEEKLY #1 REWARD!</h2>
+          <p style={{ margin: "10px 0 0 0", color: "rgba(255,255,255,0.85)", lineHeight: 1.55 }}>
+            You finished <b>#1</b>{weekId ? <> for week <b>{weekId}</b>.</> : <> last week.</>} Here’s a <b>Dolphin</b> reward!
+          </p>
+          <div
+            style={{
+              marginTop: 14,
+              padding: "12px 12px",
+              borderRadius: 12,
+              border: "1px solid rgba(0,255,255,0.35)",
+              background: "rgba(0,255,255,0.08)",
+              textAlign: "left",
+              display: "flex",
+              gap: 12,
+              alignItems: "center",
+            }}
+          >
+            <img src={dolphinItemImg} alt="Dolphin item" width={34} height={34} style={{ width: 34, height: 34 }} draggable={false} />
+            <div>
+              <div style={{ fontWeight: 900, color: "#00ffff" }}>Double Jump</div>
+              <div style={{ marginTop: 3, fontSize: "0.95rem", color: "rgba(255,255,255,0.85)" }}>
+                Jump once more while you’re already in the air. The Dolphin is <b>consumed</b> when used.
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              marginTop: 14,
+              width: "100%",
+              padding: "10px 16px",
+              fontSize: "1.05rem",
+              background: "#00ffff",
+              color: "#001e36",
+              border: "none",
+              borderRadius: 10,
+              cursor: "pointer",
+              fontWeight: 900,
+            }}
+          >
+            OK
+          </button>
+        </div>
+      </div>
+    </>
+  );
+};
+
 // Leaderboard Component
 interface LeaderboardProps {
   leaderboard: LeaderboardEntry[];
@@ -563,6 +620,56 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ leaderboard, lastSubmi
     </table>
   </div>
 );
+
+function weekTitle(w: WeeklyLeaderboard) {
+  const range = w.startDate && w.endDate ? `${w.startDate} → ${w.endDate}` : w.weekId;
+  return `WEEK ${range}`;
+}
+
+export const WeeklyLeaderboardHistory: React.FC<{ weeks: WeeklyLeaderboard[]; excludeWeekId?: string }> = ({ weeks, excludeWeekId }) => {
+  const history = weeks.filter((w) => w && w.entries && w.entries.length > 0 && w.weekId !== excludeWeekId);
+  if (history.length === 0) return null;
+  return (
+    <div style={{ marginTop: 12, textAlign: "left", width: "min(560px, 92vw)" }}>
+      <div style={{ color: "rgba(255,255,255,0.9)", fontWeight: 900, letterSpacing: 0.8 }}>
+        HISTORY (Weekly)
+      </div>
+      <div
+        style={{
+          marginTop: 8,
+          maxHeight: "32vh",
+          overflowY: "auto",
+          WebkitOverflowScrolling: "touch",
+          background: "rgba(0,0,0,0.22)",
+          border: "1px solid rgba(255,255,255,0.12)",
+          borderRadius: 12,
+          padding: "10px 12px",
+          boxSizing: "border-box",
+        }}
+      >
+        {history.map((w) => (
+          <div key={w.weekId} style={{ padding: "10px 0", borderBottom: "1px solid rgba(255,255,255,0.10)" }}>
+            <div style={{ fontWeight: 900, color: "rgba(255,255,255,0.92)" }}>{weekTitle(w)}</div>
+            <div style={{ marginTop: 6 }}>
+              {w.entries.map((e, i) => (
+                <div key={`${w.weekId}:${e.id}:${i}`} style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: "0.98rem" }}>
+                  <div style={{ display: "flex", gap: 8, minWidth: 0 }}>
+                    <span style={{ width: 22, color: "rgba(255,255,255,0.75)" }}>{i + 1}.</span>
+                    <span style={{ overflowWrap: "anywhere" }}>{e.name}</span>
+                  </div>
+                  <div style={{ fontWeight: 800, color: "rgba(255,255,255,0.92)" }}>{e.score}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop: 6, fontSize: "0.9rem", color: "rgba(255,255,255,0.65)" }}>
+        Scroll to view older weeks (newest first).
+      </div>
+    </div>
+  );
+};
 
 // HUD Component
 interface HUDProps {
@@ -663,6 +770,8 @@ export const HUD: React.FC<HUDProps> = ({ score, level, oxygen, hasTurtleShell, 
 interface MenuOverlayProps {
   leaderboard: LeaderboardEntry[];
   lastSubmittedId: number | null;
+  weeklyLeaderboards?: WeeklyLeaderboard[];
+  currentWeekId?: string | null;
   onLoginClick?: () => void;
   loginId?: string | null;
   onLogoutClick?: () => void;
@@ -675,6 +784,8 @@ interface MenuOverlayProps {
 export const MenuOverlay: React.FC<MenuOverlayProps> = ({
   leaderboard,
   lastSubmittedId,
+  weeklyLeaderboards,
+  currentWeekId,
   onLoginClick,
   loginId,
   onLogoutClick,
@@ -858,6 +969,9 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
       </button>
     ))}
     <Leaderboard leaderboard={leaderboard} lastSubmittedId={lastSubmittedId} />
+    {!!weeklyLeaderboards && weeklyLeaderboards.length > 0 && (
+      <WeeklyLeaderboardHistory weeks={weeklyLeaderboards} excludeWeekId={currentWeekId ?? undefined} />
+    )}
   </div>
 );
 
@@ -943,15 +1057,20 @@ interface GameOverOverlayProps {
   didSubmit: boolean;
   leaderboard: LeaderboardEntry[];
   lastSubmittedId: number | null;
+  weeklyLeaderboards?: WeeklyLeaderboard[];
+  currentWeekId?: string | null;
 }
 
-export const GameOverOverlay: React.FC<GameOverOverlayProps> = ({ score, didSubmit, leaderboard, lastSubmittedId }) => (
+export const GameOverOverlay: React.FC<GameOverOverlayProps> = ({ score, didSubmit, leaderboard, lastSubmittedId, weeklyLeaderboards, currentWeekId }) => (
   <div style={overlayStyle}>
     <h1 style={{ ...titleStyle, color: didSubmit ? "#ffd700" : "#ff6b6b" }}>
       {didSubmit ? "LEADERBOARD" : "GAME OVER"}
     </h1>
     <div style={scoreStyle}>Score: {score}</div>
     <Leaderboard leaderboard={leaderboard} lastSubmittedId={lastSubmittedId} />
+    {!!weeklyLeaderboards && weeklyLeaderboards.length > 0 && (
+      <WeeklyLeaderboardHistory weeks={weeklyLeaderboards} excludeWeekId={currentWeekId ?? undefined} />
+    )}
     <p style={{ ...subtitleStyle, marginTop: "40px" }}>Press SPACE to Retry</p>
   </div>
 );

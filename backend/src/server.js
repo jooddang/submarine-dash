@@ -3,6 +3,7 @@ import cors from 'cors';
 import Redis from 'ioredis';
 import dotenv from 'dotenv';
 import { sanitizeLeaderboardName } from '../../shared/profanity.js';
+import { getPstCurrentWeekId, getPrevWeekId, getWeekEndDate } from '../../shared/week.js';
 import crypto from 'node:crypto';
 
 // Load environment variables from parent directory
@@ -10,8 +11,11 @@ dotenv.config({ path: '../.env' });
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const LEADERBOARD_KEY = 'submarine-dash:leaderboard';
+const LEGACY_LEADERBOARD_KEY = 'submarine-dash:leaderboard';
+const WEEKLY_LEADERBOARDS_KEY = 'submarine-dash:leaderboards:weekly:v1';
+const WEEKLY_DOLPHIN_CLAIM_KEY_PREFIX = 'sd:reward:weeklyWinnerDolphin:claimed';
 const MAX_ENTRIES = 5;
+const CLEAR_ALLOWED = process.env.ALLOW_LEADERBOARD_CLEAR === 'true';
 
 // Auth (shared prefix with Vercel functions)
 const KEY_PREFIX = 'sd:';
@@ -273,7 +277,7 @@ async function getLeaderboard() {
     return [];
   }
   try {
-    const data = await redis.get(LEADERBOARD_KEY);
+    const data = await redis.get(LEGACY_LEADERBOARD_KEY);
     return data ? JSON.parse(data) : [];
   } catch (error) {
     console.error('Error reading leaderboard:', error);
@@ -285,7 +289,72 @@ async function setLeaderboard(leaderboard) {
   if (!redis) {
     throw new Error('Redis not connected');
   }
-  await redis.set(LEADERBOARD_KEY, JSON.stringify(leaderboard));
+  await redis.set(LEGACY_LEADERBOARD_KEY, JSON.stringify(leaderboard));
+}
+
+function parseEntries(data) {
+  if (!data) return [];
+  try {
+    const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseWeeklyStore(data) {
+  if (!data) return null;
+  try {
+    const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (parsed.version !== 1) return null;
+    if (!parsed.weeks || typeof parsed.weeks !== 'object') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function ensureWeeklyStoreBootstrapped(nowMs = Date.now()) {
+  if (!redis) return { version: 1, weeks: {} };
+  const existing = parseWeeklyStore(await redis.get(WEEKLY_LEADERBOARDS_KEY));
+  const store = existing || { version: 1, weeks: {} };
+
+  const legacyWeekId = '2025-12-29';
+  if (!store.weeks[legacyWeekId]) {
+    const legacyRaw = await redis.get(LEGACY_LEADERBOARD_KEY);
+    const legacyEntries = parseEntries(legacyRaw);
+    if (legacyEntries.length > 0) {
+      store.weeks[legacyWeekId] = {
+        weekId: legacyWeekId,
+        startDate: legacyWeekId,
+        endDate: getWeekEndDate(legacyWeekId),
+        entries: legacyEntries,
+        createdAt: nowMs,
+        updatedAt: nowMs,
+        source: 'legacy-bootstrap',
+      };
+    }
+  }
+
+  if (!existing || (existing && !existing.weeks[legacyWeekId] && !!store.weeks[legacyWeekId])) {
+    await redis.set(WEEKLY_LEADERBOARDS_KEY, JSON.stringify(store));
+  }
+  return store;
+}
+
+function upsertWeek(store, weekId, entries, nowMs = Date.now()) {
+  const prev = store.weeks[weekId];
+  const next = {
+    weekId,
+    startDate: weekId,
+    endDate: getWeekEndDate(weekId),
+    entries,
+    createdAt: prev?.createdAt ?? nowMs,
+    updatedAt: nowMs,
+    source: prev?.source ?? 'weekly',
+  };
+  return { ...store, weeks: { ...store.weeks, [weekId]: next } };
 }
 
 // API Routes
@@ -385,7 +454,27 @@ app.get('/api/auth/me', async (req, res) => {
     if (!userId) return res.json({ user: null });
     const user = await getUser(userId);
     if (!user) return res.json({ user: null });
-    return res.json({ user: { userId: user.userId, loginId: user.loginId, refCode: user.refCode } });
+    // Weekly winner dolphin reward (best-effort)
+    let rewards = undefined;
+    try {
+      const store = await ensureWeeklyStoreBootstrapped();
+      const currentWeekId = getPstCurrentWeekId();
+      const prevWeekId = getPrevWeekId(currentWeekId);
+      const winner = store.weeks?.[prevWeekId]?.entries?.[0];
+      const winnerLoginId = typeof winner?.userId === 'string' ? winner.userId : null;
+      if (winnerLoginId && winnerLoginId.toLowerCase() === user.loginIdLower) {
+        const claimKey = `${WEEKLY_DOLPHIN_CLAIM_KEY_PREFIX}:${user.userId}`;
+        const lastClaimed = await redis.get(claimKey);
+        if (lastClaimed !== prevWeekId) {
+          await redis.set(claimKey, prevWeekId);
+          rewards = { weeklyWinner: { dolphin: true, weekId: prevWeekId } };
+        }
+      }
+    } catch (e) {
+      console.warn('Weekly winner reward check failed:', e?.message || e);
+    }
+
+    return res.json({ user: { userId: user.userId, loginId: user.loginId, refCode: user.refCode }, rewards });
   } catch (e) {
     console.error('GET /api/auth/me error:', e);
     return res.status(500).json({ error: 'Internal server error' });
@@ -474,11 +563,31 @@ app.post('/api/missions/event', async (req, res) => {
 // GET /api/leaderboard - Get top 5 scores
 app.get('/api/leaderboard', async (req, res) => {
   try {
-    const leaderboard = await getLeaderboard();
-    res.json(leaderboard);
+    if (!redis) return res.json([]);
+    const store = await ensureWeeklyStoreBootstrapped();
+    const weekId = getPstCurrentWeekId();
+    res.json(store.weeks?.[weekId]?.entries ?? []);
   } catch (error) {
     console.error('GET /api/leaderboard error:', error);
     res.status(500).json({ error: 'Failed to fetch leaderboard' });
+  }
+});
+
+// GET /api/leaderboard/weekly - Get current + historical weekly leaderboards
+app.get('/api/leaderboard/weekly', async (req, res) => {
+  try {
+    if (!redis) return res.json({ currentWeekId: getPstCurrentWeekId(), current: [], weeks: [] });
+    const store = await ensureWeeklyStoreBootstrapped();
+    const currentWeekId = getPstCurrentWeekId();
+    const rawLimit = req.query?.limit;
+    const limit = rawLimit ? Math.max(1, Math.min(260, parseInt(String(rawLimit), 10))) : 52;
+    const weekIds = Object.keys(store.weeks || {}).sort().reverse().slice(0, limit);
+    const weeks = weekIds.map((id) => store.weeks[id]);
+    const current = store.weeks?.[currentWeekId]?.entries ?? [];
+    res.json({ currentWeekId, current, weeks });
+  } catch (e) {
+    console.error('GET /api/leaderboard/weekly error:', e);
+    res.status(500).json({ error: 'Failed to fetch weekly leaderboards' });
   }
 });
 
@@ -505,7 +614,10 @@ app.post('/api/leaderboard', async (req, res) => {
       return res.status(400).json({ error: 'Invalid name or score' });
     }
 
-    const leaderboard = await getLeaderboard();
+    await ensureWeeklyStoreBootstrapped();
+    const storeRaw = parseWeeklyStore(await redis.get(WEEKLY_LEADERBOARDS_KEY)) || { version: 1, weeks: {} };
+    const weekId = getPstCurrentWeekId();
+    const leaderboard = [...(storeRaw.weeks?.[weekId]?.entries ?? [])];
     const requestedName = typeof name === 'string' ? name.trim() : '';
     const newEntry = {
       id: Date.now(),
@@ -520,6 +632,9 @@ app.post('/api/leaderboard', async (req, res) => {
 
     // Keep only top entries
     const topLeaderboard = leaderboard.slice(0, MAX_ENTRIES);
+    const updatedStore = upsertWeek(storeRaw, weekId, topLeaderboard);
+    await redis.set(WEEKLY_LEADERBOARDS_KEY, JSON.stringify(updatedStore));
+    // Keep legacy key pointing at current leaderboard for compatibility.
     await setLeaderboard(topLeaderboard);
 
     const rank = topLeaderboard.findIndex(e => e.id === newEntry.id) + 1;
@@ -541,8 +656,15 @@ app.delete('/api/leaderboard', async (req, res) => {
     if (!redis) {
       return res.status(503).json({ error: 'Redis not connected' });
     }
+    if (!CLEAR_ALLOWED) {
+      return res.status(403).json({ error: 'Leaderboard clear disabled' });
+    }
+    const storeRaw = parseWeeklyStore(await redis.get(WEEKLY_LEADERBOARDS_KEY)) || { version: 1, weeks: {} };
+    const weekId = getPstCurrentWeekId();
+    const updatedStore = upsertWeek(storeRaw, weekId, []);
+    await redis.set(WEEKLY_LEADERBOARDS_KEY, JSON.stringify(updatedStore));
     await setLeaderboard([]);
-    res.json({ message: 'Leaderboard cleared' });
+    res.json({ message: 'Leaderboard cleared (current week only)' });
   } catch (error) {
     console.error('DELETE /api/leaderboard error:', error);
     res.status(500).json({ error: 'Failed to clear leaderboard' });

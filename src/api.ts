@@ -1,4 +1,4 @@
-import type { LeaderboardEntry } from "./types";
+import type { LeaderboardEntry, WeeklyLeaderboard } from "./types";
 
 // Use environment variable if available, otherwise auto-detect
 // In production (Vercel), use relative path which will hit Vercel serverless functions
@@ -33,6 +33,9 @@ export type AuthUser = {
   userId: string;
   loginId: string;
   refCode: string;
+  rewards?: {
+    weeklyWinner?: { dolphin: true; weekId: string };
+  };
 };
 
 export const leaderboardAPI = {
@@ -50,6 +53,21 @@ export const leaderboardAPI = {
       // Return empty array as fallback
       return [];
     }
+  },
+
+  // Get current + historical weekly leaderboards (PST week boundary)
+  async getWeeklyLeaderboards(limit?: number): Promise<{
+    currentWeekId: string;
+    current: LeaderboardEntry[];
+    weeks: WeeklyLeaderboard[];
+  }> {
+    const qs = typeof limit === "number" ? `?limit=${encodeURIComponent(String(limit))}` : "";
+    const res = await fetch(`${API_BASE_URL}/api/leaderboard/weekly${qs}`);
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Failed to fetch weekly leaderboards (status=${res.status}) ${text}`);
+    }
+    return await res.json();
   },
 
   // Submit a new score
@@ -98,7 +116,8 @@ export const authAPI = {
       const res = await fetch(`${API_BASE_URL}/api/auth/me`, { credentials: 'include' });
       if (!res.ok) return null;
       const data = await res.json();
-      return data?.user ?? null;
+      if (!data?.user) return null;
+      return { ...data.user, rewards: data.rewards };
     } catch {
       return null;
     }

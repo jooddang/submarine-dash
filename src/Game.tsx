@@ -1,12 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
-import type { GameState, Player, Platform, Item, Bubble, BackgroundEntity, LeaderboardEntry } from "./types";
+import type { GameState, Player, Platform, Item, Bubble, BackgroundEntity, LeaderboardEntry, WeeklyLeaderboard } from "./types";
 import * as Constants from "./constants";
 import { initAudio, playSound } from "./audio";
 import { interpolateColor } from "./graphics";
 import { createBubble, spawnBackgroundEntity } from "./entities";
 import { drawSwordfish, drawUrchin, drawBackgroundEntities, drawTurtleShell } from "./drawing";
-import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, AuthModal, DailyMissionsPanel, DolphinStreakRewardOverlay } from "./components/UIOverlays";
-import { authAPI, leaderboardAPI, missionsAPI, type DailyMissionsResponse } from "./api";
+import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, AuthModal, DailyMissionsPanel, DolphinStreakRewardOverlay, DolphinWeeklyWinnerRewardOverlay } from "./components/UIOverlays";
+import { authAPI, leaderboardAPI, missionsAPI, type DailyMissionsResponse, type AuthUser } from "./api";
 import turtleRescueImg from "../turtle.png";
 import turtleShellItemImg from "../turtle-shell-item.png";
 
@@ -94,16 +94,21 @@ export const DeepDiveGame = () => {
   const [hasDolphin, setHasDolphin] = useState(false);
   const [restartCountdown, setRestartCountdown] = useState<number | null>(null);
   const [dolphinRewardOpen, setDolphinRewardOpen] = useState(false);
+  const [weeklyDolphinRewardOpen, setWeeklyDolphinRewardOpen] = useState(false);
+  const [weeklyDolphinRewardWeekId, setWeeklyDolphinRewardWeekId] = useState<string | null>(null);
+  const pendingWeeklyDolphinRewardRef = useRef<boolean>(false);
 
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const leaderboardRef = useRef<LeaderboardEntry[]>([]);
   const [lastSubmittedId, setLastSubmittedId] = useState<number | null>(null);
+  const [weeklyLeaderboards, setWeeklyLeaderboards] = useState<WeeklyLeaderboard[]>([]);
+  const [currentWeekId, setCurrentWeekId] = useState<string | null>(null);
 
   const [playerName, setPlayerName] = useState("");
-  const [authUser, setAuthUser] = useState<{ userId: string; loginId: string; refCode: string } | null>(null);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   // Important: the game loop + global event listeners are registered once and can capture stale state.
   // Mirror auth state into a ref so gameplay-side logic always sees the latest auth status.
-  const authUserRef = useRef<{ userId: string; loginId: string; refCode: string } | null>(null);
+  const authUserRef = useRef<AuthUser | null>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [authLoginId, setAuthLoginId] = useState("");
@@ -156,9 +161,18 @@ export const DeepDiveGame = () => {
     // Load leaderboard from backend API
     const loadLeaderboard = async () => {
       try {
-        const data = await leaderboardAPI.getLeaderboard();
-        setLeaderboard(data);
-        leaderboardRef.current = data;
+        // Prefer weekly API (current + history). Fall back to legacy endpoint.
+        try {
+          const data = await leaderboardAPI.getWeeklyLeaderboards(52);
+          setCurrentWeekId(data.currentWeekId);
+          setWeeklyLeaderboards(data.weeks || []);
+          setLeaderboard(data.current || []);
+          leaderboardRef.current = data.current || [];
+        } catch {
+          const data = await leaderboardAPI.getLeaderboard();
+          setLeaderboard(data);
+          leaderboardRef.current = data;
+        }
       } catch (e) {
         console.error("Failed to load leaderboard", e);
       }
@@ -170,6 +184,17 @@ export const DeepDiveGame = () => {
     const loadMe = async () => {
       const me = await authAPI.me();
       setAuthUser(me);
+
+      // Weekly winner dolphin reward (server-claimed via /auth/me).
+      if (me?.rewards?.weeklyWinner?.dolphin) {
+        setDolphinSaved(true);
+        setWeeklyDolphinRewardWeekId(me.rewards.weeklyWinner.weekId);
+        if (gameStateRef.current === "PLAYING") {
+          pendingWeeklyDolphinRewardRef.current = true;
+        } else {
+          setWeeklyDolphinRewardOpen(true);
+        }
+      }
     };
     loadMe();
     refreshDailyMissions();
@@ -229,6 +254,13 @@ export const DeepDiveGame = () => {
     if (!pendingDolphinRewardRef.current) return;
     pendingDolphinRewardRef.current = false;
     setDolphinRewardOpen(true);
+  }, [gameState]);
+
+  useEffect(() => {
+    if (gameState === "PLAYING") return;
+    if (!pendingWeeklyDolphinRewardRef.current) return;
+    pendingWeeklyDolphinRewardRef.current = false;
+    setWeeklyDolphinRewardOpen(true);
   }, [gameState]);
 
   useEffect(() => {
@@ -1400,10 +1432,18 @@ export const DeepDiveGame = () => {
         onClose={() => setDolphinRewardOpen(false)}
       />
 
+      <DolphinWeeklyWinnerRewardOverlay
+        open={weeklyDolphinRewardOpen}
+        weekId={weeklyDolphinRewardWeekId ?? undefined}
+        onClose={() => setWeeklyDolphinRewardOpen(false)}
+      />
+
       {gameState === "MENU" && (
         <MenuOverlay
           leaderboard={leaderboard}
           lastSubmittedId={lastSubmittedId}
+          weeklyLeaderboards={weeklyLeaderboards}
+          currentWeekId={currentWeekId}
           streakCurrent={dailyMissions?.user ? dailyMissions.user.streak.current : 0}
           loginId={authUser?.loginId ?? null}
           onLogoutClick={async () => {
@@ -1445,6 +1485,8 @@ export const DeepDiveGame = () => {
           didSubmit={didSubmitRef.current}
           leaderboard={leaderboard}
           lastSubmittedId={lastSubmittedId}
+          weeklyLeaderboards={weeklyLeaderboards}
+          currentWeekId={currentWeekId}
         />
       )}
 
