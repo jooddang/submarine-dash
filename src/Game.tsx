@@ -162,6 +162,24 @@ export const DeepDiveGame = () => {
     }
   };
 
+  const migrateSavedDolphinFromGuestToUser = (userId: string) => {
+    // Defensive migration:
+    // If a Dolphin was granted while authUserRef was still "guest" (race during login/me load),
+    // move it to the logged-in user's storage so it shows up in SAVED and persists correctly.
+    try {
+      const guestKey = `${DOLPHIN_SAVED_KEY_BASE}:guest`;
+      const userKey = `${DOLPHIN_SAVED_KEY_BASE}:${userId}`;
+      const guestHas = localStorage.getItem(guestKey) === "1";
+      const userHas = localStorage.getItem(userKey) === "1";
+      if (guestHas && !userHas) {
+        localStorage.setItem(userKey, "1");
+        localStorage.setItem(guestKey, "0");
+      }
+    } catch {
+      // ignore (private mode / blocked storage)
+    }
+  };
+
   const refreshDailyMissions = async () => {
     try {
       const data = await missionsAPI.getDaily();
@@ -198,6 +216,8 @@ export const DeepDiveGame = () => {
     const loadMe = async () => {
       const me = await authAPI.me();
       setAuthUser(me);
+      // Keep the auth ref in sync immediately (avoid races where rewards persist to "guest" storage).
+      authUserRef.current = me;
 
       // Weekly winner dolphin reward (server-claimed via /auth/me).
       if (me?.rewards?.weeklyWinner?.dolphin) {
@@ -230,6 +250,9 @@ export const DeepDiveGame = () => {
   }, [authUser]);
 
   useEffect(() => {
+    if (authUser?.userId) {
+      migrateSavedDolphinFromGuestToUser(authUser.userId);
+    }
     // Load saved dolphin per-user (persists across runs until consumed).
     loadDolphinSavedFromStorage();
     // Load last awarded streak per-user to prevent double-awards across reloads.
@@ -293,8 +316,10 @@ export const DeepDiveGame = () => {
 
     const prev = lastSeenStreakRef.current;
     lastSeenStreakRef.current = streak;
-    if (prev === null) return; // first observation: don't award retroactively
-    if (streak <= prev) return; // only on increase
+    // If we already had a previous observation in this session, only award on increases.
+    // If this is the first observation (prev === null), we still award if the user has not
+    // yet been awarded for this streak value (covers: user reaches 5+ while away, then opens the game).
+    if (prev !== null && streak <= prev) return;
     if (streak <= lastAwardedStreakRef.current) return; // already awarded (e.g., after reload)
 
     lastAwardedStreakRef.current = streak;
@@ -884,6 +909,8 @@ export const DeepDiveGame = () => {
       }
 
       setAuthUser(user);
+      // Keep the auth ref in sync immediately (streak rewards + saved items use this for per-user storage keys).
+      authUserRef.current = user;
       setAuthModalOpen(false);
       setAuthLoginId("");
       setAuthPassword("");
@@ -1584,6 +1611,7 @@ export const DeepDiveGame = () => {
           onLogoutClick={async () => {
             await authAPI.logout();
             setAuthUser(null);
+            authUserRef.current = null;
             refreshDailyMissions();
           }}
           onLoginClick={() => {
