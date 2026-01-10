@@ -819,10 +819,53 @@ interface HUDProps {
   level: number;
   oxygen: number;
   hasTurtleShell?: boolean;
-  hasDolphin?: boolean;
+  dolphinCount?: number;
+  dolphinSpendSeq?: number;
 }
 
-export const HUD: React.FC<HUDProps> = ({ score, level, oxygen, hasTurtleShell, hasDolphin }) => (
+export const HUD: React.FC<HUDProps> = ({ score, level, oxygen, hasTurtleShell, dolphinCount, dolphinSpendSeq }) => {
+  const dolphinSlotRef = React.useRef<HTMLDivElement | null>(null);
+  const dolphinSpendFxRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    if (!dolphinSpendSeq) return;
+
+    const slot = dolphinSlotRef.current;
+    if (slot) {
+      try {
+        slot.animate(
+          [
+            { boxShadow: "0 0 0 rgba(0,0,0,0)", transform: "scale(1)" },
+            { boxShadow: "0 0 18px rgba(255, 60, 60, 0.75)", transform: "scale(1.06)" },
+            { boxShadow: "0 0 10px rgba(0, 255, 255, 0.35)", transform: "scale(1)" },
+          ],
+          { duration: 520, easing: "ease-out" }
+        );
+      } catch {
+        // ignore (older browsers)
+      }
+    }
+
+    const fx = dolphinSpendFxRef.current;
+    if (fx) {
+      try {
+        fx.animate(
+          [
+            { opacity: 0, transform: "translateY(6px) scale(0.95)" },
+            { opacity: 1, transform: "translateY(0px) scale(1)" },
+            { opacity: 0, transform: "translateY(-18px) scale(1.02)" },
+          ],
+          { duration: 650, easing: "ease-out" }
+        );
+      } catch {
+        // ignore
+      }
+    }
+  }, [dolphinSpendSeq]);
+
+  const dc = typeof dolphinCount === "number" ? dolphinCount : 0;
+
+  return (
   <div style={{
     position: "absolute",
     top: 20,
@@ -868,10 +911,11 @@ export const HUD: React.FC<HUDProps> = ({ score, level, oxygen, hasTurtleShell, 
       <span style={{ fontSize: "14px", opacity: 0.9 }}>SAVED:</span>
       {[
         { has: !!hasTurtleShell, img: turtleShellItemImg, alt: "Turtle shell saved" },
-        { has: !!hasDolphin, img: dolphinItemImg, alt: "Dolphin saved" },
+        { has: dc > 0, img: dolphinItemImg, alt: "Dolphin saved", count: dc },
       ].map((slot, idx) => (
         <div
           key={idx}
+          ref={idx === 1 ? dolphinSlotRef : undefined}
           style={{
             width: 28,
             height: 28,
@@ -881,24 +925,70 @@ export const HUD: React.FC<HUDProps> = ({ score, level, oxygen, hasTurtleShell, 
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            boxShadow: slot.has ? "0 0 12px rgba(0,255,255,0.35)" : "none"
+            boxShadow: slot.has ? "0 0 12px rgba(0,255,255,0.35)" : "none",
+            position: "relative",
           }}
         >
           {slot.has ? (
-            <img
-              src={slot.img}
-              alt={slot.alt}
-              width={22}
-              height={22}
-              style={{
-                display: "block",
-                width: 22,
-                height: 22,
-                objectFit: "contain",
-                filter: "drop-shadow(0 2px 0 rgba(0,0,0,0.35))"
-              }}
-              draggable={false}
-            />
+            <>
+              <img
+                src={slot.img}
+                alt={slot.alt}
+                width={22}
+                height={22}
+                style={{
+                  display: "block",
+                  width: 22,
+                  height: 22,
+                  objectFit: "contain",
+                  filter: "drop-shadow(0 2px 0 rgba(0,0,0,0.35))"
+                }}
+                draggable={false}
+              />
+              {idx === 1 && (
+                <div
+                  ref={dolphinSpendFxRef}
+                  style={{
+                    position: "absolute",
+                    left: "50%",
+                    top: -16,
+                    transform: "translateX(-50%)",
+                    opacity: 0,
+                    pointerEvents: "none",
+                    color: "rgba(255,80,80,0.98)",
+                    fontSize: 12,
+                    fontWeight: 900,
+                    textShadow: "0 2px 0 rgba(0,0,0,0.6)",
+                    letterSpacing: 0.2,
+                  }}
+                >
+                  -1
+                </div>
+              )}
+              {typeof slot.count === "number" && slot.count > 1 && (
+                <div
+                  style={{
+                    position: "absolute",
+                    right: -6,
+                    bottom: -6,
+                    minWidth: 16,
+                    height: 16,
+                    padding: "0 4px",
+                    borderRadius: 999,
+                    background: "rgba(0,0,0,0.75)",
+                    border: "1px solid rgba(255,255,255,0.8)",
+                    color: "white",
+                    fontSize: 10,
+                    lineHeight: "16px",
+                    fontWeight: 900,
+                    textAlign: "center",
+                    textShadow: "1px 1px 0 rgba(0,0,0,0.6)",
+                  }}
+                >
+                  x{slot.count}
+                </div>
+              )}
+            </>
           ) : (
             <span style={{ fontSize: "14px", opacity: 0.4 }}>—</span>
           )}
@@ -906,7 +996,8 @@ export const HUD: React.FC<HUDProps> = ({ score, level, oxygen, hasTurtleShell, 
       ))}
     </div>
   </div>
-);
+  );
+};
 
 // Menu Overlay
 interface MenuOverlayProps {

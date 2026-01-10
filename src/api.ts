@@ -35,6 +35,7 @@ export type AuthUser = {
   refCode: string;
   rewards?: {
     weeklyWinner?: { dolphin: true; weekId: string };
+    grants?: { dolphin: number };
   };
 };
 

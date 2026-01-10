@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getUser, getUserIdForSession } from '../_lib/auth.js';
+import { KEY_PREFIX, getUser, getUserIdForSession } from '../_lib/auth.js';
 import { getUpstashRedisClient, RedisConfigError } from '../_lib/redis.js';
 import { getPrevWeekId } from '../../shared/week.js';
 import {
@@ -10,6 +10,8 @@ import {
 } from '../_lib/weeklyLeaderboard.js';
 
 export const config = { runtime: 'nodejs' };
+
+const DOLPHIN_GRANT_KEY_PREFIX = `${KEY_PREFIX}reward:dolphin:grant:`;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -50,13 +52,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.warn('Weekly winner reward check failed:', e);
     }
 
+    // Admin / manual grants (best-effort):
+    // Store pending grants in Redis and return them once on next /auth/me.
+    let grantReward: { dolphin: number } | null = null;
+    try {
+      const rw = getUpstashRedisClient(false);
+      const raw = await rw.get<string>(`${DOLPHIN_GRANT_KEY_PREFIX}${user.userId}`);
+      const n = raw ? Number.parseInt(String(raw), 10) : 0;
+      if (Number.isFinite(n) && n > 0) {
+        // Best-effort: clear after reading so we don't deliver repeatedly.
+        await rw.set(`${DOLPHIN_GRANT_KEY_PREFIX}${user.userId}`, '0');
+        grantReward = { dolphin: n };
+      }
+    } catch (e) {
+      console.warn('Dolphin grant check failed:', e);
+    }
+
+    const rewards =
+      weeklyWinnerReward || grantReward
+        ? {
+            ...(weeklyWinnerReward ? { weeklyWinner: weeklyWinnerReward } : {}),
+            ...(grantReward ? { grants: grantReward } : {}),
+          }
+        : undefined;
+
     return res.status(200).json({
       user: {
         userId: user.userId,
         loginId: user.loginId,
         refCode: user.refCode,
       },
-      rewards: weeklyWinnerReward ? { weeklyWinner: weeklyWinnerReward } : undefined,
+      rewards,
     });
   } catch (error) {
     if (error instanceof RedisConfigError) {

@@ -83,7 +83,7 @@ export const DeepDiveGame = () => {
   const rescueTurtleImgRef = useRef<HTMLImageElement | null>(null);
   const turtleShellItemImgRef = useRef<HTMLImageElement | null>(null);
   // Dolphin (saved item): allows 1x mid-air double jump, then consumed
-  const dolphinSavedRef = useRef<boolean>(false);
+  const dolphinSavedCountRef = useRef<number>(0);
 
   // --- React State for UI ---
   const [gameState, setGameState] = useState<GameState>("MENU");
@@ -91,7 +91,8 @@ export const DeepDiveGame = () => {
   const [oxygen, setOxygen] = useState(Constants.OXYGEN_MAX);
   const [level, setLevel] = useState(1);
   const [hasTurtleShell, setHasTurtleShell] = useState(false);
-  const [hasDolphin, setHasDolphin] = useState(false);
+  const [dolphinCount, setDolphinCountState] = useState(0);
+  const [dolphinSpendSeq, setDolphinSpendSeq] = useState(0);
   const [restartCountdown, setRestartCountdown] = useState<number | null>(null);
   const [dolphinRewardOpen, setDolphinRewardOpen] = useState(false);
   const [weeklyDolphinRewardOpen, setWeeklyDolphinRewardOpen] = useState(false);
@@ -138,27 +139,44 @@ export const DeepDiveGame = () => {
 
   const DOLPHIN_SAVED_KEY_BASE = "subdash:savedItem:dolphin";
   const DOLPHIN_STREAK_LAST_AWARDED_KEY_BASE = "subdash:reward:dolphin:streak:lastAwarded";
+  const DOLPHIN_SAVED_MAX = 5;
 
   const storageUserId = () => authUserRef.current?.userId ?? "guest";
   const keyForUser = (base: string) => `${base}:${storageUserId()}`;
 
-  const setDolphinSaved = (value: boolean, opts?: { persist?: boolean }) => {
-    dolphinSavedRef.current = value;
-    setHasDolphin(value);
+  const clampDolphinCount = (n: number) => Math.max(0, Math.min(DOLPHIN_SAVED_MAX, Math.floor(n)));
+
+  const setDolphinCount = (value: number, opts?: { persist?: boolean }) => {
+    const next = clampDolphinCount(value);
+    dolphinSavedCountRef.current = next;
+    setDolphinCountState(next);
     if (opts?.persist === false) return;
     try {
-      localStorage.setItem(keyForUser(DOLPHIN_SAVED_KEY_BASE), value ? "1" : "0");
+      localStorage.setItem(keyForUser(DOLPHIN_SAVED_KEY_BASE), String(next));
     } catch {
       // ignore (private mode / blocked storage)
     }
   };
 
+  const addDolphin = (amount: number = 1, opts?: { persist?: boolean }): boolean => {
+    const before = dolphinSavedCountRef.current;
+    const after = clampDolphinCount(before + amount);
+    setDolphinCount(after, opts);
+    return after > before;
+  };
+
   const loadDolphinSavedFromStorage = () => {
     try {
       const raw = localStorage.getItem(keyForUser(DOLPHIN_SAVED_KEY_BASE));
-      setDolphinSaved(raw === "1", { persist: false });
+      const n = raw ? Number.parseInt(raw, 10) : 0;
+      if (Number.isFinite(n)) {
+        setDolphinCount(n, { persist: false });
+      } else {
+        // Back-compat for very old boolean string
+        setDolphinCount(raw === "1" ? 1 : 0, { persist: false });
+      }
     } catch {
-      setDolphinSaved(false, { persist: false });
+      setDolphinCount(0, { persist: false });
     }
   };
 
@@ -169,10 +187,15 @@ export const DeepDiveGame = () => {
     try {
       const guestKey = `${DOLPHIN_SAVED_KEY_BASE}:guest`;
       const userKey = `${DOLPHIN_SAVED_KEY_BASE}:${userId}`;
-      const guestHas = localStorage.getItem(guestKey) === "1";
-      const userHas = localStorage.getItem(userKey) === "1";
-      if (guestHas && !userHas) {
-        localStorage.setItem(userKey, "1");
+      const guestRaw = localStorage.getItem(guestKey);
+      const userRaw = localStorage.getItem(userKey);
+      const guestN = guestRaw ? Number.parseInt(guestRaw, 10) : (guestRaw === "1" ? 1 : 0);
+      const userN = userRaw ? Number.parseInt(userRaw, 10) : (userRaw === "1" ? 1 : 0);
+      const guestCount = Number.isFinite(guestN) ? Math.max(0, guestN) : 0;
+      const userCount = Number.isFinite(userN) ? Math.max(0, userN) : 0;
+      if (guestCount > 0) {
+        const merged = clampDolphinCount(userCount + guestCount);
+        localStorage.setItem(userKey, String(merged));
         localStorage.setItem(guestKey, "0");
       }
     } catch {
@@ -221,13 +244,21 @@ export const DeepDiveGame = () => {
 
       // Weekly winner dolphin reward (server-claimed via /auth/me).
       if (me?.rewards?.weeklyWinner?.dolphin) {
-        setDolphinSaved(true);
+        const didAdd = addDolphin(1);
         setWeeklyDolphinRewardWeekId(me.rewards.weeklyWinner.weekId);
-        if (gameStateRef.current === "PLAYING") {
-          pendingWeeklyDolphinRewardRef.current = true;
-        } else {
-          setWeeklyDolphinRewardOpen(true);
+        if (didAdd) {
+          if (gameStateRef.current === "PLAYING") {
+            pendingWeeklyDolphinRewardRef.current = true;
+          } else {
+            setWeeklyDolphinRewardOpen(true);
+          }
         }
+      }
+
+      // Admin/manual dolphin grants (server-provided).
+      const grantN = me?.rewards?.grants?.dolphin;
+      if (typeof grantN === "number" && Number.isFinite(grantN) && grantN > 0) {
+        addDolphin(grantN);
       }
     };
     loadMe();
@@ -276,11 +307,11 @@ export const DeepDiveGame = () => {
   useEffect(() => {
     // Dev/testing: force the streak reward moment (confetti + modal) and grant dolphin.
     if (!Constants.DEV_FORCE_DOLPHIN_STREAK_REWARD_MOMENT) return;
-    setDolphinSaved(true);
+    const didAdd = addDolphin(1);
     if (gameStateRef.current === "PLAYING") {
-      pendingDolphinRewardRef.current = true;
+      if (didAdd) pendingDolphinRewardRef.current = true;
     } else {
-      setDolphinRewardOpen(true);
+      if (didAdd) setDolphinRewardOpen(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -329,11 +360,11 @@ export const DeepDiveGame = () => {
       // ignore (private mode / blocked storage)
     }
 
-    setDolphinSaved(true);
+    const didAdd = addDolphin(1);
     if (gameStateRef.current === "PLAYING") {
-      pendingDolphinRewardRef.current = true;
+      if (didAdd) pendingDolphinRewardRef.current = true;
     } else {
-      setDolphinRewardOpen(true);
+      if (didAdd) setDolphinRewardOpen(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dailyMissions?.user?.streak?.current]);
@@ -568,8 +599,9 @@ export const DeepDiveGame = () => {
     // Dolphin Double Jump (mid-air). Consumes the saved dolphin.
     // Important: allow during falling too, but DO NOT consume dolphin when a landing is imminent
     // (common "press jump slightly before landing" behavior should use the jump buffer instead).
-    if (dolphinSavedRef.current && !isImminentLandingWhileFalling()) {
-      setDolphinSaved(false);
+    if (dolphinSavedCountRef.current > 0 && !isImminentLandingWhileFalling()) {
+      setDolphinCount(dolphinSavedCountRef.current - 1);
+      setDolphinSpendSeq((s) => s + 1);
 
       player.dy = Constants.JUMP_FORCE_INITIAL;
       player.grounded = false;
@@ -618,7 +650,7 @@ export const DeepDiveGame = () => {
     }
     // Dev/testing: start with a saved Dolphin (double jump)
     if (Constants.DEV_FORCE_DOLPHIN_ON_START) {
-      setDolphinSaved(true);
+      addDolphin(1);
     }
 
     setLastSubmittedId(null); // Reset highlight for new game
@@ -1564,7 +1596,14 @@ export const DeepDiveGame = () => {
       />
 
       {gameState === "PLAYING" && (
-        <HUD score={score} level={level} oxygen={oxygen} hasTurtleShell={hasTurtleShell} hasDolphin={hasDolphin} />
+        <HUD
+          score={score}
+          level={level}
+          oxygen={oxygen}
+          hasTurtleShell={hasTurtleShell}
+          dolphinCount={dolphinCount}
+          dolphinSpendSeq={dolphinSpendSeq}
+        />
       )}
 
       {restartCountdown !== null && (

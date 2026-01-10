@@ -14,6 +14,7 @@ const PORT = process.env.PORT || 3001;
 const LEGACY_LEADERBOARD_KEY = 'submarine-dash:leaderboard';
 const WEEKLY_LEADERBOARDS_KEY = 'submarine-dash:leaderboards:weekly:v1';
 const WEEKLY_DOLPHIN_CLAIM_KEY_PREFIX = 'sd:reward:weeklyWinnerDolphin:claimed';
+const DOLPHIN_GRANT_KEY_PREFIX = 'sd:reward:dolphin:grant';
 const MAX_ENTRIES = 5;
 const CLEAR_ALLOWED = process.env.ALLOW_LEADERBOARD_CLEAR === 'true';
 
@@ -514,6 +515,19 @@ app.get('/api/auth/me', async (req, res) => {
       }
     } catch (e) {
       console.warn('Weekly winner reward check failed:', e?.message || e);
+    }
+
+    // Admin / manual grants (best-effort)
+    try {
+      const grantKey = `${DOLPHIN_GRANT_KEY_PREFIX}:${user.userId}`;
+      const raw = await redis.get(grantKey);
+      const n = raw ? Number.parseInt(String(raw), 10) : 0;
+      if (Number.isFinite(n) && n > 0) {
+        await redis.set(grantKey, '0');
+        rewards = { ...(rewards || {}), grants: { dolphin: n } };
+      }
+    } catch (e) {
+      console.warn('Dolphin grant check failed:', e?.message || e);
     }
 
     return res.json({ user: { userId: user.userId, loginId: user.loginId, refCode: user.refCode }, rewards });
