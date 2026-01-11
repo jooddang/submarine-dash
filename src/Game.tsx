@@ -1327,6 +1327,7 @@ export const DeepDiveGame = () => {
         } else if (item.type === "TURTLE_SHELL") {
           turtleShellSavedRef.current = true;
           setHasTurtleShell(true);
+          playSound('shell_crack');
           // Dev/testing: make the next generated platform a long quicksand
           if (Constants.DEV_FORCE_LONG_QUICKSAND_AFTER_TURTLE_SHELL) {
             devForceLongQuickSandOnceRef.current = true;

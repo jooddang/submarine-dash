@@ -18,7 +18,14 @@ export const initAudio = () => {
   }
 };
 
-export type SoundType = 'jump' | 'oxygen' | 'swordfish' | 'die_fall' | 'die_urchin' | 'die_quicksand';
+export type SoundType =
+  | 'jump'
+  | 'oxygen'
+  | 'swordfish'
+  | 'shell_crack'
+  | 'die_fall'
+  | 'die_urchin'
+  | 'die_quicksand';
 
 export const playSound = (type: SoundType) => {
   if (!audioCtx || !audioUnlocked) return;
@@ -67,6 +74,52 @@ export const playSound = (type: SoundType) => {
       osc.start(now);
       osc.stop(now + 0.3);
       break;
+
+    case 'shell_crack': {
+      // A short "cracking" sound for turtle shell pickup: noise burst + pitch drop.
+      // Uses a buffer source for noise plus a quick low sine thump underneath.
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(220, now);
+      osc.frequency.exponentialRampToValueAtTime(90, now + 0.08);
+      gain.gain.setValueAtTime(0.06, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+      osc.start(now);
+      osc.stop(now + 0.09);
+
+      try {
+        const noiseLen = Math.floor(audioCtx.sampleRate * 0.06);
+        const buffer = audioCtx.createBuffer(1, noiseLen, audioCtx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < noiseLen; i++) {
+          // Exponential decay noise burst
+          const t = i / noiseLen;
+          const decay = Math.exp(-t * 7);
+          data[i] = (Math.random() * 2 - 1) * decay;
+        }
+        const src = audioCtx.createBufferSource();
+        src.buffer = buffer;
+
+        const noiseGain = audioCtx.createGain();
+        noiseGain.gain.setValueAtTime(0.11, now);
+        noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+
+        // Optional: lowpass to feel like a crack rather than hiss
+        const lp = audioCtx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.setValueAtTime(1600, now);
+        lp.frequency.exponentialRampToValueAtTime(700, now + 0.06);
+
+        src.connect(lp);
+        lp.connect(noiseGain);
+        noiseGain.connect(audioCtx.destination);
+
+        src.start(now);
+        src.stop(now + 0.06);
+      } catch {
+        // ignore if buffer source fails for any reason
+      }
+      break;
+    }
 
     case 'die_urchin':
       osc.type = 'sawtooth';
