@@ -590,8 +590,9 @@ export const DeepDiveGame = () => {
 
     // Dev/testing: start with a saved Turtle Shell
     if (Constants.DEV_FORCE_TURTLE_SHELL_ON_START) {
-      turtleShellSavedRef.current = true;
-      setHasTurtleShell(true);
+      // Instead of pre-saving, spawn a Turtle Shell pickup immediately so it "appears at start".
+      turtleShellSavedRef.current = false;
+      setHasTurtleShell(false);
     }
     // Dev/testing: start with a saved Dolphin (double jump)
     if (Constants.DEV_FORCE_DOLPHIN_ON_START) {
@@ -624,7 +625,22 @@ export const DeepDiveGame = () => {
       });
     }
 
+    // Clear items for the new run BEFORE any dev spawns.
     itemsRef.current = [];
+
+    // Dev/testing: spawn a Turtle Shell pickup at the start of the run (visible + collectible).
+    if (Constants.DEV_FORCE_TURTLE_SHELL_ON_START) {
+      const groundY = canvasRef.current.height - 100;
+      const spawnX = Math.min(canvasRef.current.width - 80, playerRef.current.x + 260);
+      itemsRef.current.push({
+        x: spawnX,
+        y: groundY - 90,
+        width: 44,
+        height: 34,
+        collected: false,
+        type: "TURTLE_SHELL",
+      });
+    }
     bubblesRef.current = Array.from({ length: 20 }, () => createBubble(canvasRef.current!.width, canvasRef.current!.height));
     bgEntitiesRef.current = []; // Clear old background
 
