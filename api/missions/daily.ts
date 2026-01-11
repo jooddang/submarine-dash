@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getUserIdForSession, KEY_PREFIX } from '../_lib/auth.js';
 import { getUpstashRedisClient } from '../_lib/redis.js';
+import { settleDolphins } from '../_lib/dolphinInventory.js';
 
 export const config = { runtime: 'nodejs' };
 
@@ -131,12 +132,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const completedMissionIds = computeCompleted(missions, progress);
 
+    // Source of truth: dolphin inventory in Redis (settle pending -> saved up to cap).
+    let inventory: { dolphinSaved: number; dolphinPending: number } | undefined = undefined;
+    try {
+      const rw = getUpstashRedisClient(false);
+      const settled = await settleDolphins(rw, userId);
+      inventory = { dolphinSaved: settled.saved, dolphinPending: settled.pending };
+    } catch {
+      // best-effort
+    }
+
     return res.status(200).json({
       date,
       missions,
       user: {
         progress: { ...progress, completedMissionIds },
         streak,
+        inventory,
       },
     });
   } catch (error) {

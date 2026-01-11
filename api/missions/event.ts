@@ -1,6 +1,11 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getUserIdForSession, KEY_PREFIX } from '../_lib/auth.js';
 import { getUpstashRedisClient } from '../_lib/redis.js';
+import {
+  addPendingDolphins,
+  keyDolphinStreakLastAwarded,
+  settleDolphins,
+} from '../_lib/dolphinInventory.js';
 
 export const config = { runtime: 'nodejs' };
 
@@ -128,16 +133,19 @@ async function keepTodayAndUpdateStreak(params: {
   );
 
   const today = date;
-  if (streak.lastKeptDate === today) return;
+  if (streak.lastKeptDate === today) return { didUpdate: false, didReset: false, streak };
 
   // Compute "yesterday" based on the provided `date` to avoid edge cases around midnight.
   const yday = yesterdayKeyUTC(new Date(`${date}T00:00:00Z`));
-  const next = streak.lastKeptDate === yday ? (streak.current + 1) : 1;
+  const continues = streak.lastKeptDate === yday;
+  const next = continues ? (streak.current + 1) : 1;
+  const didReset = !continues && streak.current > 0;
   streak.current = next;
   streak.lastKeptDate = today;
   streak.updatedAt = Date.now();
   progress.keptAt = Date.now();
   await redisRW.set(streakKey, JSON.stringify(streak));
+  return { didUpdate: true, didReset, streak };
 }
 
 function areAllMissionsCompleted(missions: DailyMission[], completedMissionIds: string[]) {
@@ -191,15 +199,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Kept/Streak rule (per ticket): only when ALL daily missions are completed.
     const shouldKeepToday = areAllMissionsCompleted(missions, completedAfter);
+    let streakReward: { dolphin: number; streakDays: number } | null = null;
     if (shouldKeepToday) {
-      await keepTodayAndUpdateStreak({ userId, date, progress });
+      const kept = await keepTodayAndUpdateStreak({ userId, date, progress });
+      if (kept.didUpdate) {
+        // If the streak reset (e.g. missed a day), allow future 5+ rewards again by resetting lastAwarded.
+        if (kept.didReset) {
+          try {
+            await redisRW.set(keyDolphinStreakLastAwarded(userId), '0');
+          } catch {
+            // best-effort
+          }
+        }
+
+        // Server-side streak dolphin reward:
+        // once streak is 5+, grant 1 Dolphin each time the streak increases (idempotent via lastAwarded).
+        const streakDays = kept.streak.current;
+        if (streakDays >= 5) {
+          try {
+            const lastAwardedRaw = await redisRO.get(keyDolphinStreakLastAwarded(userId));
+            const lastAwarded = lastAwardedRaw ? Number.parseInt(String(lastAwardedRaw), 10) : 0;
+            if (!Number.isFinite(lastAwarded) || streakDays > lastAwarded) {
+              await addPendingDolphins(redisRW, userId, 1, { type: 'streak', meta: { streakDays } });
+              await redisRW.set(keyDolphinStreakLastAwarded(userId), String(streakDays));
+              streakReward = { dolphin: 1, streakDays };
+            }
+          } catch {
+            // best-effort
+          }
+        }
+      }
     }
 
     await redisRW.set(progressKey, JSON.stringify(progress));
 
+    // Include latest dolphin inventory snapshot (best-effort).
+    let inventory: { dolphinSaved: number; dolphinPending: number } | undefined = undefined;
+    try {
+      const settled = await settleDolphins(redisRW, userId);
+      inventory = { dolphinSaved: settled.saved, dolphinPending: settled.pending };
+    } catch {
+      // best-effort
+    }
+
     return res.status(200).json({
       date,
       progress,
+      rewards: streakReward ? { streak: streakReward } : undefined,
+      inventory,
     });
   } catch (error) {
     console.error('Missions event API error:', error);

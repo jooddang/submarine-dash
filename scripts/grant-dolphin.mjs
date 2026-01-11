@@ -1,7 +1,8 @@
 import { Redis } from '@upstash/redis';
 
 const KEY_PREFIX = 'sd:';
-const GRANT_KEY_PREFIX = `${KEY_PREFIX}reward:dolphin:grant:`;
+const PENDING_KEY_PREFIX = `${KEY_PREFIX}user:`;
+const LEDGER_KEY_PREFIX = `${KEY_PREFIX}user:`;
 
 function usageAndExit(msg) {
   if (msg) console.error(msg);
@@ -13,8 +14,8 @@ function usageAndExit(msg) {
       '  node scripts/grant-dolphin.mjs --user-id USER_ID --amount N [--dry-run]',
       '',
       'Notes:',
-      '- This writes a pending Dolphin grant into Redis. It will be delivered once on next /api/auth/me.',
-      '- Client-side saved Dolphins are capped at 5 (0..5). Grant amounts above what the user can store may be wasted.',
+      '- This writes Dolphins into Redis pending inventory. They will be settled into saved (max 5) on next /api/auth/me or /api/missions/daily.',
+      '- Saved Dolphins are capped at 5, but pending can exceed 5 (no loss).',
       '',
       'Examples:',
       '  node scripts/grant-dolphin.mjs --login-id jooddang --amount 3',
@@ -47,6 +48,13 @@ function keyLoginId(loginIdLower) {
   return `${KEY_PREFIX}loginId:${loginIdLower}`;
 }
 
+function keyDolphinPending(userId) {
+  return `${PENDING_KEY_PREFIX}${userId}:dolphin:pending`;
+}
+function keyDolphinLedger(userId) {
+  return `${LEDGER_KEY_PREFIX}${userId}:dolphin:ledger`;
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   const dryRun = !!args['dry-run'];
@@ -74,16 +82,20 @@ async function main() {
     if (!userId) usageAndExit(`No userId found for login-id="${loginId}" (key=${keyLoginId(loginIdLower)})`);
   }
 
-  const grantKey = `${GRANT_KEY_PREFIX}${userId}`;
+  const pendingKey = keyDolphinPending(userId);
+  const ledgerKey = keyDolphinLedger(userId);
   console.log('[grant-dolphin] Planned grant:');
   console.log(`- userId=${userId}`);
   console.log(`- amount=${amount}`);
-  console.log(`- key=${grantKey}`);
+  console.log(`- pendingKey=${pendingKey}`);
   console.log(`- dryRun=${dryRun}`);
 
   if (dryRun) return;
 
-  const next = await redis.incrby(grantKey, amount);
+  const next = await redis.incrby(pendingKey, amount);
+  const entry = { ts: Date.now(), type: 'manualGrant', delta: amount, meta: { via: 'grant-dolphin.mjs' } };
+  await redis.lpush(ledgerKey, JSON.stringify(entry));
+  await redis.ltrim(ledgerKey, 0, 99);
   console.log(`[grant-dolphin] OK. Pending dolphins now: ${next}`);
 }
 

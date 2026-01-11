@@ -3,6 +3,11 @@ import { KEY_PREFIX, getUser, getUserIdForSession } from '../_lib/auth.js';
 import { getUpstashRedisClient, RedisConfigError } from '../_lib/redis.js';
 import { getPrevWeekId } from '../../shared/week.js';
 import {
+  addPendingDolphins,
+  keyLegacyDolphinGrant,
+  settleDolphins,
+} from '../_lib/dolphinInventory.js';
+import {
   claimKeyForWeeklyDolphin,
   currentWeekIdPst,
   ensureWeeklyStoreBootstrapped,
@@ -10,8 +15,6 @@ import {
 } from '../_lib/weeklyLeaderboard.js';
 
 export const config = { runtime: 'nodejs' };
-
-const DOLPHIN_GRANT_KEY_PREFIX = `${KEY_PREFIX}reward:dolphin:grant:`;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -43,6 +46,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const claimKey = claimKeyForWeeklyDolphin(user.userId);
         const lastClaimed = await rw.get<string>(claimKey);
         if (lastClaimed !== prevWeekId) {
+          // Add to pending first; only mark claimed if we successfully enqueue the reward.
+          await addPendingDolphins(rw, user.userId, 1, { type: 'weeklyWinner', meta: { weekId: prevWeekId } });
           await rw.set(claimKey, prevWeekId);
           weeklyWinnerReward = { dolphin: true, weekId: prevWeekId };
         }
@@ -52,20 +57,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.warn('Weekly winner reward check failed:', e);
     }
 
-    // Admin / manual grants (best-effort):
-    // Store pending grants in Redis and return them once on next /auth/me.
+    // Back-compat: legacy manual grants stored under sd:reward:dolphin:grant:<userId>
+    // Convert them into pending dolphins, then clear.
     let grantReward: { dolphin: number } | null = null;
     try {
       const rw = getUpstashRedisClient(false);
-      const raw = await rw.get<string>(`${DOLPHIN_GRANT_KEY_PREFIX}${user.userId}`);
+      const legacyKey = keyLegacyDolphinGrant(user.userId);
+      const raw = await rw.get<string>(legacyKey);
       const n = raw ? Number.parseInt(String(raw), 10) : 0;
       if (Number.isFinite(n) && n > 0) {
-        // Best-effort: clear after reading so we don't deliver repeatedly.
-        await rw.set(`${DOLPHIN_GRANT_KEY_PREFIX}${user.userId}`, '0');
+        await addPendingDolphins(rw, user.userId, n, { type: 'manualGrant', meta: { source: 'legacyGrantKey' } });
+        await rw.set(legacyKey, '0');
         grantReward = { dolphin: n };
       }
     } catch (e) {
       console.warn('Dolphin grant check failed:', e);
+    }
+
+    // Inventory is sourced from Redis (saved is capped at 5; pending can be larger).
+    let inventory: { dolphinSaved: number; dolphinPending: number } | undefined = undefined;
+    try {
+      const rw = getUpstashRedisClient(false);
+      const settled = await settleDolphins(rw, user.userId);
+      inventory = { dolphinSaved: settled.saved, dolphinPending: settled.pending };
+    } catch (e) {
+      console.warn('Dolphin inventory settle failed:', e);
     }
 
     const rewards =
@@ -82,6 +98,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         loginId: user.loginId,
         refCode: user.refCode,
       },
+      inventory,
       rewards,
     });
   } catch (error) {

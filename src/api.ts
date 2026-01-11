@@ -33,6 +33,7 @@ export type AuthUser = {
   userId: string;
   loginId: string;
   refCode: string;
+  inventory?: { dolphinSaved: number; dolphinPending?: number };
   rewards?: {
     weeklyWinner?: { dolphin: true; weekId: string };
     grants?: { dolphin: number };
@@ -118,7 +119,7 @@ export const authAPI = {
       if (!res.ok) return null;
       const data = await res.json();
       if (!data?.user) return null;
-      return { ...data.user, rewards: data.rewards };
+      return { ...data.user, inventory: data.inventory, rewards: data.rewards };
     } catch {
       return null;
     }
@@ -195,6 +196,7 @@ export type DailyMissionsResponse =
           keptAt?: number;
         };
         streak: { current: number; lastKeptDate: string | null; updatedAt: number };
+        inventory?: { dolphinSaved: number; dolphinPending?: number };
       };
     };
 
@@ -211,9 +213,25 @@ export const missionsAPI = {
     return await res.json();
   },
 
-  async postEvent(event: { type: 'run_end'; score: number } | { type: 'oxygen_collected'; count?: number }): Promise<void> {
+  async postEvent(
+    event: { type: 'run_end'; score: number } | { type: 'oxygen_collected'; count?: number }
+  ): Promise<
+    | {
+        date: string;
+        progress: {
+          runs: number;
+          oxygenCollected: number;
+          maxScore: number;
+          completedMissionIds: string[];
+          keptAt?: number;
+        };
+        rewards?: { streak?: { dolphin: number; streakDays: number } };
+        inventory?: { dolphinSaved: number; dolphinPending?: number };
+      }
+    | null
+  > {
     // Best-effort; mission tracking should not block gameplay.
-    await fetch(`${API_BASE_URL}/api/missions/event`, {
+    return await fetch(`${API_BASE_URL}/api/missions/event`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...getTimezoneHeaders() },
       credentials: 'include',
@@ -224,9 +242,42 @@ export const missionsAPI = {
           const text = await res.text().catch(() => '');
           throw new Error(`Failed to post mission event (status=${res.status}) ${text}`);
         }
+        return await res.json();
       })
       .catch((err) => {
         console.warn('Mission event failed:', err);
+        return null;
       });
+  },
+};
+
+export const inventoryAPI = {
+  async consumeDolphin(): Promise<{ ok: boolean; inventory: { dolphinSaved: number; dolphinPending?: number } } | null> {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/inventory/dolphin/consume`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  },
+
+  async importDolphin(count: number): Promise<{ ok: boolean; inventory: { dolphinSaved: number; dolphinPending?: number } } | null> {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/inventory/dolphin/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ count }),
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
   },
 };
