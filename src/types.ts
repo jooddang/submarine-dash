@@ -32,10 +32,12 @@ export interface Item {
   width: number;
   height: number;
   collected: boolean;
-  type: "OXYGEN" | "SWORDFISH" | "URCHIN" | "TURTLE_SHELL";
+  type: "OXYGEN" | "SWORDFISH" | "URCHIN" | "TURTLE_SHELL" | "TUBE_PIECE";
   rotation?: number;
   isDead?: boolean;
   dy?: number;
+  // For multi-sprite items (e.g., tube pieces cut from a 2x2 sheet).
+  variant?: number;
 }
 
 // Bubble Interface

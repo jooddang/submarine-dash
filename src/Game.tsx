@@ -9,6 +9,7 @@ import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, AuthModal, DailyMi
 import { authAPI, inventoryAPI, leaderboardAPI, missionsAPI, type DailyMissionsResponse, type AuthUser } from "./api";
 import turtleRescueImg from "../turtle.png";
 import turtleShellItemImg from "../turtle-shell-item.png";
+import tubeImg from "../tube.png";
 
 type RescuePhase = "FLY_IN" | "HOOK" | "TOW" | "COUNTDOWN";
 type RescueState =
@@ -27,6 +28,24 @@ type RescueState =
     worldShiftApplied: number;
     hookPointX: number;
     hookPointY: number;
+    countdownMs: number;
+    lastCountdownDisplay: number | null;
+  };
+
+type TubeRescueState =
+  | { active: false }
+  | {
+    active: true;
+    phase: RescuePhase;
+    phaseT: number; // seconds
+    tubeX: number;
+    tubeY: number;
+    tubeRot: number;
+    targetPlayerX: number;
+    targetPlayerY: number;
+    playerXFixed: number;
+    towStartY: number;
+    worldShiftApplied: number;
     countdownMs: number;
     lastCountdownDisplay: number | null;
   };
@@ -79,11 +98,16 @@ export const DeepDiveGame = () => {
   const turtleShellSavedRef = useRef<boolean>(false);
   const turtleShellUseCountRef = useRef<number>(0);
   const rescueRef = useRef<RescueState>({ active: false });
+  const tubeRescueRef = useRef<TubeRescueState>({ active: false });
   const devForceLongQuickSandOnceRef = useRef<boolean>(false);
   const rescueTurtleImgRef = useRef<HTMLImageElement | null>(null);
   const turtleShellItemImgRef = useRef<HTMLImageElement | null>(null);
+  const tubeImgRef = useRef<HTMLImageElement | null>(null);
   // Dolphin (saved item): allows 1x mid-air double jump, then consumed
   const dolphinSavedCountRef = useRef<number>(0);
+  // Tube pieces (session-persisted collectible)
+  const tubePiecesRef = useRef<number>(0);
+  const tubeRescueChargesRef = useRef<number>(0);
 
   // --- React State for UI ---
   const [gameState, setGameState] = useState<GameState>("MENU");
@@ -93,6 +117,9 @@ export const DeepDiveGame = () => {
   const [hasTurtleShell, setHasTurtleShell] = useState(false);
   const [dolphinCount, setDolphinCountState] = useState(0);
   const [dolphinSpendSeq, setDolphinSpendSeq] = useState(0);
+  const [tubePieces, setTubePiecesState] = useState(0);
+  const [tubeToast, setTubeToast] = useState<string | null>(null);
+  const [tubeRescueCharges, setTubeRescueChargesState] = useState(0);
   const [restartCountdown, setRestartCountdown] = useState<number | null>(null);
   const [dolphinRewardOpen, setDolphinRewardOpen] = useState(false);
   const [weeklyDolphinRewardOpen, setWeeklyDolphinRewardOpen] = useState(false);
@@ -145,6 +172,34 @@ export const DeepDiveGame = () => {
     const next = clampDolphinCount(value);
     dolphinSavedCountRef.current = next;
     setDolphinCountState(next);
+  };
+
+  const TUBE_SESSION_KEY = "subdash:session:tubePieces";
+  const TUBE_RESCUE_CHARGES_SESSION_KEY = "subdash:session:tubeRescueCharges";
+  const clampTubePieces = (n: number) => Math.max(0, Math.min(Constants.TUBE_PIECES_PER_TUBE - 1, Math.floor(n)));
+  const setTubePieces = (value: number) => {
+    const next = clampTubePieces(value);
+    tubePiecesRef.current = next;
+    setTubePiecesState(next);
+    try {
+      sessionStorage.setItem(TUBE_SESSION_KEY, String(next));
+    } catch {
+      // ignore
+    }
+  };
+
+  const showTubeToast = (text: string) => setTubeToast(text);
+
+  const clampTubeRescueCharges = (n: number) => Math.max(0, Math.min(3, Math.floor(n)));
+  const setTubeRescueCharges = (value: number) => {
+    const next = clampTubeRescueCharges(value);
+    tubeRescueChargesRef.current = next;
+    setTubeRescueChargesState(next);
+    try {
+      sessionStorage.setItem(TUBE_RESCUE_CHARGES_SESSION_KEY, String(next));
+    } catch {
+      // ignore
+    }
   };
 
   const readLegacyLocalDolphinCount = (userId: string): number => {
@@ -308,6 +363,41 @@ export const DeepDiveGame = () => {
     img.src = turtleShellItemImg;
     turtleShellItemImgRef.current = img;
   }, []);
+
+  useEffect(() => {
+    const img = new Image();
+    img.src = tubeImg;
+    tubeImgRef.current = img;
+  }, []);
+
+  useEffect(() => {
+    // Tube pieces persist for the lifetime of the tab/session.
+    try {
+      const raw = sessionStorage.getItem(TUBE_SESSION_KEY);
+      if (raw != null) {
+        const n = Number.parseInt(raw, 10);
+        if (Number.isFinite(n)) setTubePieces(n);
+      }
+    } catch {
+      // ignore
+    }
+    try {
+      const raw = sessionStorage.getItem(TUBE_RESCUE_CHARGES_SESSION_KEY);
+      if (raw != null) {
+        const n = Number.parseInt(raw, 10);
+        if (Number.isFinite(n)) setTubeRescueCharges(n);
+      }
+    } catch {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!tubeToast) return;
+    const t = window.setTimeout(() => setTubeToast(null), 1200);
+    return () => window.clearTimeout(t);
+  }, [tubeToast]);
 
   // --- Input Handling ---
   useEffect(() => {
@@ -577,6 +667,10 @@ export const DeepDiveGame = () => {
     didSubmitRef.current = false;
     didSendRunEndRef.current = false;
 
+    // Reset per-run tube progress.
+    setTubePieces(0);
+    setTubeRescueCharges(0);
+
     swordfishTimerRef.current = 0;
     isSwordfishActiveRef.current = false;
     isJumpInputActiveRef.current = false;
@@ -641,12 +735,43 @@ export const DeepDiveGame = () => {
         type: "TURTLE_SHELL",
       });
     }
+
+    // Dev/testing: spawn 4 tube pieces at the start (so you can test completion quickly).
+    if (Constants.DEV_FORCE_TUBE_PIECES_ON_START) {
+      const groundY = canvasRef.current.height - 100;
+      const baseX = Math.min(canvasRef.current.width - 220, playerRef.current.x + 220);
+      const gap = 52;
+      for (let i = 0; i < 4; i++) {
+        itemsRef.current.push({
+          x: baseX + i * gap,
+          y: groundY - 92,
+          width: 36,
+          height: 36,
+          collected: false,
+          type: "TUBE_PIECE",
+          variant: i,
+        });
+      }
+    }
     bubblesRef.current = Array.from({ length: 20 }, () => createBubble(canvasRef.current!.width, canvasRef.current!.height));
     bgEntitiesRef.current = []; // Clear old background
 
     lastTimeRef.current = performance.now();
     cancelAnimationFrame(requestRef.current);
     requestRef.current = requestAnimationFrame(gameLoop);
+  };
+
+  const applyScoreBonus = (bonusScore: number) => {
+    if (!Number.isFinite(bonusScore) || bonusScore <= 0) return;
+    // Score is derived from distanceRef (score = floor(distance / 10)).
+    distanceRef.current += bonusScore * 10;
+    const newScore = Math.floor(distanceRef.current / 10);
+    if (newScore > scoreRef.current) {
+      scoreRef.current = newScore;
+      setScore(newScore);
+      const newLevel = Math.floor(newScore / 200) + 1;
+      setLevel((prev) => (newLevel > prev ? newLevel : prev));
+    }
   };
 
   const startRescueFromQuickSand = (trappedQuickSand: Platform) => {
@@ -697,6 +822,149 @@ export const DeepDiveGame = () => {
     player.dy = 0;
     isSwordfishActiveRef.current = false;
     swordfishTimerRef.current = 0;
+  };
+
+  const startTubeRescueFromFall = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    if (tubeRescueChargesRef.current <= 0) return;
+    if (tubeRescueRef.current.active) return;
+    if (rescueRef.current.active) return;
+
+    // Consume 1 rescue charge (earned by completing a tube).
+    setTubeRescueCharges(tubeRescueChargesRef.current - 1);
+
+    const player = playerRef.current;
+
+    // Find the next NORMAL platform ahead (after the gap).
+    const targetPlat = platformsRef.current
+      .filter(p => p.type === "NORMAL" && p.x > player.x + 40)
+      .sort((a, b) => a.x - b.x)[0];
+
+    const fallbackX = Math.min(canvas.width - player.width - 40, Math.max(40, player.x));
+    const fallbackY = canvas.height - 100 - player.height;
+
+    const targetPlayerX = targetPlat
+      ? Math.min(canvas.width - player.width - 40, Math.max(40, targetPlat.x + targetPlat.width / 2 - player.width / 2))
+      : fallbackX;
+    const targetPlayerY = targetPlat ? (targetPlat.y - player.height) : fallbackY;
+
+    tubeRescueRef.current = {
+      active: true,
+      phase: "FLY_IN",
+      phaseT: 0,
+      tubeX: canvas.width + 140,
+      tubeY: -90,
+      tubeRot: 0,
+      targetPlayerX,
+      targetPlayerY,
+      playerXFixed: player.x,
+      towStartY: player.y,
+      worldShiftApplied: 0,
+      countdownMs: 3000,
+      lastCountdownDisplay: null,
+    };
+
+    // Stabilize player immediately.
+    player.isTrapped = false;
+    player.dy = 0;
+    player.rotation = 0;
+    isSwordfishActiveRef.current = false;
+    swordfishTimerRef.current = 0;
+  };
+
+  const updateTubeRescue = (dt: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rescue = tubeRescueRef.current;
+    if (!rescue.active) return;
+
+    const shiftWorldX = (dx: number) => {
+      if (dx === 0) return;
+      platformsRef.current.forEach(p => { p.x -= dx; });
+      itemsRef.current.forEach(it => { it.x -= dx; });
+      bubblesRef.current.forEach(b => { b.x -= dx * 0.2; });
+      bgEntitiesRef.current.forEach(e => { e.x -= dx * 0.2; });
+    };
+
+    rescue.phaseT += dt;
+    rescue.tubeRot += dt * 3.5;
+
+    const player = playerRef.current;
+
+    if (rescue.phase === "FLY_IN") {
+      const targetX = player.x + 150;
+      const targetY = Math.max(40, Math.min(canvas.height - 180, player.y - 140));
+      const speed = 6;
+      rescue.tubeX += (targetX - rescue.tubeX) * Math.min(1, dt * speed);
+      rescue.tubeY += (targetY - rescue.tubeY) * Math.min(1, dt * speed);
+      const closeEnough = Math.hypot(rescue.tubeX - targetX, rescue.tubeY - targetY) < 14;
+      if (closeEnough || rescue.phaseT > 1.2) {
+        rescue.phase = "HOOK";
+        rescue.phaseT = 0;
+      }
+      return;
+    }
+
+    if (rescue.phase === "HOOK") {
+      if (rescue.phaseT > 0.55) {
+        rescue.phase = "TOW";
+        rescue.phaseT = 0;
+        rescue.towStartY = player.y;
+        rescue.playerXFixed = player.x;
+        rescue.worldShiftApplied = 0;
+      }
+      return;
+    }
+
+    if (rescue.phase === "TOW") {
+      const t = Math.min(1, rescue.phaseT / 1.1);
+      const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+
+      const desiredShift = rescue.targetPlayerX - rescue.playerXFixed;
+      const shiftNow = desiredShift * ease;
+      const shiftStep = shiftNow - rescue.worldShiftApplied;
+      shiftWorldX(shiftStep);
+      rescue.worldShiftApplied = shiftNow;
+
+      player.x = rescue.playerXFixed;
+      player.y = rescue.towStartY + (rescue.targetPlayerY - rescue.towStartY) * ease;
+      player.dy = 0;
+      player.grounded = true;
+      player.rotation = 0;
+
+      // Tube stays slightly ahead/up while towing
+      rescue.tubeX = player.x + 140;
+      rescue.tubeY = Math.max(30, player.y - 120);
+
+      if (t >= 1) {
+        rescue.phase = "COUNTDOWN";
+        rescue.phaseT = 0;
+        rescue.countdownMs = 3000;
+        rescue.lastCountdownDisplay = null;
+        setRestartCountdown(3);
+      }
+      return;
+    }
+
+    if (rescue.phase === "COUNTDOWN") {
+      rescue.countdownMs -= dt * 1000;
+      const display = Math.max(0, Math.ceil(rescue.countdownMs / 1000));
+      if (rescue.lastCountdownDisplay !== display) {
+        rescue.lastCountdownDisplay = display;
+        setRestartCountdown(display > 0 ? display : null);
+      }
+
+      // Fly off to the right/top
+      rescue.tubeX += dt * 520;
+      rescue.tubeY -= dt * 140;
+
+      if (rescue.countdownMs <= 0) {
+        tubeRescueRef.current = { active: false };
+        setRestartCountdown(null);
+        quickSandTimerRef.current = null;
+      }
+    }
   };
 
   const updateRescue = (dt: number) => {
@@ -966,6 +1234,10 @@ export const DeepDiveGame = () => {
       updateRescue(dt);
       return;
     }
+    if (tubeRescueRef.current.active) {
+      updateTubeRescue(dt);
+      return;
+    }
 
     const player = playerRef.current;
 
@@ -1156,6 +1428,11 @@ export const DeepDiveGame = () => {
     }
 
     if (player.y > canvas.height) {
+      // If tube is completed, it grants a 1x rescue-from-fall.
+      if (tubeRescueChargesRef.current > 0) {
+        startTubeRescueFromFall();
+        return;
+      }
       if (player.isTrapped) playSound('die_quicksand');
       else playSound('die_fall');
       gameOver();
@@ -1294,6 +1571,22 @@ export const DeepDiveGame = () => {
                 type: "OXYGEN"
               });
             }
+            else if (
+              scoreRef.current >= Constants.TUBE_PIECE_UNLOCK_SCORE &&
+              !rescueRef.current.active &&
+              Math.random() < Constants.TUBE_PIECE_CHANCE
+            ) {
+              itemsRef.current.push({
+                x: newPlat.x + newPlat.width / 2 - 18,
+                y: newPlat.y - 90 - (Math.random() * 70),
+                width: 36,
+                height: 36,
+                collected: false,
+                type: "TUBE_PIECE",
+                // Show the "next" quarter so the piece art matches the HUD progress.
+                variant: tubePiecesRef.current % 4,
+              });
+            }
           }
         }
       }
@@ -1347,6 +1640,19 @@ export const DeepDiveGame = () => {
           // Dev/testing: make the next generated platform a long quicksand
           if (Constants.DEV_FORCE_LONG_QUICKSAND_AFTER_TURTLE_SHELL) {
             devForceLongQuickSandOnceRef.current = true;
+          }
+          return false;
+        } else if (item.type === "TUBE_PIECE") {
+          const next = tubePiecesRef.current + 1;
+          playSound('oxygen');
+          if (next >= Constants.TUBE_PIECES_PER_TUBE) {
+            // Completion: trigger exactly once per 4 pieces, apply reward once, then reset.
+            setTubePieces(0);
+            setTubeRescueCharges(tubeRescueChargesRef.current + 1);
+            applyScoreBonus(Constants.TUBE_COMPLETION_BONUS_SCORE);
+            showTubeToast("Tube Completed!");
+          } else {
+            setTubePieces(next);
           }
           return false;
         } else if (item.type === "URCHIN") {
@@ -1479,6 +1785,19 @@ export const DeepDiveGame = () => {
           // Fallback if image not ready yet
           drawTurtleShell(ctx, item.x, item.y, item.width, item.height);
         }
+      } else if (item.type === "TUBE_PIECE") {
+        const img = tubeImgRef.current;
+        if (img && img.complete && img.naturalWidth > 0) {
+          const sw = Math.floor(img.naturalWidth / 2);
+          const sh = Math.floor(img.naturalHeight / 2);
+          const v = (typeof item.variant === "number" && item.variant >= 0) ? (item.variant % 4) : 0;
+          const sx = (v % 2) * sw;
+          const sy = Math.floor(v / 2) * sh;
+          ctx.drawImage(img, sx, sy, sw, sh, item.x, item.y, item.width, item.height);
+        } else {
+          ctx.fillStyle = "rgba(0,255,255,0.9)";
+          ctx.fillRect(item.x, item.y, item.width, item.height);
+        }
       } else if (item.type === "URCHIN") {
         drawUrchin(ctx, item);
       }
@@ -1558,6 +1877,33 @@ export const DeepDiveGame = () => {
         }
       }
     }
+
+    // Tube rescue overlay (draw on top)
+    const tubeRescue = tubeRescueRef.current;
+    if (tubeRescue.active) {
+      const img = tubeImgRef.current;
+      if (img && img.complete && img.naturalWidth > 0) {
+        const w = 92;
+        const h = (img.naturalHeight / img.naturalWidth) * w;
+        const x = tubeRescue.tubeX;
+        const y = tubeRescue.tubeY;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(tubeRescue.tubeRot);
+        ctx.shadowColor = "rgba(0,255,255,0.35)";
+        ctx.shadowBlur = 16;
+        ctx.globalAlpha = 0.95;
+        ctx.drawImage(img, -w / 2, -h / 2, w, h);
+        ctx.restore();
+      } else {
+        ctx.save();
+        ctx.fillStyle = "rgba(0,255,255,0.85)";
+        ctx.beginPath();
+        ctx.arc(tubeRescue.tubeX, tubeRescue.tubeY, 26, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
   };
 
   return (
@@ -1578,7 +1924,33 @@ export const DeepDiveGame = () => {
           hasTurtleShell={hasTurtleShell}
           dolphinCount={dolphinCount}
           dolphinSpendSeq={dolphinSpendSeq}
+          tubePieces={tubePieces}
+          tubeRescueCharges={tubeRescueCharges}
         />
+      )}
+
+      {tubeToast && (
+        <div
+          style={{
+            position: "absolute",
+            top: 78,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 25,
+            pointerEvents: "none",
+            padding: "8px 12px",
+            borderRadius: 12,
+            border: "1px solid rgba(0,255,255,0.55)",
+            background: "rgba(0, 20, 40, 0.72)",
+            color: "#00ffff",
+            fontFamily: "monospace",
+            fontWeight: 900,
+            letterSpacing: 0.6,
+            textShadow: "0 2px 0 rgba(0,0,0,0.6)",
+          }}
+        >
+          {tubeToast}
+        </div>
       )}
 
       {restartCountdown !== null && (

@@ -32,9 +32,18 @@ export const TURTLE_SHELL_BASE_CHANCE = SWORDFISH_CHANCE;
 // Gets rarer every time user uses it (monotonic decrease)
 export const TURTLE_SHELL_RARITY_DECAY_PER_USE = 1; // chance = baseChance / (1 + uses * decay)
 
+// Tube Pieces (collect 4 to complete)
+export const TUBE_PIECE_UNLOCK_SCORE = 1250;
+// This chance is taken from the "no item spawned" region, so existing swordfish/oxygen odds are unchanged.
+export const TUBE_PIECE_CHANCE = 0.06;
+export const TUBE_PIECES_PER_TUBE = 4;
+// Score bonus granted once per completed tube (implemented by bumping distance so score stays consistent).
+export const TUBE_COMPLETION_BONUS_SCORE = 250;
+
 // --- Dev / Testing toggles (turn off before shipping) ---
 export const DEV_FORCE_TURTLE_SHELL_ON_START = false;
 export const DEV_FORCE_DOLPHIN_ON_START = false;
+export const DEV_FORCE_TUBE_PIECES_ON_START = true;
 // Dev/testing: force-show the "5 day streak reward" moment + grant dolphin (does NOT mark the reward as claimed,
 // so you can repeatedly debug the effect on reload).
 export const DEV_FORCE_DOLPHIN_STREAK_REWARD_MOMENT = false;

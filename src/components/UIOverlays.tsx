@@ -1,8 +1,9 @@
 import React from "react";
 import type { LeaderboardEntry, WeeklyLeaderboard } from "../types";
-import { OXYGEN_MAX } from "../constants";
+import { OXYGEN_MAX, TUBE_PIECE_UNLOCK_SCORE, TUBE_PIECES_PER_TUBE } from "../constants";
 import turtleShellItemImg from "../../turtle-shell-item.png";
 import dolphinItemImg from "../../dolphin.png";
+import tubeImg from "../../tube.png";
 
 type AuthMode = "login" | "signup" | "changePassword";
 
@@ -821,9 +822,11 @@ interface HUDProps {
   hasTurtleShell?: boolean;
   dolphinCount?: number;
   dolphinSpendSeq?: number;
+  tubePieces?: number;
+  tubeRescueCharges?: number;
 }
 
-export const HUD: React.FC<HUDProps> = ({ score, level, oxygen, hasTurtleShell, dolphinCount, dolphinSpendSeq }) => {
+export const HUD: React.FC<HUDProps> = ({ score, level, oxygen, hasTurtleShell, dolphinCount, dolphinSpendSeq, tubePieces, tubeRescueCharges }) => {
   const dolphinSlotRef = React.useRef<HTMLDivElement | null>(null);
   const dolphinSpendFxRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -864,6 +867,9 @@ export const HUD: React.FC<HUDProps> = ({ score, level, oxygen, hasTurtleShell, 
   }, [dolphinSpendSeq]);
 
   const dc = typeof dolphinCount === "number" ? dolphinCount : 0;
+  const tp = typeof tubePieces === "number" ? Math.max(0, Math.min(TUBE_PIECES_PER_TUBE - 1, Math.floor(tubePieces))) : 0;
+  const tubeUnlocked = score >= TUBE_PIECE_UNLOCK_SCORE || tp > 0;
+  const trc = typeof tubeRescueCharges === "number" ? Math.max(0, Math.floor(tubeRescueCharges)) : 0;
 
   return (
   <div style={{
@@ -912,6 +918,7 @@ export const HUD: React.FC<HUDProps> = ({ score, level, oxygen, hasTurtleShell, 
       {[
         { has: !!hasTurtleShell, img: turtleShellItemImg, alt: "Turtle shell saved" },
         { has: dc > 0, img: dolphinItemImg, alt: "Dolphin saved", count: dc },
+        { has: trc > 0, img: tubeImg, alt: "Tube rescue saved", count: trc },
       ].map((slot, idx) => (
         <div
           key={idx}
@@ -995,6 +1002,51 @@ export const HUD: React.FC<HUDProps> = ({ score, level, oxygen, hasTurtleShell, 
         </div>
       ))}
     </div>
+
+    {tubeUnlocked && (
+      <div style={{ marginTop: "8px", display: "flex", alignItems: "center", gap: "8px" }}>
+        <span style={{ fontSize: "14px", opacity: 0.9 }}>TUBE:</span>
+        <div
+          aria-label={`Tube pieces: ${tp}/${TUBE_PIECES_PER_TUBE}`}
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: 10,
+            border: "2px solid rgba(255,255,255,0.9)",
+            background: "rgba(0,0,0,0.22)",
+            padding: 3,
+            boxSizing: "border-box",
+            display: "grid",
+            gridTemplateColumns: "repeat(2, 1fr)",
+            gridTemplateRows: "repeat(2, 1fr)",
+            gap: 2,
+            boxShadow: tp > 0 ? "0 0 12px rgba(0,255,255,0.25)" : "none",
+          }}
+        >
+          {Array.from({ length: 4 }).map((_, i) => {
+            const filled = i < tp;
+            const bx = (i % 2) * 100;
+            const by = Math.floor(i / 2) * 100;
+            return (
+              <div
+                key={i}
+                style={{
+                  borderRadius: 6,
+                  overflow: "hidden",
+                  backgroundImage: `url(${tubeImg})`,
+                  backgroundRepeat: "no-repeat",
+                  backgroundSize: "200% 200%",
+                  backgroundPosition: `${bx}% ${by}%`,
+                  filter: filled ? "none" : "grayscale(1)",
+                  opacity: filled ? 1 : 0.25,
+                }}
+              />
+            );
+          })}
+        </div>
+        <span style={{ fontSize: "14px", opacity: 0.85 }}>{tp}/{TUBE_PIECES_PER_TUBE}</span>
+      </div>
+    )}
   </div>
   );
 };
