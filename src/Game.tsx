@@ -168,10 +168,28 @@ export const DeepDiveGame = () => {
   const LEGACY_DOLPHIN_LOCAL_KEY_BASE = "subdash:savedItem:dolphin";
   const clampDolphinCount = (n: number) => Math.max(0, Math.min(DOLPHIN_SAVED_MAX, Math.floor(n)));
 
-  const setDolphinCount = (value: number) => {
+  const dolphinSyncSeqRef = useRef<number>(0);
+  const dolphinLastAppliedSeqRef = useRef<number>(0);
+  const nextDolphinSyncSeq = () => {
+    dolphinSyncSeqRef.current += 1;
+    return dolphinSyncSeqRef.current;
+  };
+
+  const applyDolphinCount = (value: number) => {
     const next = clampDolphinCount(value);
     dolphinSavedCountRef.current = next;
     setDolphinCountState(next);
+  };
+
+  const applyDolphinCountSync = (value: number, seq: number) => {
+    if (seq < dolphinLastAppliedSeqRef.current) return;
+    dolphinLastAppliedSeqRef.current = seq;
+    applyDolphinCount(value);
+  };
+
+  const setDolphinCountLocal = (value: number) => {
+    const seq = nextDolphinSyncSeq();
+    applyDolphinCountSync(value, seq);
   };
 
   const TUBE_SESSION_KEY = "subdash:session:tubePieces";
@@ -228,11 +246,12 @@ export const DeepDiveGame = () => {
   };
 
   const refreshDailyMissions = async () => {
+    const seq = nextDolphinSyncSeq();
     try {
       const data = await missionsAPI.getDaily();
       setDailyMissions(data);
       if (data.user?.inventory && typeof data.user.inventory.dolphinSaved === "number") {
-        setDolphinCount(data.user.inventory.dolphinSaved);
+        applyDolphinCountSync(data.user.inventory.dolphinSaved, seq);
       }
     } catch (e) {
       console.error("Failed to fetch daily missions:", e);
@@ -264,6 +283,7 @@ export const DeepDiveGame = () => {
 
     // Load auth session (if any)
     const loadMe = async () => {
+      const seq = nextDolphinSyncSeq();
       const me = await authAPI.me();
       setAuthUser(me);
       // Keep the auth ref in sync immediately (used by gameplay-side auth checks).
@@ -271,18 +291,19 @@ export const DeepDiveGame = () => {
 
       // Hydrate dolphin count from Redis (source of truth).
       if (me?.inventory && typeof me.inventory.dolphinSaved === "number") {
-        setDolphinCount(me.inventory.dolphinSaved);
+        applyDolphinCountSync(me.inventory.dolphinSaved, seq);
       } else {
-        setDolphinCount(0);
+        applyDolphinCountSync(0, seq);
       }
 
       // One-time import of legacy localStorage dolphins into Redis (prevents losing old items).
       if (me?.userId) {
         const legacy = readLegacyLocalDolphinCount(me.userId);
         if (legacy > 0) {
+          const importSeq = nextDolphinSyncSeq();
           const imported = await inventoryAPI.importDolphin(legacy);
           if (imported?.inventory && typeof imported.inventory.dolphinSaved === "number") {
-            setDolphinCount(imported.inventory.dolphinSaved);
+            applyDolphinCountSync(imported.inventory.dolphinSaved, importSeq);
           }
           clearLegacyLocalDolphinCount(me.userId);
         }
@@ -326,7 +347,7 @@ export const DeepDiveGame = () => {
   useEffect(() => {
     // Dev/testing: force the streak reward moment (confetti + modal) and grant dolphin.
     if (!Constants.DEV_FORCE_DOLPHIN_STREAK_REWARD_MOMENT) return;
-    setDolphinCount(dolphinSavedCountRef.current + 1);
+    setDolphinCountLocal(dolphinSavedCountRef.current + 1);
     if (gameStateRef.current === "PLAYING") {
       pendingDolphinRewardRef.current = true;
     } else {
@@ -619,7 +640,8 @@ export const DeepDiveGame = () => {
     // (common "press jump slightly before landing" behavior should use the jump buffer instead).
     if (dolphinSavedCountRef.current > 0 && !isImminentLandingWhileFalling()) {
       const before = dolphinSavedCountRef.current;
-      setDolphinCount(before - 1);
+      const seq = nextDolphinSyncSeq();
+      applyDolphinCountSync(before - 1, seq);
       setDolphinSpendSeq((s) => s + 1);
       // Reconcile with Redis source of truth (best-effort).
       // If the server rejects (e.g., already 0), restore the local count.
@@ -627,15 +649,15 @@ export const DeepDiveGame = () => {
         .consumeDolphin()
         .then((out) => {
           if (!out || !out.ok) {
-            setDolphinCount(before);
+            applyDolphinCountSync(before, seq);
             return;
           }
           if (typeof out.inventory?.dolphinSaved === "number") {
-            setDolphinCount(out.inventory.dolphinSaved);
+            applyDolphinCountSync(out.inventory.dolphinSaved, seq);
           }
         })
         .catch(() => {
-          setDolphinCount(before);
+          applyDolphinCountSync(before, seq);
         });
 
       player.dy = Constants.JUMP_FORCE_INITIAL;
@@ -690,7 +712,7 @@ export const DeepDiveGame = () => {
     }
     // Dev/testing: start with a saved Dolphin (double jump)
     if (Constants.DEV_FORCE_DOLPHIN_ON_START) {
-      setDolphinCount(dolphinSavedCountRef.current + 1);
+      setDolphinCountLocal(dolphinSavedCountRef.current + 1);
     }
 
     setLastSubmittedId(null); // Reset highlight for new game
@@ -1074,11 +1096,12 @@ export const DeepDiveGame = () => {
     const au = authUserRef.current;
     if (au && !didSendRunEndRef.current) {
       didSendRunEndRef.current = true;
+      const runEndSeq = nextDolphinSyncSeq();
       missionsAPI
         .postEvent({ type: "run_end", score: finalScore })
         .then((out) => {
           if (out?.inventory && typeof out.inventory.dolphinSaved === "number") {
-            setDolphinCount(out.inventory.dolphinSaved);
+            applyDolphinCountSync(out.inventory.dolphinSaved, runEndSeq);
           }
           const streakGrant = out?.rewards?.streak?.dolphin;
           if (typeof streakGrant === "number" && streakGrant > 0) {
