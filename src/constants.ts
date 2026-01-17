@@ -43,7 +43,7 @@ export const TUBE_COMPLETION_BONUS_SCORE = 250;
 // --- Dev / Testing toggles (turn off before shipping) ---
 export const DEV_FORCE_TURTLE_SHELL_ON_START = false;
 export const DEV_FORCE_DOLPHIN_ON_START = false;
-export const DEV_FORCE_TUBE_PIECES_ON_START = true;
+export const DEV_FORCE_TUBE_PIECES_ON_START = false;
 // Dev/testing: force-show the "5 day streak reward" moment + grant dolphin (does NOT mark the reward as claimed,
 // so you can repeatedly debug the effect on reload).
 export const DEV_FORCE_DOLPHIN_STREAK_REWARD_MOMENT = false;
