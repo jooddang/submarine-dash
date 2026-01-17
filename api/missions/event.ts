@@ -2,9 +2,10 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getUserIdForSession, KEY_PREFIX } from '../_lib/auth.js';
 import { getUpstashRedisClient } from '../_lib/redis.js';
 import {
-  addPendingDolphins,
+  addSavedDolphins,
   keyDolphinStreakLastAwarded,
-  settleDolphins,
+  migratePendingDolphins,
+  getSavedDolphins,
 } from '../_lib/dolphinInventory.js';
 
 export const config = { runtime: 'nodejs' };
@@ -220,7 +221,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const lastAwardedRaw = await redisRO.get(keyDolphinStreakLastAwarded(userId));
             const lastAwarded = lastAwardedRaw ? Number.parseInt(String(lastAwardedRaw), 10) : 0;
             if (!Number.isFinite(lastAwarded) || streakDays > lastAwarded) {
-              await addPendingDolphins(redisRW, userId, 1, { type: 'streak', meta: { streakDays } });
+              await addSavedDolphins(redisRW, userId, 1, { type: 'streak', meta: { streakDays } });
               await redisRW.set(keyDolphinStreakLastAwarded(userId), String(streakDays));
               streakReward = { dolphin: 1, streakDays };
             }
@@ -234,10 +235,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     await redisRW.set(progressKey, JSON.stringify(progress));
 
     // Include latest dolphin inventory snapshot (best-effort).
-    let inventory: { dolphinSaved: number; dolphinPending: number } | undefined = undefined;
+    let inventory: { dolphinSaved: number } | undefined = undefined;
     try {
-      const settled = await settleDolphins(redisRW, userId);
-      inventory = { dolphinSaved: settled.saved, dolphinPending: settled.pending };
+      await migratePendingDolphins(redisRW, userId);
+      const saved = await getSavedDolphins(redisRW, userId);
+      inventory = { dolphinSaved: saved };
     } catch {
       // best-effort
     }

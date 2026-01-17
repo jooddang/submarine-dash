@@ -33,7 +33,7 @@ export type AuthUser = {
   userId: string;
   loginId: string;
   refCode: string;
-  inventory?: { dolphinSaved: number; dolphinPending?: number };
+  inventory?: { dolphinSaved: number };
   rewards?: {
     weeklyWinner?: { dolphin: true; weekId: string };
     grants?: { dolphin: number };
@@ -196,7 +196,7 @@ export type DailyMissionsResponse =
           keptAt?: number;
         };
         streak: { current: number; lastKeptDate: string | null; updatedAt: number };
-        inventory?: { dolphinSaved: number; dolphinPending?: number };
+        inventory?: { dolphinSaved: number };
       };
     };
 
@@ -226,7 +226,7 @@ export const missionsAPI = {
           keptAt?: number;
         };
         rewards?: { streak?: { dolphin: number; streakDays: number } };
-        inventory?: { dolphinSaved: number; dolphinPending?: number };
+        inventory?: { dolphinSaved: number };
       }
     | null
   > {
@@ -252,7 +252,7 @@ export const missionsAPI = {
 };
 
 export const inventoryAPI = {
-  async consumeDolphin(): Promise<{ ok: boolean; inventory: { dolphinSaved: number; dolphinPending?: number } } | null> {
+  async consumeDolphin(): Promise<{ ok: boolean; inventory: { dolphinSaved: number } } | null> {
     try {
       const res = await fetch(`${API_BASE_URL}/api/inventory/dolphin/consume`, {
         method: "POST",
@@ -266,7 +266,7 @@ export const inventoryAPI = {
     }
   },
 
-  async importDolphin(count: number): Promise<{ ok: boolean; inventory: { dolphinSaved: number; dolphinPending?: number } } | null> {
+  async importDolphin(count: number): Promise<{ ok: boolean; inventory: { dolphinSaved: number } } | null> {
     try {
       const res = await fetch(`${API_BASE_URL}/api/inventory/dolphin/import`, {
         method: "POST",

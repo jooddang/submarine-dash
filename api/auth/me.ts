@@ -3,9 +3,10 @@ import { KEY_PREFIX, getUser, getUserIdForSession } from '../_lib/auth.js';
 import { getUpstashRedisClient, RedisConfigError } from '../_lib/redis.js';
 import { getPrevWeekId } from '../../shared/week.js';
 import {
-  addPendingDolphins,
+  addSavedDolphins,
   keyLegacyDolphinGrant,
-  settleDolphins,
+  migratePendingDolphins,
+  getSavedDolphins,
 } from '../_lib/dolphinInventory.js';
 import {
   claimKeyForWeeklyDolphin,
@@ -46,8 +47,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const claimKey = claimKeyForWeeklyDolphin(user.userId);
         const lastClaimed = await rw.get<string>(claimKey);
         if (lastClaimed !== prevWeekId) {
-          // Add to pending first; only mark claimed if we successfully enqueue the reward.
-          await addPendingDolphins(rw, user.userId, 1, { type: 'weeklyWinner', meta: { weekId: prevWeekId } });
+          await addSavedDolphins(rw, user.userId, 1, { type: 'weeklyWinner', meta: { weekId: prevWeekId } });
           await rw.set(claimKey, prevWeekId);
           weeklyWinnerReward = { dolphin: true, weekId: prevWeekId };
         }
@@ -66,7 +66,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const raw = await rw.get<string>(legacyKey);
       const n = raw ? Number.parseInt(String(raw), 10) : 0;
       if (Number.isFinite(n) && n > 0) {
-        await addPendingDolphins(rw, user.userId, n, { type: 'manualGrant', meta: { source: 'legacyGrantKey' } });
+        await addSavedDolphins(rw, user.userId, n, { type: 'manualGrant', meta: { source: 'legacyGrantKey' } });
         await rw.set(legacyKey, '0');
         grantReward = { dolphin: n };
       }
@@ -74,12 +74,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.warn('Dolphin grant check failed:', e);
     }
 
-    // Inventory is sourced from Redis (saved is capped at 5; pending can be larger).
-    let inventory: { dolphinSaved: number; dolphinPending: number } | undefined = undefined;
+    // Inventory is sourced from Redis (saved only; migrate any legacy pending).
+    let inventory: { dolphinSaved: number } | undefined = undefined;
     try {
       const rw = getUpstashRedisClient(false);
-      const settled = await settleDolphins(rw, user.userId);
-      inventory = { dolphinSaved: settled.saved, dolphinPending: settled.pending };
+      await migratePendingDolphins(rw, user.userId);
+      const saved = await getSavedDolphins(rw, user.userId);
+      inventory = { dolphinSaved: saved };
     } catch (e) {
       console.warn('Dolphin inventory settle failed:', e);
     }

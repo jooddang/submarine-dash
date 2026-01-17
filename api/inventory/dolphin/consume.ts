@@ -18,7 +18,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const rw = getUpstashRedisClient(false);
     const out = await consumeOneSavedDolphin(rw, userId);
-    return res.status(200).json({ ok: out.ok, inventory: { dolphinSaved: out.saved, dolphinPending: out.pending } });
+    return res.status(200).json({ ok: out.ok, inventory: { dolphinSaved: out.saved } });
   } catch (e) {
     console.error('Consume dolphin API error:', e);
     return res.status(500).json({ error: 'Internal server error' });

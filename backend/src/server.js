@@ -15,7 +15,6 @@ const LEGACY_LEADERBOARD_KEY = 'submarine-dash:leaderboard';
 const WEEKLY_LEADERBOARDS_KEY = 'submarine-dash:leaderboards:weekly:v1';
 const WEEKLY_DOLPHIN_CLAIM_KEY_PREFIX = 'sd:reward:weeklyWinnerDolphin:claimed';
 const DOLPHIN_GRANT_KEY_PREFIX = 'sd:reward:dolphin:grant'; // legacy back-compat
-const DOLPHIN_SAVED_MAX = 5;
 const MAX_ENTRIES = 5;
 const CLEAR_ALLOWED = process.env.ALLOW_LEADERBOARD_CLEAR === 'true';
 
@@ -163,43 +162,47 @@ async function pushDolphinLedger(userId, entry) {
 }
 
 async function addPendingDolphins(userId, amount, meta) {
+  return addSavedDolphins(userId, amount, meta);
+}
+
+async function addSavedDolphins(userId, amount, meta) {
   if (!redis) return 0;
   const n = Math.max(0, Math.floor(amount || 0));
   if (n <= 0) return 0;
-  await redis.incrby(keyDolphinPending(userId), n);
+  await redis.incrby(keyDolphinSaved(userId), n);
   await pushDolphinLedger(userId, { ts: Date.now(), type: meta?.type || 'grant', delta: n, meta: meta?.meta });
   return n;
 }
 
-async function settleDolphins(userId) {
-  if (!redis) return { saved: 0, pending: 0, moved: 0 };
+async function migratePendingDolphins(userId) {
+  if (!redis) return { saved: 0, moved: 0 };
   const savedKey = keyDolphinSaved(userId);
   const pendingKey = keyDolphinPending(userId);
   const savedRaw = await redis.get(savedKey);
   const pendingRaw = await redis.get(pendingKey);
-  const saved = Math.max(0, Math.min(DOLPHIN_SAVED_MAX, parseIntSafe(savedRaw, 0)));
+  const saved = Math.max(0, parseIntSafe(savedRaw, 0));
   const pending = Math.max(0, parseIntSafe(pendingRaw, 0));
-  const capacity = Math.max(0, DOLPHIN_SAVED_MAX - saved);
-  const moved = Math.min(pending, capacity);
-  if (moved > 0) {
-    await redis.set(savedKey, String(saved + moved));
-    await redis.set(pendingKey, String(pending - moved));
-    await pushDolphinLedger(userId, { ts: Date.now(), type: 'settle', delta: moved });
-    return { saved: saved + moved, pending: pending - moved, moved };
+  if (pending > 0) {
+    const nextSaved = saved + pending;
+    await redis.set(savedKey, String(nextSaved));
+    await redis.set(pendingKey, '0');
+    await pushDolphinLedger(userId, { ts: Date.now(), type: 'migratePending', delta: pending });
+    return { saved: nextSaved, moved: pending };
   }
-  // normalize best-effort
   if (savedRaw !== String(saved)) await redis.set(savedKey, String(saved));
   if (pendingRaw !== String(pending)) await redis.set(pendingKey, String(pending));
-  return { saved, pending, moved: 0 };
+  return { saved, moved: 0 };
 }
 
 async function consumeOneSavedDolphin(userId) {
-  const settled = await settleDolphins(userId);
-  if (settled.saved <= 0) return { ok: false, saved: settled.saved, pending: settled.pending };
-  const next = Math.max(0, settled.saved - 1);
+  await migratePendingDolphins(userId);
+  const savedRaw = await redis.get(keyDolphinSaved(userId));
+  const saved = Math.max(0, parseIntSafe(savedRaw, 0));
+  if (saved <= 0) return { ok: false, saved };
+  const next = Math.max(0, saved - 1);
   await redis.set(keyDolphinSaved(userId), String(next));
   await pushDolphinLedger(userId, { ts: Date.now(), type: 'consume', delta: -1 });
-  return { ok: true, saved: next, pending: settled.pending };
+  return { ok: true, saved: next };
 }
 
 async function hashPassword(password) {
@@ -583,7 +586,7 @@ app.get('/api/auth/me', async (req, res) => {
         const claimKey = `${WEEKLY_DOLPHIN_CLAIM_KEY_PREFIX}:${user.userId}`;
         const lastClaimed = await redis.get(claimKey);
         if (lastClaimed !== prevWeekId) {
-          await addPendingDolphins(user.userId, 1, { type: 'weeklyWinner', meta: { weekId: prevWeekId } });
+          await addSavedDolphins(user.userId, 1, { type: 'weeklyWinner', meta: { weekId: prevWeekId } });
           await redis.set(claimKey, prevWeekId);
           rewards = { weeklyWinner: { dolphin: true, weekId: prevWeekId } };
         }
@@ -592,13 +595,13 @@ app.get('/api/auth/me', async (req, res) => {
       console.warn('Weekly winner reward check failed:', e?.message || e);
     }
 
-    // Legacy manual grants (best-effort): sd:reward:dolphin:grant:<userId> -> pending
+    // Legacy manual grants (best-effort): sd:reward:dolphin:grant:<userId> -> saved
     try {
       const grantKey = `${DOLPHIN_GRANT_KEY_PREFIX}:${user.userId}`;
       const raw = await redis.get(grantKey);
       const n = raw ? Number.parseInt(String(raw), 10) : 0;
       if (Number.isFinite(n) && n > 0) {
-        await addPendingDolphins(user.userId, n, { type: 'manualGrant', meta: { source: 'legacyGrantKey' } });
+        await addSavedDolphins(user.userId, n, { type: 'manualGrant', meta: { source: 'legacyGrantKey' } });
         await redis.set(grantKey, '0');
         rewards = { ...(rewards || {}), grants: { dolphin: n } };
       }
@@ -606,11 +609,13 @@ app.get('/api/auth/me', async (req, res) => {
       console.warn('Dolphin grant check failed:', e?.message || e);
     }
 
-    // Settle pending -> saved (cap 5) and return inventory snapshot.
+    // Inventory snapshot (saved only; migrate legacy pending).
     let inventory = undefined;
     try {
-      const settled = await settleDolphins(user.userId);
-      inventory = { dolphinSaved: settled.saved, dolphinPending: settled.pending };
+      await migratePendingDolphins(user.userId);
+      const savedRaw = await redis.get(keyDolphinSaved(user.userId));
+      const saved = Math.max(0, parseIntSafe(savedRaw, 0));
+      inventory = { dolphinSaved: saved };
     } catch {
       // best-effort
     }
@@ -646,8 +651,10 @@ app.get('/api/missions/daily', async (req, res) => {
 
     let inventory = undefined;
     try {
-      const settled = await settleDolphins(userId);
-      inventory = { dolphinSaved: settled.saved, dolphinPending: settled.pending };
+      await migratePendingDolphins(userId);
+      const savedRaw = await redis.get(keyDolphinSaved(userId));
+      const saved = Math.max(0, parseIntSafe(savedRaw, 0));
+      inventory = { dolphinSaved: saved };
     } catch {
       // best-effort
     }
@@ -714,7 +721,7 @@ app.post('/api/missions/event', async (req, res) => {
           const lastAwardedRaw = await redis.get(keyDolphinStreakLastAwarded(userId));
           const lastAwarded = lastAwardedRaw ? Number.parseInt(String(lastAwardedRaw), 10) : 0;
           if (!Number.isFinite(lastAwarded) || streak.current > lastAwarded) {
-            await addPendingDolphins(userId, 1, { type: 'streak', meta: { streakDays: streak.current } });
+            await addSavedDolphins(userId, 1, { type: 'streak', meta: { streakDays: streak.current } });
             await redis.set(keyDolphinStreakLastAwarded(userId), String(streak.current));
             streakReward = { dolphin: 1, streakDays: streak.current };
           }
@@ -727,8 +734,10 @@ app.post('/api/missions/event', async (req, res) => {
     await redis.set(progressKey, JSON.stringify(progress));
     let inventory = undefined;
     try {
-      const settled = await settleDolphins(userId);
-      inventory = { dolphinSaved: settled.saved, dolphinPending: settled.pending };
+      await migratePendingDolphins(userId);
+      const savedRaw = await redis.get(keyDolphinSaved(userId));
+      const saved = Math.max(0, parseIntSafe(savedRaw, 0));
+      inventory = { dolphinSaved: saved };
     } catch {
       // best-effort
     }
@@ -746,7 +755,7 @@ app.post('/api/inventory/dolphin/consume', async (req, res) => {
     const userId = await getUserIdForSession(req);
     if (!userId) return res.status(401).json({ error: 'Login required' });
     const out = await consumeOneSavedDolphin(userId);
-    return res.json({ ok: out.ok, inventory: { dolphinSaved: out.saved, dolphinPending: out.pending } });
+    return res.json({ ok: out.ok, inventory: { dolphinSaved: out.saved } });
   } catch (e) {
     console.error('POST /api/inventory/dolphin/consume error:', e);
     return res.status(500).json({ error: 'Internal server error' });
@@ -762,10 +771,12 @@ app.post('/api/inventory/dolphin/import', async (req, res) => {
     const n = typeof countRaw === 'number' ? countRaw : Number.parseInt(String(countRaw || '0'), 10);
     const count = Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
     if (count > 0) {
-      await addPendingDolphins(userId, count, { type: 'importLocal', meta: { source: 'localStorage' } });
+      await addSavedDolphins(userId, count, { type: 'importLocal', meta: { source: 'localStorage' } });
     }
-    const settled = await settleDolphins(userId);
-    return res.json({ ok: true, inventory: { dolphinSaved: settled.saved, dolphinPending: settled.pending } });
+    await migratePendingDolphins(userId);
+    const savedRaw = await redis.get(keyDolphinSaved(userId));
+    const saved = Math.max(0, parseIntSafe(savedRaw, 0));
+    return res.json({ ok: true, inventory: { dolphinSaved: saved } });
   } catch (e) {
     console.error('POST /api/inventory/dolphin/import error:', e);
     return res.status(500).json({ error: 'Internal server error' });

@@ -1,8 +1,6 @@
 import { KEY_PREFIX } from './auth.js';
 import type { Redis } from '@upstash/redis';
 
-export const DOLPHIN_SAVED_MAX = 5;
-
 export function keyDolphinSaved(userId: string) {
   return `${KEY_PREFIX}user:${userId}:dolphin:saved`;
 }
@@ -44,45 +42,62 @@ export async function addPendingDolphins(
   amount: number,
   meta: { type: string; meta?: Record<string, unknown> }
 ) {
+  return addSavedDolphins(redis, userId, amount, meta);
+}
+
+export async function addSavedDolphins(
+  redis: Redis,
+  userId: string,
+  amount: number,
+  meta: { type: string; meta?: Record<string, unknown> }
+) {
   const n = Math.max(0, Math.floor(amount));
   if (n <= 0) return 0;
-  await redis.incrby(keyDolphinPending(userId), n);
+  await redis.incrby(keyDolphinSaved(userId), n);
   await pushDolphinLedger(redis, userId, { ts: Date.now(), type: meta.type, delta: n, meta: meta.meta });
   return n;
 }
 
-export async function settleDolphins(redis: Redis, userId: string): Promise<{ saved: number; pending: number; moved: number }> {
+export async function migratePendingDolphins(
+  redis: Redis,
+  userId: string
+): Promise<{ saved: number; moved: number }> {
   const savedKey = keyDolphinSaved(userId);
   const pendingKey = keyDolphinPending(userId);
 
   const savedRaw = await redis.get(savedKey);
   const pendingRaw = await redis.get(pendingKey);
-  const saved = Math.max(0, Math.min(DOLPHIN_SAVED_MAX, parseIntSafe(savedRaw, 0)));
+  const saved = Math.max(0, parseIntSafe(savedRaw, 0));
   const pending = Math.max(0, parseIntSafe(pendingRaw, 0));
 
-  const capacity = Math.max(0, DOLPHIN_SAVED_MAX - saved);
-  const moved = Math.min(pending, capacity);
-  if (moved > 0) {
-    await redis.set(savedKey, String(saved + moved));
-    await redis.set(pendingKey, String(pending - moved));
-    await pushDolphinLedger(redis, userId, { ts: Date.now(), type: 'settle', delta: moved });
-    return { saved: saved + moved, pending: pending - moved, moved };
+  if (pending > 0) {
+    const nextSaved = saved + pending;
+    await redis.set(savedKey, String(nextSaved));
+    await redis.set(pendingKey, '0');
+    await pushDolphinLedger(redis, userId, { ts: Date.now(), type: 'migratePending', delta: pending });
+    return { saved: nextSaved, moved: pending };
   }
-  // normalize any out-of-range values (best-effort)
+
   if (savedRaw !== String(saved)) await redis.set(savedKey, String(saved));
   if (pendingRaw !== String(pending)) await redis.set(pendingKey, String(pending));
-  return { saved, pending, moved: 0 };
+  return { saved, moved: 0 };
 }
 
-export async function consumeOneSavedDolphin(redis: Redis, userId: string): Promise<{ ok: boolean; saved: number; pending: number }> {
-  // Fill saved from pending first if possible.
-  const settled = await settleDolphins(redis, userId);
-  if (settled.saved <= 0) return { ok: false, saved: settled.saved, pending: settled.pending };
+export async function getSavedDolphins(redis: Redis, userId: string): Promise<number> {
+  const savedRaw = await redis.get(keyDolphinSaved(userId));
+  return Math.max(0, parseIntSafe(savedRaw, 0));
+}
 
+export async function consumeOneSavedDolphin(redis: Redis, userId: string): Promise<{ ok: boolean; saved: number }> {
+  await migratePendingDolphins(redis, userId);
   const savedKey = keyDolphinSaved(userId);
-  const next = Math.max(0, settled.saved - 1);
+  const savedRaw = await redis.get(savedKey);
+  const saved = Math.max(0, parseIntSafe(savedRaw, 0));
+  if (saved <= 0) return { ok: false, saved };
+
+  const next = saved - 1;
   await redis.set(savedKey, String(next));
   await pushDolphinLedger(redis, userId, { ts: Date.now(), type: 'consume', delta: -1 });
-  return { ok: true, saved: next, pending: settled.pending };
+  return { ok: true, saved: next };
 }
 

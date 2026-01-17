@@ -10,15 +10,15 @@ function usageAndExit(msg) {
     [
       '',
       'Usage:',
-      '  node scripts/grant-dolphin.mjs --login-id LOGIN_ID --amount N [--dry-run]',
-      '  node scripts/grant-dolphin.mjs --user-id USER_ID --amount N [--dry-run]',
+      '  node scripts/revoke-dolphin.mjs --login-id LOGIN_ID [--amount N] [--dry-run]',
+      '  node scripts/revoke-dolphin.mjs --user-id USER_ID [--amount N] [--dry-run]',
       '',
       'Notes:',
-      '- This writes Dolphins directly into saved inventory (no pending state).',
+      '- Removes dolphins from saved (no negative values).',
       '',
       'Examples:',
-      '  node scripts/grant-dolphin.mjs --login-id jooddang --amount 3',
-      '  node scripts/grant-dolphin.mjs --user-id user_abc123 --amount 1 --dry-run',
+      '  node scripts/revoke-dolphin.mjs --login-id jooddang --amount 1',
+      '  node scripts/revoke-dolphin.mjs --user-id user_abc123 --amount 3 --dry-run',
       '',
     ].join('\n')
   );
@@ -54,6 +54,12 @@ function keyDolphinLedger(userId) {
   return `${LEDGER_KEY_PREFIX}${userId}:dolphin:ledger`;
 }
 
+function parseIntSafe(raw, fallback = 0) {
+  if (raw === null || raw === undefined) return fallback;
+  const n = Number.parseInt(String(raw), 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   const dryRun = !!args['dry-run'];
@@ -63,7 +69,7 @@ async function main() {
   if (!loginId && !userIdArg) usageAndExit('Missing --login-id or --user-id');
   if (loginId && userIdArg) usageAndExit('Provide only one of --login-id or --user-id');
 
-  const amount = Number.parseInt(String(args.amount || ''), 10);
+  const amount = Number.parseInt(String(args.amount || '1'), 10);
   if (!Number.isFinite(amount) || amount <= 0) usageAndExit('Invalid --amount (must be a positive integer)');
 
   const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
@@ -83,23 +89,31 @@ async function main() {
 
   const savedKey = keyDolphinSaved(userId);
   const ledgerKey = keyDolphinLedger(userId);
-  console.log('[grant-dolphin] Planned grant:');
+
+  const savedRaw = await redis.get(savedKey);
+  const saved = Math.max(0, parseIntSafe(savedRaw, 0));
+
+  const removeFromSaved = Math.min(saved, amount);
+
+  console.log('[revoke-dolphin] Planned revoke:');
   console.log(`- userId=${userId}`);
   console.log(`- amount=${amount}`);
-  console.log(`- savedKey=${savedKey}`);
+  console.log(`- removeFromSaved=${removeFromSaved}`);
   console.log(`- dryRun=${dryRun}`);
 
   if (dryRun) return;
 
-  const next = await redis.incrby(savedKey, amount);
-  const entry = { ts: Date.now(), type: 'manualGrant', delta: amount, meta: { via: 'grant-dolphin.mjs' } };
-  await redis.lpush(ledgerKey, JSON.stringify(entry));
+  if (removeFromSaved > 0) {
+    await redis.set(savedKey, String(saved - removeFromSaved));
+    await redis.lpush(ledgerKey, JSON.stringify({ ts: Date.now(), type: 'manualRevokeSaved', delta: -removeFromSaved, meta: { via: 'revoke-dolphin.mjs' } }));
+  }
   await redis.ltrim(ledgerKey, 0, 99);
-  console.log(`[grant-dolphin] OK. Saved dolphins now: ${next}`);
+
+  console.log('[revoke-dolphin] OK.');
+  console.log(`- saved: ${saved} -> ${saved - removeFromSaved}`);
 }
 
 main().catch((e) => {
-  console.error('[grant-dolphin] Failed:', e?.message || e);
+  console.error('[revoke-dolphin] Failed:', e?.message || e);
   process.exit(1);
 });
-
