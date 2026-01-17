@@ -163,12 +163,13 @@ export const DeepDiveGame = () => {
   }>({ active: false, moved: false, allowScroll: false, startX: 0, startY: 0 });
   const pendingDolphinRewardRef = useRef<boolean>(false);
   const dolphinUseEnabledRef = useRef<boolean>(true);
+  const dolphinUsesThisRunRef = useRef<number>(0);
 
   // Dolphin is sourced from Redis (server is source of truth).
   // Client state is a cache for UI; it is reconciled via /auth/me, /missions/daily, and consume endpoint.
-  const DOLPHIN_SAVED_MAX = 5;
   const LEGACY_DOLPHIN_LOCAL_KEY_BASE = "subdash:savedItem:dolphin";
-  const clampDolphinCount = (n: number) => Math.max(0, Math.min(DOLPHIN_SAVED_MAX, Math.floor(n)));
+  const clampDolphinCount = (n: number) => Math.max(0, Math.floor(n));
+  const DOLPHIN_USES_PER_RUN_MAX = 3;
 
   const dolphinSyncSeqRef = useRef<number>(0);
   const dolphinLastAppliedSeqRef = useRef<number>(0);
@@ -644,10 +645,18 @@ export const DeepDiveGame = () => {
     // Dolphin Double Jump (mid-air). Consumes the saved dolphin.
     // Important: allow during falling too, but DO NOT consume dolphin when a landing is imminent
     // (common "press jump slightly before landing" behavior should use the jump buffer instead).
-    if (allowDolphin && dolphinUseEnabledRef.current && dolphinSavedCountRef.current > 0 && !isImminentLandingWhileFalling()) {
+    if (
+      allowDolphin &&
+      dolphinUseEnabledRef.current &&
+      dolphinSavedCountRef.current > 0 &&
+      dolphinUsesThisRunRef.current < DOLPHIN_USES_PER_RUN_MAX &&
+      !isImminentLandingWhileFalling()
+    ) {
       const before = dolphinSavedCountRef.current;
+      const beforeUses = dolphinUsesThisRunRef.current;
       const seq = nextDolphinSyncSeq();
       applyDolphinCountSync(before - 1, seq);
+      dolphinUsesThisRunRef.current = beforeUses + 1;
       setDolphinSpendSeq((s) => s + 1);
       // Reconcile with Redis source of truth (best-effort).
       // If the server rejects (e.g., already 0), restore the local count.
@@ -656,6 +665,7 @@ export const DeepDiveGame = () => {
         .then((out) => {
           if (!out || !out.ok) {
             applyDolphinCountSync(before, seq);
+            dolphinUsesThisRunRef.current = beforeUses;
             return;
           }
           if (typeof out.inventory?.dolphinSaved === "number") {
@@ -664,6 +674,7 @@ export const DeepDiveGame = () => {
         })
         .catch(() => {
           applyDolphinCountSync(before, seq);
+          dolphinUsesThisRunRef.current = beforeUses;
         });
 
       player.dy = Constants.JUMP_FORCE_INITIAL;
@@ -694,6 +705,7 @@ export const DeepDiveGame = () => {
     quickSandTimerRef.current = null;
     didSubmitRef.current = false;
     didSendRunEndRef.current = false;
+    dolphinUsesThisRunRef.current = 0;
 
     // Reset per-run tube progress.
     setTubePieces(0);
