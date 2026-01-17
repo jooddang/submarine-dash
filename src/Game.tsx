@@ -1644,7 +1644,7 @@ export const DeepDiveGame = () => {
         player.y + player.height > item.y
       ) {
         if (item.type === "OXYGEN") {
-          oxygenRef.current += Constants.OXYGEN_RESTORE;
+          oxygenRef.current = Math.min(Constants.OXYGEN_MAX, oxygenRef.current + Constants.OXYGEN_RESTORE);
           setOxygen(oxygenRef.current);
           playSound('oxygen');
           if (authUserRef.current) {
