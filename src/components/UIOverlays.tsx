@@ -897,7 +897,7 @@ export const HUD: React.FC<HUDProps> = ({ score, level, oxygen, hasTurtleShell, 
         position: "relative"
       }}>
         <div style={{
-          width: `${(oxygen / OXYGEN_MAX) * 100}%`,
+          width: `${Math.min(oxygen / OXYGEN_MAX, 1) * 100}%`,
           height: "100%",
           background: oxygen < 5 ? "#ff3333" : "#00ffff",
           transition: "background 0.3s"

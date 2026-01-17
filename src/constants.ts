@@ -12,7 +12,7 @@ export const MAX_SPEED = 14;
 // Oxygen Constants
 export const OXYGEN_MAX = 30;
 export const OXYGEN_DEPLETION_RATE = 1.0;
-export const OXYGEN_RESTORE = 8;
+export const OXYGEN_RESTORE = 10;
 
 // Platform Constants
 export const TILE_SIZE = 50;

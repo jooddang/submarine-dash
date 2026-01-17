@@ -466,7 +466,7 @@ export const DeepDiveGame = () => {
           jumpBufferTimerRef.current = Constants.JUMP_BUFFER_TIME;
 
           if (gameStateRef.current === "PLAYING") {
-            const jumped = attemptJump();
+            const jumped = attemptJump(true);
             if (jumped) jumpBufferTimerRef.current = 0;
           } else if (gameStateRef.current === "MENU" || gameStateRef.current === "GAME_OVER") {
             startGame();
@@ -512,7 +512,7 @@ export const DeepDiveGame = () => {
       jumpBufferTimerRef.current = Constants.JUMP_BUFFER_TIME;
 
       if (gameStateRef.current === "PLAYING") {
-        const jumped = attemptJump();
+        const jumped = attemptJump(true);
         if (jumped) jumpBufferTimerRef.current = 0;
       }
     };
@@ -588,7 +588,7 @@ export const DeepDiveGame = () => {
     };
   }, []);
 
-  const attemptJump = () => {
+  const attemptJump = (allowDolphin: boolean) => {
     const player = playerRef.current;
     if (player.isTrapped || isSwordfishActiveRef.current) return false;
 
@@ -638,7 +638,7 @@ export const DeepDiveGame = () => {
     // Dolphin Double Jump (mid-air). Consumes the saved dolphin.
     // Important: allow during falling too, but DO NOT consume dolphin when a landing is imminent
     // (common "press jump slightly before landing" behavior should use the jump buffer instead).
-    if (dolphinSavedCountRef.current > 0 && !isImminentLandingWhileFalling()) {
+    if (allowDolphin && dolphinSavedCountRef.current > 0 && !isImminentLandingWhileFalling()) {
       const before = dolphinSavedCountRef.current;
       const seq = nextDolphinSyncSeq();
       applyDolphinCountSync(before - 1, seq);
@@ -1435,7 +1435,7 @@ export const DeepDiveGame = () => {
 
     // 6.5 Check Jump Buffer (Late Jump / Bunny Hop)
     if (jumpBufferTimerRef.current > 0) {
-      if (attemptJump()) {
+      if (attemptJump(false)) {
         jumpBufferTimerRef.current = 0;
       }
     }
@@ -1644,7 +1644,7 @@ export const DeepDiveGame = () => {
         player.y + player.height > item.y
       ) {
         if (item.type === "OXYGEN") {
-          oxygenRef.current = Math.min(Constants.OXYGEN_MAX, oxygenRef.current + Constants.OXYGEN_RESTORE);
+          oxygenRef.current += Constants.OXYGEN_RESTORE;
           setOxygen(oxygenRef.current);
           playSound('oxygen');
           if (authUserRef.current) {
