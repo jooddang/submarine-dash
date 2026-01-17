@@ -822,11 +822,24 @@ interface HUDProps {
   hasTurtleShell?: boolean;
   dolphinCount?: number;
   dolphinSpendSeq?: number;
+  dolphinUseEnabled?: boolean;
+  onToggleDolphinUse?: () => void;
   tubePieces?: number;
   tubeRescueCharges?: number;
 }
 
-export const HUD: React.FC<HUDProps> = ({ score, level, oxygen, hasTurtleShell, dolphinCount, dolphinSpendSeq, tubePieces, tubeRescueCharges }) => {
+export const HUD: React.FC<HUDProps> = ({
+  score,
+  level,
+  oxygen,
+  hasTurtleShell,
+  dolphinCount,
+  dolphinSpendSeq,
+  dolphinUseEnabled,
+  onToggleDolphinUse,
+  tubePieces,
+  tubeRescueCharges,
+}) => {
   const dolphinSlotRef = React.useRef<HTMLDivElement | null>(null);
   const dolphinSpendFxRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -867,6 +880,7 @@ export const HUD: React.FC<HUDProps> = ({ score, level, oxygen, hasTurtleShell, 
   }, [dolphinSpendSeq]);
 
   const dc = typeof dolphinCount === "number" ? dolphinCount : 0;
+  const dolphinEnabled = !!dolphinUseEnabled;
   const tp = typeof tubePieces === "number" ? Math.max(0, Math.min(TUBE_PIECES_PER_TUBE - 1, Math.floor(tubePieces))) : 0;
   const tubeUnlocked = score >= TUBE_PIECE_UNLOCK_SCORE || tp > 0;
   const trc = typeof tubeRescueCharges === "number" ? Math.max(0, Math.floor(tubeRescueCharges)) : 0;
@@ -1001,6 +1015,42 @@ export const HUD: React.FC<HUDProps> = ({ score, level, oxygen, hasTurtleShell, 
           )}
         </div>
       ))}
+    </div>
+    <div style={{ marginTop: "6px", display: "flex", alignItems: "center", gap: "8px" }}>
+      <button
+        type="button"
+        onClick={onToggleDolphinUse}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "4px 10px",
+          borderRadius: 999,
+          border: "1px solid rgba(255,255,255,0.8)",
+          background: dolphinEnabled ? "rgba(0,0,0,0.4)" : "rgba(0,0,0,0.2)",
+          color: dolphinEnabled ? "#00ffff" : "rgba(255,255,255,0.7)",
+          fontSize: 12,
+          fontWeight: 800,
+          letterSpacing: 0.4,
+          cursor: "pointer",
+        }}
+      >
+        <img
+          src={dolphinItemImg}
+          alt="Dolphin toggle"
+          width={16}
+          height={16}
+          style={{
+            width: 16,
+            height: 16,
+            objectFit: "contain",
+            filter: dolphinEnabled ? "none" : "grayscale(1)",
+            opacity: dolphinEnabled ? 1 : 0.6,
+          }}
+          draggable={false}
+        />
+        {dolphinEnabled ? "DOLPHIN ON" : "DOLPHIN OFF"}
+      </button>
     </div>
 
     {tubeUnlocked && (

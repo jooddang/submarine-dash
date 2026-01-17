@@ -117,6 +117,7 @@ export const DeepDiveGame = () => {
   const [hasTurtleShell, setHasTurtleShell] = useState(false);
   const [dolphinCount, setDolphinCountState] = useState(0);
   const [dolphinSpendSeq, setDolphinSpendSeq] = useState(0);
+  const [dolphinUseEnabled, setDolphinUseEnabled] = useState(true);
   const [tubePieces, setTubePiecesState] = useState(0);
   const [tubeToast, setTubeToast] = useState<string | null>(null);
   const [tubeRescueCharges, setTubeRescueChargesState] = useState(0);
@@ -161,6 +162,7 @@ export const DeepDiveGame = () => {
     startY: number;
   }>({ active: false, moved: false, allowScroll: false, startX: 0, startY: 0 });
   const pendingDolphinRewardRef = useRef<boolean>(false);
+  const dolphinUseEnabledRef = useRef<boolean>(true);
 
   // Dolphin is sourced from Redis (server is source of truth).
   // Client state is a cache for UI; it is reconciled via /auth/me, /missions/daily, and consume endpoint.
@@ -337,6 +339,10 @@ export const DeepDiveGame = () => {
   useEffect(() => {
     authUserRef.current = authUser;
   }, [authUser]);
+
+  useEffect(() => {
+    dolphinUseEnabledRef.current = dolphinUseEnabled;
+  }, [dolphinUseEnabled]);
 
   useEffect(() => {
     // Refresh missions when auth changes (login/logout)
@@ -638,7 +644,7 @@ export const DeepDiveGame = () => {
     // Dolphin Double Jump (mid-air). Consumes the saved dolphin.
     // Important: allow during falling too, but DO NOT consume dolphin when a landing is imminent
     // (common "press jump slightly before landing" behavior should use the jump buffer instead).
-    if (allowDolphin && dolphinSavedCountRef.current > 0 && !isImminentLandingWhileFalling()) {
+    if (allowDolphin && dolphinUseEnabledRef.current && dolphinSavedCountRef.current > 0 && !isImminentLandingWhileFalling()) {
       const before = dolphinSavedCountRef.current;
       const seq = nextDolphinSyncSeq();
       applyDolphinCountSync(before - 1, seq);
@@ -1947,6 +1953,8 @@ export const DeepDiveGame = () => {
           hasTurtleShell={hasTurtleShell}
           dolphinCount={dolphinCount}
           dolphinSpendSeq={dolphinSpendSeq}
+          dolphinUseEnabled={dolphinUseEnabled}
+          onToggleDolphinUse={() => setDolphinUseEnabled((prev) => !prev)}
           tubePieces={tubePieces}
           tubeRescueCharges={tubeRescueCharges}
         />
