@@ -22,7 +22,7 @@
 | 1.2 | Coin data model (Redis) | ✅ | `sd:user:{id}:coins` (INCRBY), `sd:user:{id}:coin:ledger` (list, capped 100) |
 | 1.3 | Coin API endpoints | ✅ | Earned via `run_end` in `/api/missions/event`, balance in `/api/auth/me` |
 | 1.4 | Coin HUD display | ✅ | Menu: next to login status. Game Over: "+N coins (total: M)" |
-| 1.5 | Inventory / Profile screen UI | ☐ | Dolphins, tubes, coins, skins, golden items |
+| 1.5 | Inventory / Profile screen UI | ✅ | Modal panel showing coins, dolphins, tube pieces/charges, streak. Accessible via INVENTORY button on menu (logged-in only) |
 | 1.6 | Tube piece server-side persistence | ✅ | Redis key `sd:user:{id}:tube` (JSON `{pieces, charges}`), hydrate on login, sync on run_end |
 | 1.7 | Tube piece API endpoints | ✅ | Sent via `run_end` event, returned in `/api/auth/me` + `/api/missions/daily` + `/api/missions/event` inventory |
 

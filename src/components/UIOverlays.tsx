@@ -502,6 +502,109 @@ export const DailyMissionsPanel: React.FC<DailyMissionsPanelProps> = ({
 };
 
 // --- Reward / FX overlays ---
+
+// Inventory / Profile Panel
+type InventoryPanelProps = {
+  open: boolean;
+  onClose: () => void;
+  loginId: string | null;
+  coinBalance: number;
+  dolphinCount: number;
+  tubePieces: number;
+  tubeRescueCharges: number;
+  streakCurrent: number;
+};
+
+export const InventoryPanel: React.FC<InventoryPanelProps> = ({
+  open,
+  onClose,
+  loginId,
+  coinBalance,
+  dolphinCount,
+  tubePieces,
+  tubeRescueCharges,
+  streakCurrent,
+}) => {
+  if (!open) return null;
+
+  const items: { label: string; value: string; img?: string; color: string }[] = [
+    { label: "Coins", value: String(coinBalance), color: "#ffd700" },
+    { label: "Dolphins", value: String(dolphinCount), img: dolphinItemImg, color: "#00ffff" },
+    { label: "Tube Pieces", value: `${tubePieces}/${TUBE_PIECES_PER_TUBE}`, img: tubeImg, color: "#00ffff" },
+    { label: "Tube Charges", value: String(tubeRescueCharges), img: tubeImg, color: "#7CFF6B" },
+    { label: "Streak", value: `${streakCurrent} day${streakCurrent === 1 ? "" : "s"}`, color: "#ffd700" },
+  ];
+
+  return (
+    <div style={modalBackdropStyle} onMouseDown={onClose}>
+      <div style={modalCardStyle} onMouseDown={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <div style={{ textAlign: "left" }}>
+            <h2 style={panelTitleStyle}>INVENTORY</h2>
+            {loginId && (
+              <p style={panelSubtitleStyle}>{loginId}</p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "rgba(255,255,255,0.85)",
+              fontSize: "20px",
+              cursor: "pointer",
+              padding: "6px 10px",
+            }}
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+          {items.map((item) => (
+            <div
+              key={item.label}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.18)",
+                background: "rgba(0,0,0,0.22)",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 12,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                {item.img && (
+                  <img
+                    src={item.img}
+                    alt={item.label}
+                    width={24}
+                    height={24}
+                    style={{ width: 24, height: 24, objectFit: "contain" }}
+                    draggable={false}
+                  />
+                )}
+                <span style={{ fontWeight: 800, color: "rgba(255,255,255,0.95)" }}>{item.label}</span>
+              </div>
+              <span style={{ fontWeight: 900, color: item.color, fontSize: "1.1rem" }}>{item.value}</span>
+            </div>
+          ))}
+        </div>
+
+        {!loginId && (
+          <div style={{ marginTop: 12, fontSize: "0.95rem", color: "rgba(255,255,255,0.75)" }}>
+            Log in to persist your inventory across sessions.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 function rand(min: number, max: number) {
   return Math.random() * (max - min) + min;
 }
@@ -1111,6 +1214,7 @@ interface MenuOverlayProps {
   loginId?: string | null;
   onLogoutClick?: () => void;
   onStreakClick?: () => void;
+  onInventoryClick?: () => void;
   onInboxClick?: () => void;
   inboxCount?: number;
   streakCurrent?: number;
@@ -1126,6 +1230,7 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
   loginId,
   onLogoutClick,
   onStreakClick,
+  onInventoryClick,
   onInboxClick,
   inboxCount,
   streakCurrent,
@@ -1213,6 +1318,24 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
             }}
           >
             STREAK
+          </button>
+        )}
+        {onInventoryClick && loginId && (
+          <button
+            type="button"
+            onClick={onInventoryClick}
+            style={{
+              padding: "10px 18px",
+              fontSize: "1.05rem",
+              background: "rgba(0,0,0,0.25)",
+              color: "rgba(255,255,255,0.9)",
+              border: "1px solid rgba(255,255,255,0.25)",
+              borderRadius: "10px",
+              cursor: "pointer",
+              fontWeight: 700,
+            }}
+          >
+            INVENTORY
           </button>
         )}
         {onInboxClick && (

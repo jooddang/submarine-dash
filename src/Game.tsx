@@ -5,7 +5,7 @@ import { initAudio, playSound } from "./audio";
 import { interpolateColor } from "./graphics";
 import { createBubble, spawnBackgroundEntity } from "./entities";
 import { drawSwordfish, drawUrchin, drawBackgroundEntities, drawTurtleShell } from "./drawing";
-import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, AuthModal, DailyMissionsPanel, DolphinStreakRewardOverlay, DolphinWeeklyWinnerRewardOverlay } from "./components/UIOverlays";
+import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, AuthModal, DailyMissionsPanel, DolphinStreakRewardOverlay, DolphinWeeklyWinnerRewardOverlay, InventoryPanel } from "./components/UIOverlays";
 import { authAPI, inventoryAPI, leaderboardAPI, missionsAPI, type DailyMissionsResponse, type AuthUser } from "./api";
 import turtleRescueImg from "../turtle.png";
 import turtleShellItemImg from "../turtle-shell-item.png";
@@ -148,6 +148,7 @@ export const DeepDiveGame = () => {
   const [authBusy, setAuthBusy] = useState(false);
   const pendingSubmitRef = useRef<boolean>(false);
   const [streakOpen, setStreakOpen] = useState(false);
+  const [inventoryOpen, setInventoryOpen] = useState(false);
   const [dailyMissions, setDailyMissions] = useState<DailyMissionsResponse | null>(null);
   const initialPageStyleRef = useRef<{
     bodyOverflow: string;
@@ -2087,6 +2088,7 @@ export const DeepDiveGame = () => {
             setStreakOpen(true);
             refreshDailyMissions();
           }}
+          onInventoryClick={() => setInventoryOpen(true)}
         />
       )}
 
@@ -2147,6 +2149,17 @@ export const DeepDiveGame = () => {
         streakCurrent={dailyMissions?.user ? dailyMissions.user.streak.current : 0}
         missions={dailyMissions?.missions ?? []}
         progress={dailyMissions?.user ? dailyMissions.user.progress : null}
+      />
+
+      <InventoryPanel
+        open={inventoryOpen}
+        onClose={() => setInventoryOpen(false)}
+        loginId={authUser?.loginId ?? null}
+        coinBalance={coinBalance}
+        dolphinCount={dolphinCount}
+        tubePieces={tubePieces}
+        tubeRescueCharges={tubeRescueCharges}
+        streakCurrent={dailyMissions?.user ? dailyMissions.user.streak.current : 0}
       />
     </div>
   );
