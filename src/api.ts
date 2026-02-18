@@ -29,11 +29,13 @@ function getTimezoneHeaders(): Record<string, string> {
   return { 'x-tz-offset-min': String(getTimezoneOffsetMinutes()) };
 }
 
+export type TubeState = { pieces: number; charges: number };
+
 export type AuthUser = {
   userId: string;
   loginId: string;
   refCode: string;
-  inventory?: { dolphinSaved: number; coins: number };
+  inventory?: { dolphinSaved: number; coins: number; tube?: TubeState };
   rewards?: {
     weeklyWinner?: { dolphin: true; weekId: string };
     grants?: { dolphin: number };
@@ -196,7 +198,7 @@ export type DailyMissionsResponse =
           keptAt?: number;
         };
         streak: { current: number; lastKeptDate: string | null; updatedAt: number };
-        inventory?: { dolphinSaved: number; coins: number };
+        inventory?: { dolphinSaved: number; coins: number; tube?: TubeState };
       };
     };
 
@@ -214,7 +216,9 @@ export const missionsAPI = {
   },
 
   async postEvent(
-    event: { type: 'run_end'; score: number } | { type: 'oxygen_collected'; count?: number }
+    event:
+      | { type: 'run_end'; score: number; tubePieces?: number; tubeCharges?: number }
+      | { type: 'oxygen_collected'; count?: number }
   ): Promise<
     | {
         date: string;
@@ -227,7 +231,7 @@ export const missionsAPI = {
         };
         rewards?: { streak?: { dolphin: number; streakDays: number } };
         coinsEarned?: number;
-        inventory?: { dolphinSaved: number; coins: number };
+        inventory?: { dolphinSaved: number; coins: number; tube?: TubeState };
       }
     | null
   > {

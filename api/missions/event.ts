@@ -12,6 +12,11 @@ import {
   computeCoinsForScore,
   getCoinBalance,
 } from '../_lib/coinInventory.js';
+import {
+  getTubeState,
+  saveTubeState,
+  type TubeState,
+} from '../_lib/tubeInventory.js';
 
 export const config = { runtime: 'nodejs' };
 
@@ -39,7 +44,7 @@ type StreakRecord = {
 };
 
 type MissionEvent =
-  | { type: 'run_end'; score: number }
+  | { type: 'run_end'; score: number; tubePieces?: number; tubeCharges?: number }
   | { type: 'oxygen_collected'; count?: number };
 
 function todayKeyUTC(d = new Date()): string {
@@ -205,6 +210,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           // best-effort
         }
       }
+
+      // Persist tube state (pieces + rescue charges) server-side
+      if (typeof body.tubePieces === 'number' || typeof body.tubeCharges === 'number') {
+        try {
+          await saveTubeState(
+            redisRW,
+            userId,
+            typeof body.tubePieces === 'number' ? body.tubePieces : 0,
+            typeof body.tubeCharges === 'number' ? body.tubeCharges : 0
+          );
+        } catch {
+          // best-effort
+        }
+      }
     } else if (body.type === 'oxygen_collected') {
       const count = typeof body.count === 'number' && body.count > 0 ? Math.floor(body.count) : 1;
       progress.oxygenCollected += count;
@@ -252,12 +271,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     await redisRW.set(progressKey, JSON.stringify(progress));
 
     // Include latest inventory snapshot (best-effort).
-    let inventory: { dolphinSaved: number; coins: number } | undefined = undefined;
+    let inventory: { dolphinSaved: number; coins: number; tube?: TubeState } | undefined = undefined;
     try {
       await migratePendingDolphins(redisRW, userId);
       const saved = await getSavedDolphins(redisRW, userId);
       const coins = await getCoinBalance(redisRW, userId);
-      inventory = { dolphinSaved: saved, coins };
+      const tube = await getTubeState(redisRW, userId);
+      inventory = { dolphinSaved: saved, coins, tube };
     } catch {
       // best-effort
     }

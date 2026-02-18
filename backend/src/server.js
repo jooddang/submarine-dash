@@ -228,6 +228,36 @@ async function addCoins(userId, amount, meta) {
   return getCoinBalance(userId);
 }
 
+// Tube inventory (Redis is source of truth)
+function keyTubeState(userId) {
+  return `${KEY_PREFIX}user:${userId}:tube`;
+}
+
+async function getTubeState(userId) {
+  if (!redis) return { pieces: 0, charges: 0 };
+  const raw = await redis.get(keyTubeState(userId));
+  if (!raw) return { pieces: 0, charges: 0 };
+  try {
+    const state = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return {
+      pieces: Math.max(0, Math.min(3, Math.floor(state?.pieces ?? 0))),
+      charges: Math.max(0, Math.min(3, Math.floor(state?.charges ?? 0))),
+    };
+  } catch {
+    return { pieces: 0, charges: 0 };
+  }
+}
+
+async function saveTubeState(userId, pieces, charges) {
+  if (!redis) return { pieces: 0, charges: 0 };
+  const state = {
+    pieces: Math.max(0, Math.min(3, Math.floor(pieces))),
+    charges: Math.max(0, Math.min(3, Math.floor(charges))),
+  };
+  await redis.set(keyTubeState(userId), JSON.stringify(state));
+  return state;
+}
+
 function computeCoinsForScore(score) {
   if (score < 200) return 0;
   if (score < 500) return 5;
@@ -660,7 +690,8 @@ app.get('/api/auth/me', async (req, res) => {
       const savedRaw = await redis.get(keyDolphinSaved(user.userId));
       const saved = Math.max(0, parseIntSafe(savedRaw, 0));
       const coins = await getCoinBalance(user.userId);
-      inventory = { dolphinSaved: saved, coins };
+      const tube = await getTubeState(user.userId);
+      inventory = { dolphinSaved: saved, coins, tube };
     } catch {
       // best-effort
     }
@@ -700,7 +731,8 @@ app.get('/api/missions/daily', async (req, res) => {
       const savedRaw = await redis.get(keyDolphinSaved(userId));
       const saved = Math.max(0, parseIntSafe(savedRaw, 0));
       const coins = await getCoinBalance(userId);
-      inventory = { dolphinSaved: saved, coins };
+      const tube = await getTubeState(userId);
+      inventory = { dolphinSaved: saved, coins, tube };
     } catch {
       // best-effort
     }
@@ -746,6 +778,19 @@ app.post('/api/missions/event', async (req, res) => {
       if (coinsEarned > 0) {
         try {
           await addCoins(userId, coinsEarned, { type: 'run_end', meta: { score } });
+        } catch {
+          // best-effort
+        }
+      }
+
+      // Persist tube state (pieces + rescue charges) server-side
+      if (typeof body.tubePieces === 'number' || typeof body.tubeCharges === 'number') {
+        try {
+          await saveTubeState(
+            userId,
+            typeof body.tubePieces === 'number' ? body.tubePieces : 0,
+            typeof body.tubeCharges === 'number' ? body.tubeCharges : 0
+          );
         } catch {
           // best-effort
         }
@@ -796,7 +841,8 @@ app.post('/api/missions/event', async (req, res) => {
       const savedRaw = await redis.get(keyDolphinSaved(userId));
       const saved = Math.max(0, parseIntSafe(savedRaw, 0));
       const coins = await getCoinBalance(userId);
-      inventory = { dolphinSaved: saved, coins };
+      const tube = await getTubeState(userId);
+      inventory = { dolphinSaved: saved, coins, tube };
     } catch {
       // best-effort
     }

@@ -23,8 +23,8 @@
 | 1.3 | Coin API endpoints | ✅ | Earned via `run_end` in `/api/missions/event`, balance in `/api/auth/me` |
 | 1.4 | Coin HUD display | ✅ | Menu: next to login status. Game Over: "+N coins (total: M)" |
 | 1.5 | Inventory / Profile screen UI | ☐ | Dolphins, tubes, coins, skins, golden items |
-| 1.6 | Tube piece server-side persistence | ☐ | Move from `sessionStorage` to Redis for logged-in users |
-| 1.7 | Tube piece API endpoints | ☐ | GET/POST tube piece progress |
+| 1.6 | Tube piece server-side persistence | ✅ | Redis key `sd:user:{id}:tube` (JSON `{pieces, charges}`), hydrate on login, sync on run_end |
+| 1.7 | Tube piece API endpoints | ✅ | Sent via `run_end` event, returned in `/api/auth/me` + `/api/missions/daily` + `/api/missions/event` inventory |
 
 ---
 

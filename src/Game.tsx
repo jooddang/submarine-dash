@@ -306,6 +306,12 @@ export const DeepDiveGame = () => {
         setCoinBalance(me.inventory.coins);
       }
 
+      // Hydrate tube state from Redis (server is source of truth for logged-in users).
+      if (me?.inventory?.tube) {
+        setTubePieces(me.inventory.tube.pieces ?? 0);
+        setTubeRescueCharges(me.inventory.tube.charges ?? 0);
+      }
+
       // One-time import of legacy localStorage dolphins into Redis (prevents losing old items).
       if (me?.userId) {
         const legacy = readLegacyLocalDolphinCount(me.userId);
@@ -1124,7 +1130,12 @@ export const DeepDiveGame = () => {
       didSendRunEndRef.current = true;
       const runEndSeq = nextDolphinSyncSeq();
       missionsAPI
-        .postEvent({ type: "run_end", score: finalScore })
+        .postEvent({
+          type: "run_end",
+          score: finalScore,
+          tubePieces: tubePiecesRef.current,
+          tubeCharges: tubeRescueChargesRef.current,
+        })
         .then((out) => {
           if (out?.inventory && typeof out.inventory.dolphinSaved === "number") {
             applyDolphinCountSync(out.inventory.dolphinSaved, runEndSeq);
@@ -1134,6 +1145,11 @@ export const DeepDiveGame = () => {
           }
           if (typeof out?.coinsEarned === "number" && out.coinsEarned > 0) {
             setCoinsEarnedLastRun(out.coinsEarned);
+          }
+          // Sync tube state from server after run_end
+          if (out?.inventory?.tube) {
+            setTubePieces(out.inventory.tube.pieces ?? 0);
+            setTubeRescueCharges(out.inventory.tube.charges ?? 0);
           }
           const streakGrant = out?.rewards?.streak?.dolphin;
           if (typeof streakGrant === "number" && streakGrant > 0) {
