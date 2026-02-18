@@ -1114,6 +1114,7 @@ interface MenuOverlayProps {
   onInboxClick?: () => void;
   inboxCount?: number;
   streakCurrent?: number;
+  coinBalance?: number;
 }
 
 export const MenuOverlay: React.FC<MenuOverlayProps> = ({
@@ -1128,6 +1129,7 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
   onInboxClick,
   inboxCount,
   streakCurrent,
+  coinBalance,
 }) => (
   <div style={overlayStyle} data-allow-scroll="1">
     <h1 style={titleStyle}>DEEP DIVE DASH</h1>
@@ -1264,6 +1266,11 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
         <div style={{ fontSize: "0.95rem", color: "rgba(255,255,255,0.85)" }}>
           Logged in as{" "}
           <span style={{ color: "#00ffff", fontWeight: 800 }}>{loginId}</span>
+          {typeof coinBalance === "number" && (
+            <span style={{ marginLeft: 12, color: "#ffd700", fontWeight: 800 }}>
+              {coinBalance} coins
+            </span>
+          )}
         </div>
         {onLogoutClick && (
           <button
@@ -1394,14 +1401,26 @@ interface GameOverOverlayProps {
   lastSubmittedId: number | null;
   weeklyLeaderboards?: WeeklyLeaderboard[];
   currentWeekId?: string | null;
+  coinsEarned?: number;
+  coinBalance?: number;
 }
 
-export const GameOverOverlay: React.FC<GameOverOverlayProps> = ({ score, didSubmit, leaderboard, lastSubmittedId, weeklyLeaderboards, currentWeekId }) => (
+export const GameOverOverlay: React.FC<GameOverOverlayProps> = ({ score, didSubmit, leaderboard, lastSubmittedId, weeklyLeaderboards, currentWeekId, coinsEarned, coinBalance }) => (
   <div style={overlayStyle} data-allow-scroll="1">
     <h1 style={{ ...titleStyle, color: didSubmit ? "#ffd700" : "#ff6b6b" }}>
       {didSubmit ? "LEADERBOARD" : "GAME OVER"}
     </h1>
     <div style={scoreStyle}>Score: {score}</div>
+    {typeof coinsEarned === "number" && coinsEarned > 0 && (
+      <div style={{ marginTop: 6, fontSize: "1.1rem", color: "#ffd700", fontWeight: 800 }}>
+        +{coinsEarned} coins
+        {typeof coinBalance === "number" && (
+          <span style={{ color: "rgba(255,255,255,0.75)", fontWeight: 400, fontSize: "0.95rem" }}>
+            {" "}(total: {coinBalance})
+          </span>
+        )}
+      </div>
+    )}
     <Leaderboard leaderboard={leaderboard} lastSubmittedId={lastSubmittedId} />
     {!!weeklyLeaderboards && weeklyLeaderboards.length > 0 && (
       <WeeklyLeaderboardHistory weeks={weeklyLeaderboards} excludeWeekId={currentWeekId ?? undefined} />

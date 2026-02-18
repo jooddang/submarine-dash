@@ -7,6 +7,11 @@ import {
   migratePendingDolphins,
   getSavedDolphins,
 } from '../_lib/dolphinInventory.js';
+import {
+  addCoins,
+  computeCoinsForScore,
+  getCoinBalance,
+} from '../_lib/coinInventory.js';
 
 export const config = { runtime: 'nodejs' };
 
@@ -184,10 +189,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       { runs: 0, oxygenCollected: 0, maxScore: 0, completedMissionIds: [] }
     );
 
+    let coinsEarned = 0;
+
     if (body.type === 'run_end') {
       const score = typeof body.score === 'number' ? body.score : 0;
       progress.runs += 1;
       progress.maxScore = Math.max(progress.maxScore, score);
+
+      // Award coins based on score bracket
+      coinsEarned = computeCoinsForScore(score);
+      if (coinsEarned > 0) {
+        try {
+          await addCoins(redisRW, userId, coinsEarned, { type: 'run_end', meta: { score } });
+        } catch {
+          // best-effort
+        }
+      }
     } else if (body.type === 'oxygen_collected') {
       const count = typeof body.count === 'number' && body.count > 0 ? Math.floor(body.count) : 1;
       progress.oxygenCollected += count;
@@ -234,12 +251,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     await redisRW.set(progressKey, JSON.stringify(progress));
 
-    // Include latest dolphin inventory snapshot (best-effort).
-    let inventory: { dolphinSaved: number } | undefined = undefined;
+    // Include latest inventory snapshot (best-effort).
+    let inventory: { dolphinSaved: number; coins: number } | undefined = undefined;
     try {
       await migratePendingDolphins(redisRW, userId);
       const saved = await getSavedDolphins(redisRW, userId);
-      inventory = { dolphinSaved: saved };
+      const coins = await getCoinBalance(redisRW, userId);
+      inventory = { dolphinSaved: saved, coins };
     } catch {
       // best-effort
     }
@@ -248,6 +266,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       date,
       progress,
       rewards: streakReward ? { streak: streakReward } : undefined,
+      coinsEarned: coinsEarned > 0 ? coinsEarned : undefined,
       inventory,
     });
   } catch (error) {

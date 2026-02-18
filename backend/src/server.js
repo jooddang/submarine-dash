@@ -194,6 +194,50 @@ async function migratePendingDolphins(userId) {
   return { saved, moved: 0 };
 }
 
+// Coin inventory (Redis is source of truth)
+function keyCoinBalance(userId) {
+  return `${KEY_PREFIX}user:${userId}:coins`;
+}
+function keyCoinLedger(userId) {
+  return `${KEY_PREFIX}user:${userId}:coin:ledger`;
+}
+
+async function pushCoinLedger(userId, entry) {
+  if (!redis) return;
+  try {
+    const key = keyCoinLedger(userId);
+    await redis.lpush(key, JSON.stringify(entry));
+    await redis.ltrim(key, 0, 99);
+  } catch {
+    // best-effort
+  }
+}
+
+async function getCoinBalance(userId) {
+  if (!redis) return 0;
+  const raw = await redis.get(keyCoinBalance(userId));
+  return Math.max(0, parseIntSafe(raw, 0));
+}
+
+async function addCoins(userId, amount, meta) {
+  if (!redis) return 0;
+  const n = Math.max(0, Math.floor(amount || 0));
+  if (n <= 0) return getCoinBalance(userId);
+  await redis.incrby(keyCoinBalance(userId), n);
+  await pushCoinLedger(userId, { ts: Date.now(), type: meta?.type || 'grant', delta: n, meta: meta?.meta });
+  return getCoinBalance(userId);
+}
+
+function computeCoinsForScore(score) {
+  if (score < 200) return 0;
+  if (score < 500) return 5;
+  if (score < 1000) return 10;
+  if (score < 2000) return 20;
+  if (score < 3000) return 35;
+  if (score < 5000) return 50;
+  return 75;
+}
+
 async function consumeOneSavedDolphin(userId) {
   await migratePendingDolphins(userId);
   const savedRaw = await redis.get(keyDolphinSaved(userId));
@@ -615,7 +659,8 @@ app.get('/api/auth/me', async (req, res) => {
       await migratePendingDolphins(user.userId);
       const savedRaw = await redis.get(keyDolphinSaved(user.userId));
       const saved = Math.max(0, parseIntSafe(savedRaw, 0));
-      inventory = { dolphinSaved: saved };
+      const coins = await getCoinBalance(user.userId);
+      inventory = { dolphinSaved: saved, coins };
     } catch {
       // best-effort
     }
@@ -654,7 +699,8 @@ app.get('/api/missions/daily', async (req, res) => {
       await migratePendingDolphins(userId);
       const savedRaw = await redis.get(keyDolphinSaved(userId));
       const saved = Math.max(0, parseIntSafe(savedRaw, 0));
-      inventory = { dolphinSaved: saved };
+      const coins = await getCoinBalance(userId);
+      inventory = { dolphinSaved: saved, coins };
     } catch {
       // best-effort
     }
@@ -688,10 +734,22 @@ app.post('/api/missions/event', async (req, res) => {
 
     const completedBefore = computeCompleted(missions, progress);
 
+    let coinsEarned = 0;
+
     if (body.type === 'run_end') {
       const score = typeof body.score === 'number' ? body.score : 0;
       progress.runs += 1;
       progress.maxScore = Math.max(progress.maxScore, score);
+
+      // Award coins based on score bracket
+      coinsEarned = computeCoinsForScore(score);
+      if (coinsEarned > 0) {
+        try {
+          await addCoins(userId, coinsEarned, { type: 'run_end', meta: { score } });
+        } catch {
+          // best-effort
+        }
+      }
     } else if (body.type === 'oxygen_collected') {
       const count = typeof body.count === 'number' && body.count > 0 ? Math.floor(body.count) : 1;
       progress.oxygenCollected += count;
@@ -737,11 +795,12 @@ app.post('/api/missions/event', async (req, res) => {
       await migratePendingDolphins(userId);
       const savedRaw = await redis.get(keyDolphinSaved(userId));
       const saved = Math.max(0, parseIntSafe(savedRaw, 0));
-      inventory = { dolphinSaved: saved };
+      const coins = await getCoinBalance(userId);
+      inventory = { dolphinSaved: saved, coins };
     } catch {
       // best-effort
     }
-    return res.json({ date, progress, rewards: streakReward ? { streak: streakReward } : undefined, inventory });
+    return res.json({ date, progress, rewards: streakReward ? { streak: streakReward } : undefined, coinsEarned: coinsEarned > 0 ? coinsEarned : undefined, inventory });
   } catch (e) {
     console.error('POST /api/missions/event error:', e);
     return res.status(500).json({ error: 'Internal server error' });

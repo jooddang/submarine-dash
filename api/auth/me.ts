@@ -8,6 +8,7 @@ import {
   migratePendingDolphins,
   getSavedDolphins,
 } from '../_lib/dolphinInventory.js';
+import { getCoinBalance } from '../_lib/coinInventory.js';
 import {
   claimKeyForWeeklyDolphin,
   currentWeekIdPst,
@@ -75,14 +76,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Inventory is sourced from Redis (saved only; migrate any legacy pending).
-    let inventory: { dolphinSaved: number } | undefined = undefined;
+    let inventory: { dolphinSaved: number; coins: number } | undefined = undefined;
     try {
       const rw = getUpstashRedisClient(false);
       await migratePendingDolphins(rw, user.userId);
       const saved = await getSavedDolphins(rw, user.userId);
-      inventory = { dolphinSaved: saved };
+      const coins = await getCoinBalance(rw, user.userId);
+      inventory = { dolphinSaved: saved, coins };
     } catch (e) {
-      console.warn('Dolphin inventory settle failed:', e);
+      console.warn('Inventory settle failed:', e);
     }
 
     const rewards =

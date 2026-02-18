@@ -165,6 +165,10 @@ export const DeepDiveGame = () => {
   const dolphinUseEnabledRef = useRef<boolean>(true);
   const dolphinUsesThisRunRef = useRef<number>(0);
 
+  // Coin balance (server-authoritative, client is display cache)
+  const [coinBalance, setCoinBalance] = useState(0);
+  const [coinsEarnedLastRun, setCoinsEarnedLastRun] = useState(0);
+
   // Dolphin is sourced from Redis (server is source of truth).
   // Client state is a cache for UI; it is reconciled via /auth/me, /missions/daily, and consume endpoint.
   const LEGACY_DOLPHIN_LOCAL_KEY_BASE = "subdash:savedItem:dolphin";
@@ -292,11 +296,14 @@ export const DeepDiveGame = () => {
       // Keep the auth ref in sync immediately (used by gameplay-side auth checks).
       authUserRef.current = me;
 
-      // Hydrate dolphin count from Redis (source of truth).
+      // Hydrate dolphin count and coin balance from Redis (source of truth).
       if (me?.inventory && typeof me.inventory.dolphinSaved === "number") {
         applyDolphinCountSync(me.inventory.dolphinSaved, seq);
       } else {
         applyDolphinCountSync(0, seq);
+      }
+      if (me?.inventory && typeof me.inventory.coins === "number") {
+        setCoinBalance(me.inventory.coins);
       }
 
       // One-time import of legacy localStorage dolphins into Redis (prevents losing old items).
@@ -1111,6 +1118,7 @@ export const DeepDiveGame = () => {
   const gameOver = () => {
     const finalScore = scoreRef.current;
     didSubmitRef.current = false;
+    setCoinsEarnedLastRun(0);
     const au = authUserRef.current;
     if (au && !didSendRunEndRef.current) {
       didSendRunEndRef.current = true;
@@ -1120,6 +1128,12 @@ export const DeepDiveGame = () => {
         .then((out) => {
           if (out?.inventory && typeof out.inventory.dolphinSaved === "number") {
             applyDolphinCountSync(out.inventory.dolphinSaved, runEndSeq);
+          }
+          if (out?.inventory && typeof out.inventory.coins === "number") {
+            setCoinBalance(out.inventory.coins);
+          }
+          if (typeof out?.coinsEarned === "number" && out.coinsEarned > 0) {
+            setCoinsEarnedLastRun(out.coinsEarned);
           }
           const streakGrant = out?.rewards?.streak?.dolphin;
           if (typeof streakGrant === "number" && streakGrant > 0) {
@@ -1226,6 +1240,9 @@ export const DeepDiveGame = () => {
       setAuthUser(user);
       // Keep the auth ref in sync immediately (streak rewards + saved items use this for per-user storage keys).
       authUserRef.current = user;
+      if (user?.inventory && typeof user.inventory.coins === "number") {
+        setCoinBalance(user.inventory.coins);
+      }
       setAuthModalOpen(false);
       setAuthLoginId("");
       setAuthPassword("");
@@ -2036,11 +2053,13 @@ export const DeepDiveGame = () => {
           weeklyLeaderboards={weeklyLeaderboards}
           currentWeekId={currentWeekId}
           streakCurrent={dailyMissions?.user ? dailyMissions.user.streak.current : 0}
+          coinBalance={authUser ? coinBalance : undefined}
           loginId={authUser?.loginId ?? null}
           onLogoutClick={async () => {
             await authAPI.logout();
             setAuthUser(null);
             authUserRef.current = null;
+            setCoinBalance(0);
             refreshDailyMissions();
           }}
           onLoginClick={() => {
@@ -2079,6 +2098,8 @@ export const DeepDiveGame = () => {
           lastSubmittedId={lastSubmittedId}
           weeklyLeaderboards={weeklyLeaderboards}
           currentWeekId={currentWeekId}
+          coinsEarned={coinsEarnedLastRun}
+          coinBalance={coinBalance}
         />
       )}
 

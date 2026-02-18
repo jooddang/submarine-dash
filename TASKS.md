@@ -18,10 +18,10 @@
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| 1.1 | Design coin earning formula | ☐ | Score-bracket-based recommended |
-| 1.2 | Coin data model (Redis) | ☐ | Server-side balance, atomic transactions |
-| 1.3 | Coin API endpoints | ☐ | `/api/coins/balance`, earn-on-run-end |
-| 1.4 | Coin HUD display | ☐ | Show coin count during gameplay + menu |
+| 1.1 | Design coin earning formula | ✅ | Score-bracket: 0-199→0, 200-499→5, 500-999→10, 1000-1999→20, 2000-2999→35, 3000-4999→50, 5000+→75 |
+| 1.2 | Coin data model (Redis) | ✅ | `sd:user:{id}:coins` (INCRBY), `sd:user:{id}:coin:ledger` (list, capped 100) |
+| 1.3 | Coin API endpoints | ✅ | Earned via `run_end` in `/api/missions/event`, balance in `/api/auth/me` |
+| 1.4 | Coin HUD display | ✅ | Menu: next to login status. Game Over: "+N coins (total: M)" |
 | 1.5 | Inventory / Profile screen UI | ☐ | Dolphins, tubes, coins, skins, golden items |
 | 1.6 | Tube piece server-side persistence | ☐ | Move from `sessionStorage` to Redis for logged-in users |
 | 1.7 | Tube piece API endpoints | ☐ | GET/POST tube piece progress |

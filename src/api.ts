@@ -33,7 +33,7 @@ export type AuthUser = {
   userId: string;
   loginId: string;
   refCode: string;
-  inventory?: { dolphinSaved: number };
+  inventory?: { dolphinSaved: number; coins: number };
   rewards?: {
     weeklyWinner?: { dolphin: true; weekId: string };
     grants?: { dolphin: number };
@@ -196,7 +196,7 @@ export type DailyMissionsResponse =
           keptAt?: number;
         };
         streak: { current: number; lastKeptDate: string | null; updatedAt: number };
-        inventory?: { dolphinSaved: number };
+        inventory?: { dolphinSaved: number; coins: number };
       };
     };
 
@@ -226,7 +226,8 @@ export const missionsAPI = {
           keptAt?: number;
         };
         rewards?: { streak?: { dolphin: number; streakDays: number } };
-        inventory?: { dolphinSaved: number };
+        coinsEarned?: number;
+        inventory?: { dolphinSaved: number; coins: number };
       }
     | null
   > {
