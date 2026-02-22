@@ -293,12 +293,12 @@ const SKIN_COSTS = {
 };
 
 function computeCoinsForScore(score) {
-  if (score < 200) return 0;
-  if (score < 500) return 5;
-  if (score < 1000) return 10;
-  if (score < 2000) return 20;
-  if (score < 3000) return 35;
-  if (score < 5000) return 50;
+  if (score < 500) return 0;
+  if (score < 1000) return 5;
+  if (score < 3000) return 10;
+  if (score < 5000) return 20;
+  if (score < 7000) return 35;
+  if (score < 9000) return 50;
   return 75;
 }
 
