@@ -40,20 +40,20 @@ export const SKIN_CATALOG: SkinDef[] = [
   },
   {
     id: 'gold',
-    name: 'Gold',
+    name: 'Amber',
     rarity: 'common',
-    cost: 50,
+    cost: 150,
     sprite: greySubImg,
-    tint: '#FFD700',
+    tint: '#FF6B00',
     glowColor: null,
     trailType: 'bubbles',
-    trailColor: '#FFD700',
+    trailColor: '#FF6B00',
   },
   {
     id: 'ocean_blue',
     name: 'Ocean Blue',
     rarity: 'common',
-    cost: 50,
+    cost: 150,
     sprite: greySubImg,
     tint: '#1E90FF',
     glowColor: null,
@@ -64,7 +64,7 @@ export const SKIN_CATALOG: SkinDef[] = [
     id: 'coral_red',
     name: 'Coral Red',
     rarity: 'common',
-    cost: 50,
+    cost: 150,
     sprite: greySubImg,
     tint: '#E74C3C',
     glowColor: null,
@@ -75,7 +75,7 @@ export const SKIN_CATALOG: SkinDef[] = [
     id: 'neon_green',
     name: 'Neon Green',
     rarity: 'common',
-    cost: 50,
+    cost: 150,
     sprite: greySubImg,
     tint: '#39FF14',
     glowColor: 'rgba(57,255,20,0.4)',
@@ -86,7 +86,7 @@ export const SKIN_CATALOG: SkinDef[] = [
     id: 'royal_purple',
     name: 'Royal Purple',
     rarity: 'common',
-    cost: 50,
+    cost: 150,
     sprite: greySubImg,
     tint: '#8E44AD',
     glowColor: null,
@@ -98,7 +98,7 @@ export const SKIN_CATALOG: SkinDef[] = [
     id: 'whale',
     name: 'Whale',
     rarity: 'rare',
-    cost: 200,
+    cost: 1000,
     sprite: whaleImg,
     tint: null,
     glowColor: null,
@@ -109,7 +109,7 @@ export const SKIN_CATALOG: SkinDef[] = [
     id: 'orca',
     name: 'Orca',
     rarity: 'rare',
-    cost: 200,
+    cost: 1000,
     sprite: orcaImg,
     tint: null,
     glowColor: null,
@@ -121,7 +121,7 @@ export const SKIN_CATALOG: SkinDef[] = [
     id: 'scary_orca',
     name: 'Scary Orca',
     rarity: 'epic',
-    cost: 500,
+    cost: 5000,
     sprite: scaryOrcaImg,
     tint: null,
     glowColor: 'rgba(255,50,50,0.4)',
@@ -133,7 +133,7 @@ export const SKIN_CATALOG: SkinDef[] = [
     id: 'mystical_fish',
     name: 'Mystical Fish',
     rarity: 'legendary',
-    cost: 1500,
+    cost: 20000,
     sprite: mysticalFishImg,
     tint: null,
     glowColor: 'rgba(100,220,255,0.5)',
@@ -194,15 +194,16 @@ function getTintedCanvas(img: HTMLImageElement, tint: string): HTMLCanvasElement
   cvs.height = img.naturalHeight || img.height;
   const ctx = cvs.getContext('2d')!;
 
-  // Draw original image
+  // Draw original image (grey-sub provides luminosity detail)
   ctx.drawImage(img, 0, 0);
 
-  // Apply color tint using multiply composite
-  ctx.globalCompositeOperation = 'multiply';
+  // Apply hue+saturation from tint while keeping luminosity from the grey base.
+  // 'color' blend mode = tint's hue & saturation + base's luminosity.
+  ctx.globalCompositeOperation = 'color';
   ctx.fillStyle = tint;
   ctx.fillRect(0, 0, cvs.width, cvs.height);
 
-  // Restore alpha from original image (multiply kills transparency)
+  // Restore alpha from original image (blend modes fill over transparent areas)
   ctx.globalCompositeOperation = 'destination-in';
   ctx.drawImage(img, 0, 0);
 
