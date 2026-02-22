@@ -1,6 +1,6 @@
 # Deep Dive Dash — Task Tracker
 
-> **Last updated**: 2026-02-18
+> **Last updated**: 2026-02-22
 
 ---
 
@@ -59,11 +59,11 @@
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| 4.1 | Skins data model + backend | ☐ | Sprite sets, rarity, unlock tracking |
-| 4.2 | Skins UI — equip + preview | ☐ | Skin selection screen |
-| 4.3 | Skins rendering in game | ☐ | Replace default submarine sprite |
-| 4.4 | Golden Tube mechanic | ☐ | Prestige tube variant |
-| 4.5 | Custom trail effects | ☐ | Per-skin trail rendering |
+| 4.1 | Skins data model + backend | ✅ | 10 skins (4 rarities), Redis `sd:user:{id}:skins:owned` (set) + `sd:user:{id}:skins:equipped`, purchase/equip APIs |
+| 4.2 | Skins UI — equip + preview | ✅ | SkinPanel modal with mini canvas previews, coin costs, equip/purchase buttons |
+| 4.3 | Skins rendering in game | ✅ | Parameterized `drawSubmarine()` using skin colors, glows, per-skin body/window/propeller |
+| 4.4 | Golden Tube mechanic | ✅ | Epic/Legendary skins grant +1 extra tube charge and +100 bonus score on tube completion |
+| 4.5 | Custom trail effects | ✅ | Particle system with 5 trail types: none, bubbles, sparkle, flame, rainbow |
 
 ---
 

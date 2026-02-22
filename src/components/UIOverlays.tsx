@@ -1,6 +1,7 @@
 import React from "react";
 import type { LeaderboardEntry, WeeklyLeaderboard } from "../types";
 import { OXYGEN_MAX, TUBE_PIECE_UNLOCK_SCORE, TUBE_PIECES_PER_TUBE } from "../constants";
+import { SKIN_CATALOG, RARITY_COLORS, type SkinDef, type SkinRarity } from "../skins";
 import turtleShellItemImg from "../../turtle-shell-item.png";
 import dolphinItemImg from "../../dolphin.png";
 import tubeImg from "../../tube.png";
@@ -600,6 +601,165 @@ export const InventoryPanel: React.FC<InventoryPanelProps> = ({
             Log in to persist your inventory across sessions.
           </div>
         )}
+      </div>
+    </div>
+  );
+};
+
+// ── Skin Selection Panel ──────────────────────────────────────────────
+
+type SkinPanelProps = {
+  open: boolean;
+  onClose: () => void;
+  coinBalance: number;
+  ownedSkins: string[];
+  equippedSkinId: string;
+  onPurchase: (skinId: string) => void;
+  onEquip: (skinId: string) => void;
+  busy: boolean;
+};
+
+function SkinMiniPreview({ skin }: { skin: SkinDef }) {
+  const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
+  React.useEffect(() => {
+    const cvs = canvasRef.current;
+    if (!cvs) return;
+    const ctx = cvs.getContext("2d");
+    if (!ctx) return;
+    const s = 2; // scale
+    cvs.width = 40 * s;
+    cvs.height = 40 * s;
+    ctx.scale(s, s);
+    ctx.clearRect(0, 0, 40, 40);
+    // Body
+    ctx.fillStyle = skin.bodyColor;
+    ctx.beginPath();
+    ctx.roundRect(4, 4, 32, 32, 6);
+    ctx.fill();
+    // Window
+    ctx.fillStyle = skin.windowColor;
+    ctx.beginPath();
+    ctx.arc(24, 15, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = skin.windowStroke;
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    // Propeller
+    ctx.fillStyle = skin.propellerColor;
+    ctx.fillRect(0, 15, 4, 10);
+  }, [skin]);
+  return <canvas ref={canvasRef} width={80} height={80} style={{ width: 40, height: 40, imageRendering: "pixelated" }} />;
+}
+
+function rarityLabel(r: SkinRarity): string {
+  return r.charAt(0).toUpperCase() + r.slice(1);
+}
+
+export const SkinPanel: React.FC<SkinPanelProps> = ({
+  open,
+  onClose,
+  coinBalance,
+  ownedSkins,
+  equippedSkinId,
+  onPurchase,
+  onEquip,
+  busy,
+}) => {
+  if (!open) return null;
+  const owned = new Set(ownedSkins);
+  return (
+    <div style={modalBackdropStyle} onMouseDown={onClose}>
+      <div
+        style={{ ...modalCardStyle, width: "min(560px, 94vw)", maxHeight: "80vh", overflowY: "auto", WebkitOverflowScrolling: "touch" }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <div style={{ textAlign: "left" }}>
+            <h2 style={panelTitleStyle}>SKINS</h2>
+            <p style={panelSubtitleStyle}>
+              <span style={{ color: "#ffd700", fontWeight: 800 }}>{coinBalance}</span> coins
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.85)", fontSize: "20px", cursor: "pointer", padding: "6px 10px" }}
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+          {SKIN_CATALOG.map((skin) => {
+            const isOwned = owned.has(skin.id) || skin.id === "default";
+            const isEquipped = equippedSkinId === skin.id;
+            const canAfford = coinBalance >= skin.cost;
+            return (
+              <div
+                key={skin.id}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: `1px solid ${isEquipped ? "rgba(0,255,255,0.7)" : "rgba(255,255,255,0.18)"}`,
+                  background: isEquipped ? "rgba(0,255,255,0.08)" : "rgba(0,0,0,0.22)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                }}
+              >
+                <SkinMiniPreview skin={skin} />
+                <div style={{ flex: 1, textAlign: "left" }}>
+                  <div style={{ fontWeight: 800, color: "rgba(255,255,255,0.95)" }}>{skin.name}</div>
+                  <div style={{ fontSize: "0.85rem", display: "flex", gap: 8, alignItems: "center", marginTop: 2 }}>
+                    <span style={{ color: RARITY_COLORS[skin.rarity], fontWeight: 700, textTransform: "uppercase", fontSize: "0.75rem", letterSpacing: 0.5 }}>
+                      {rarityLabel(skin.rarity)}
+                    </span>
+                    {skin.trailType !== "none" && (
+                      <span style={{ color: "rgba(255,255,255,0.6)", fontSize: "0.75rem" }}>
+                        {skin.trailType} trail
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  {isEquipped ? (
+                    <span style={{ fontSize: "0.85rem", fontWeight: 900, color: "#00ffff" }}>EQUIPPED</span>
+                  ) : isOwned ? (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => onEquip(skin.id)}
+                      style={{
+                        padding: "6px 14px", borderRadius: 8, border: "1px solid rgba(0,255,255,0.6)",
+                        background: "rgba(0,255,255,0.12)", color: "#00ffff", fontWeight: 800,
+                        fontSize: "0.85rem", cursor: busy ? "not-allowed" : "pointer", opacity: busy ? 0.6 : 1,
+                      }}
+                    >
+                      EQUIP
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={busy || !canAfford}
+                      onClick={() => onPurchase(skin.id)}
+                      style={{
+                        padding: "6px 14px", borderRadius: 8, border: "none",
+                        background: canAfford ? "#ffd700" : "rgba(255,255,255,0.15)",
+                        color: canAfford ? "#001e36" : "rgba(255,255,255,0.5)",
+                        fontWeight: 800, fontSize: "0.85rem",
+                        cursor: (busy || !canAfford) ? "not-allowed" : "pointer",
+                        opacity: busy ? 0.6 : 1,
+                      }}
+                    >
+                      {skin.cost} coins
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -1215,6 +1375,7 @@ interface MenuOverlayProps {
   onLogoutClick?: () => void;
   onStreakClick?: () => void;
   onInventoryClick?: () => void;
+  onSkinsClick?: () => void;
   onInboxClick?: () => void;
   inboxCount?: number;
   streakCurrent?: number;
@@ -1231,6 +1392,7 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
   onLogoutClick,
   onStreakClick,
   onInventoryClick,
+  onSkinsClick,
   onInboxClick,
   inboxCount,
   streakCurrent,
@@ -1336,6 +1498,24 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
             }}
           >
             INVENTORY
+          </button>
+        )}
+        {onSkinsClick && loginId && (
+          <button
+            type="button"
+            onClick={onSkinsClick}
+            style={{
+              padding: "10px 18px",
+              fontSize: "1.05rem",
+              background: "rgba(0,0,0,0.25)",
+              color: "rgba(255,255,255,0.9)",
+              border: "1px solid rgba(255,255,255,0.25)",
+              borderRadius: "10px",
+              cursor: "pointer",
+              fontWeight: 700,
+            }}
+          >
+            SKINS
           </button>
         )}
         {onInboxClick && (
