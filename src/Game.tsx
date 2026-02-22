@@ -1221,7 +1221,7 @@ export const DeepDiveGame = () => {
     }
 
     try {
-      const result = await leaderboardAPI.submitScore(name, scoreRef.current);
+      const result = await leaderboardAPI.submitScore(name, scoreRef.current, equippedSkinId);
 
       if (result) {
         setLeaderboard(result.leaderboard);
@@ -1297,7 +1297,7 @@ export const DeepDiveGame = () => {
       if (pendingSubmitRef.current) {
         pendingSubmitRef.current = false;
         // Retry submit (now authenticated). Keep the same score + chosen name.
-        const result = await leaderboardAPI.submitScore(playerName.trim(), scoreRef.current);
+        const result = await leaderboardAPI.submitScore(playerName.trim(), scoreRef.current, equippedSkinId);
         if (result) {
           setLeaderboard(result.leaderboard);
           leaderboardRef.current = result.leaderboard;

@@ -1,7 +1,7 @@
 import React from "react";
 import type { LeaderboardEntry, WeeklyLeaderboard } from "../types";
 import { OXYGEN_MAX, TUBE_PIECE_UNLOCK_SCORE, TUBE_PIECES_PER_TUBE } from "../constants";
-import { SKIN_CATALOG, RARITY_COLORS, getSkinImage, type SkinDef, type SkinRarity } from "../skins";
+import { SKIN_CATALOG, RARITY_COLORS, getSkinImage, getSkinDef, type SkinDef, type SkinRarity } from "../skins";
 import turtleShellItemImg from "../../turtle-shell-item.png";
 import dolphinItemImg from "../../dolphin.png";
 import tubeImg from "../../tube.png";
@@ -1016,6 +1016,18 @@ interface LeaderboardProps {
   lastSubmittedId: number | null;
 }
 
+function LeaderboardSkinIcon({ skinId }: { skinId?: string }) {
+  if (!skinId) return null;
+  const skin = getSkinDef(skinId);
+  return (
+    <img
+      src={skin.sprite}
+      alt={skin.name}
+      style={{ width: 22, height: 22, objectFit: "contain", verticalAlign: "middle", flexShrink: 0 }}
+    />
+  );
+}
+
 export const Leaderboard: React.FC<LeaderboardProps> = ({ leaderboard, lastSubmittedId }) => (
   <div style={{ marginTop: "20px", textAlign: "left", background: "rgba(0,0,0,0.3)", padding: "20px", borderRadius: "10px", width: "min(560px, 92vw)", boxSizing: "border-box" }}>
     <h3 style={{ borderBottom: "1px solid #00ffff", paddingBottom: "10px", color: "#00ffff", margin: "0 0 10px 0", fontSize: "clamp(1.1rem, 4.2vw, 1.5rem)", letterSpacing: "clamp(0.5px, 0.4vw, 1px)", overflowWrap: "anywhere" }}>LEADERBOARD</h3>
@@ -1026,15 +1038,18 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ leaderboard, lastSubmi
         ) : (
           leaderboard.map((entry, i) => (
             <tr key={i} style={{ color: entry.id === lastSubmittedId ? "#ffd700" : "white" }}>
-              <td style={{ padding: "5px 15px 5px 0" }}>{i + 1}.</td>
-              <td style={{ padding: "5px 15px 5px 0" }}>
-                <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                  <span>{entry.name}</span>
-                  {entry.userId && entry.userId !== entry.name && (
-                    <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.7)" }}>
-                      {entry.userId}
-                    </span>
-                  )}
+              <td style={{ padding: "5px 8px 5px 0", width: 24 }}>{i + 1}.</td>
+              <td style={{ padding: "5px 8px 5px 0" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <LeaderboardSkinIcon skinId={entry.skinId} />
+                  <div style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 }}>
+                    <span>{entry.name}</span>
+                    {entry.userId && entry.userId !== entry.name && (
+                      <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.7)" }}>
+                        {entry.userId}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </td>
               <td style={{ padding: "5px 0", textAlign: "right" }}>{entry.score}</td>
@@ -1080,12 +1095,18 @@ export const WeeklyLeaderboardHistory: React.FC<{ weeks: WeeklyLeaderboard[]; ex
             <div style={{ fontWeight: 900, color: "rgba(255,255,255,0.92)" }}>{weekTitle(w)}</div>
             <div style={{ marginTop: 6 }}>
               {w.entries.map((e, i) => (
-                <div key={`${w.weekId}:${e.id}:${i}`} style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: "0.98rem" }}>
-                  <div style={{ display: "flex", gap: 8, minWidth: 0 }}>
-                    <span style={{ width: 22, color: "rgba(255,255,255,0.75)" }}>{i + 1}.</span>
-                    <span style={{ overflowWrap: "anywhere" }}>{e.name}</span>
+                <div key={`${w.weekId}:${e.id}:${i}`} style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: "0.98rem", alignItems: "center", marginBottom: 2 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                    <span style={{ width: 22, flexShrink: 0, color: "rgba(255,255,255,0.75)" }}>{i + 1}.</span>
+                    <LeaderboardSkinIcon skinId={e.skinId} />
+                    <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                      <span style={{ overflowWrap: "anywhere" }}>{e.name}</span>
+                      {e.userId && e.userId !== e.name && (
+                        <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.55)" }}>{e.userId}</span>
+                      )}
+                    </div>
                   </div>
-                  <div style={{ fontWeight: 800, color: "rgba(255,255,255,0.92)" }}>{e.score}</div>
+                  <div style={{ fontWeight: 800, color: "rgba(255,255,255,0.92)", flexShrink: 0 }}>{e.score}</div>
                 </div>
               ))}
             </div>

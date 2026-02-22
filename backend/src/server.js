@@ -1008,7 +1008,7 @@ app.post('/api/leaderboard', async (req, res) => {
       return res.status(503).json({ error: 'Redis not connected' });
     }
 
-    const { name, score } = req.body;
+    const { name, score, skinId } = req.body;
 
     // Require login for submit in dev backend too (aligns with Vercel function)
     const sessionUserId = await getUserIdForSession(req);
@@ -1033,6 +1033,7 @@ app.post('/api/leaderboard', async (req, res) => {
       id: Date.now(),
       name: requestedName ? await sanitizeLeaderboardName(requestedName) : user.loginId,
       userId: user.loginId,
+      skinId: typeof skinId === 'string' ? skinId : undefined,
       score
     };
 

@@ -11,6 +11,7 @@ export interface LeaderboardEntry {
   id: number;
   name: string;
   userId?: string; // loginId
+  skinId?: string; // equipped skin at time of submission
   score: number;
 }
 

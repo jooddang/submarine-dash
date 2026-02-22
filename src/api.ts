@@ -76,7 +76,7 @@ export const leaderboardAPI = {
   },
 
   // Submit a new score
-  async submitScore(name: string, score: number): Promise<{
+  async submitScore(name: string, score: number, skinId?: string): Promise<{
     entry: LeaderboardEntry;
     leaderboard: LeaderboardEntry[];
     rank: number;
@@ -88,7 +88,7 @@ export const leaderboardAPI = {
           'Content-Type': 'application/json',
         },
         credentials: 'include',
-        body: JSON.stringify({ name, score }),
+        body: JSON.stringify({ name, score, skinId }),
       });
 
       if (!response.ok) {

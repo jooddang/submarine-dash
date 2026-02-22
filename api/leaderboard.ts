@@ -55,7 +55,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(401).json({ error: 'Login required' });
       }
 
-      const { name, score } = req.body;
+      const { name, score, skinId } = req.body;
 
       if (typeof score !== 'number') {
         return res.status(400).json({ error: 'Invalid name or score' });
@@ -74,6 +74,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         id: Date.now(),
         name: finalName,
         userId: user.loginId,
+        skinId: typeof skinId === 'string' ? skinId : undefined,
         score
       };
 
