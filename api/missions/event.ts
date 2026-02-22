@@ -17,6 +17,7 @@ import {
   saveTubeState,
   type TubeState,
 } from '../_lib/tubeInventory.js';
+import { getSkinState, type SkinState } from '../_lib/skinInventory.js';
 
 export const config = { runtime: 'nodejs' };
 
@@ -271,13 +272,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     await redisRW.set(progressKey, JSON.stringify(progress));
 
     // Include latest inventory snapshot (best-effort).
-    let inventory: { dolphinSaved: number; coins: number; tube?: TubeState } | undefined = undefined;
+    let inventory: { dolphinSaved: number; coins: number; tube?: TubeState; skins?: SkinState } | undefined = undefined;
     try {
       await migratePendingDolphins(redisRW, userId);
       const saved = await getSavedDolphins(redisRW, userId);
       const coins = await getCoinBalance(redisRW, userId);
       const tube = await getTubeState(redisRW, userId);
-      inventory = { dolphinSaved: saved, coins, tube };
+      const skins = await getSkinState(redisRW, userId);
+      inventory = { dolphinSaved: saved, coins, tube, skins };
     } catch {
       // best-effort
     }

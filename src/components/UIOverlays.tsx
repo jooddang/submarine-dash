@@ -1,6 +1,7 @@
 import React from "react";
 import type { LeaderboardEntry, WeeklyLeaderboard } from "../types";
 import { OXYGEN_MAX, TUBE_PIECE_UNLOCK_SCORE, TUBE_PIECES_PER_TUBE } from "../constants";
+import { SKIN_CATALOG, RARITY_COLORS, getSkinImage, getSkinDef, type SkinDef, type SkinRarity } from "../skins";
 import turtleShellItemImg from "../../turtle-shell-item.png";
 import dolphinItemImg from "../../dolphin.png";
 import tubeImg from "../../tube.png";
@@ -605,6 +606,187 @@ export const InventoryPanel: React.FC<InventoryPanelProps> = ({
   );
 };
 
+// ── Skin Selection Panel ──────────────────────────────────────────────
+
+type SkinPanelProps = {
+  open: boolean;
+  onClose: () => void;
+  coinBalance: number;
+  ownedSkins: string[];
+  equippedSkinId: string;
+  onPurchase: (skinId: string) => void;
+  onEquip: (skinId: string) => void;
+  busy: boolean;
+};
+
+function SkinMiniPreview({ skin }: { skin: SkinDef }) {
+  const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
+
+  React.useEffect(() => {
+    const cvs = canvasRef.current;
+    if (!cvs) return;
+    const ctx = cvs.getContext("2d");
+    if (!ctx) return;
+
+    const size = 80; // 2x for retina
+    cvs.width = size;
+    cvs.height = size;
+
+    const img = getSkinImage(skin);
+    if (!img) return;
+
+    const draw = () => {
+      ctx.clearRect(0, 0, size, size);
+
+      // Fit image into canvas preserving aspect ratio
+      const aspect = img.naturalWidth / img.naturalHeight;
+      let dw = size, dh = size;
+      if (aspect > 1) { dh = size / aspect; } else { dw = size * aspect; }
+      const dx = (size - dw) / 2;
+      const dy = (size - dh) / 2;
+
+      if (skin.tint) {
+        // Draw original, apply 'color' blend tint, restore alpha
+        ctx.drawImage(img, dx, dy, dw, dh);
+        ctx.globalCompositeOperation = "color";
+        ctx.fillStyle = skin.tint;
+        ctx.fillRect(0, 0, size, size);
+        ctx.globalCompositeOperation = "destination-in";
+        ctx.drawImage(img, dx, dy, dw, dh);
+        ctx.globalCompositeOperation = "source-over";
+      } else {
+        ctx.drawImage(img, dx, dy, dw, dh);
+      }
+    };
+
+    if (img.complete && img.naturalWidth > 0) {
+      draw();
+    } else {
+      img.onload = draw;
+    }
+  }, [skin]);
+
+  return (
+    <div style={{ width: 44, height: 44, borderRadius: 8, overflow: "hidden", background: "rgba(0,0,0,0.3)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+      <canvas ref={canvasRef} width={80} height={80} style={{ width: 40, height: 40 }} />
+    </div>
+  );
+}
+
+function rarityLabel(r: SkinRarity): string {
+  return r.charAt(0).toUpperCase() + r.slice(1);
+}
+
+export const SkinPanel: React.FC<SkinPanelProps> = ({
+  open,
+  onClose,
+  coinBalance,
+  ownedSkins,
+  equippedSkinId,
+  onPurchase,
+  onEquip,
+  busy,
+}) => {
+  if (!open) return null;
+  const owned = new Set(ownedSkins);
+  return (
+    <div style={modalBackdropStyle} onMouseDown={onClose}>
+      <div
+        style={{ ...modalCardStyle, width: "min(560px, 94vw)", maxHeight: "80vh", overflowY: "auto", WebkitOverflowScrolling: "touch" }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <div style={{ textAlign: "left" }}>
+            <h2 style={panelTitleStyle}>SKINS</h2>
+            <p style={panelSubtitleStyle}>
+              <span style={{ color: "#ffd700", fontWeight: 800 }}>{coinBalance}</span> coins
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.85)", fontSize: "20px", cursor: "pointer", padding: "6px 10px" }}
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+          {SKIN_CATALOG.map((skin) => {
+            const isOwned = owned.has(skin.id) || skin.id === "default";
+            const isEquipped = equippedSkinId === skin.id;
+            const canAfford = coinBalance >= skin.cost;
+            return (
+              <div
+                key={skin.id}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: `1px solid ${isEquipped ? "rgba(0,255,255,0.7)" : "rgba(255,255,255,0.18)"}`,
+                  background: isEquipped ? "rgba(0,255,255,0.08)" : "rgba(0,0,0,0.22)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                }}
+              >
+                <SkinMiniPreview skin={skin} />
+                <div style={{ flex: 1, textAlign: "left" }}>
+                  <div style={{ fontWeight: 800, color: "rgba(255,255,255,0.95)" }}>{skin.name}</div>
+                  <div style={{ fontSize: "0.85rem", display: "flex", gap: 8, alignItems: "center", marginTop: 2 }}>
+                    <span style={{ color: RARITY_COLORS[skin.rarity], fontWeight: 700, textTransform: "uppercase", fontSize: "0.75rem", letterSpacing: 0.5 }}>
+                      {rarityLabel(skin.rarity)}
+                    </span>
+                    {skin.trailType !== "none" && (
+                      <span style={{ color: "rgba(255,255,255,0.6)", fontSize: "0.75rem" }}>
+                        {skin.trailType} trail
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  {isEquipped ? (
+                    <span style={{ fontSize: "0.85rem", fontWeight: 900, color: "#00ffff" }}>EQUIPPED</span>
+                  ) : isOwned ? (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => onEquip(skin.id)}
+                      style={{
+                        padding: "6px 14px", borderRadius: 8, border: "1px solid rgba(0,255,255,0.6)",
+                        background: "rgba(0,255,255,0.12)", color: "#00ffff", fontWeight: 800,
+                        fontSize: "0.85rem", cursor: busy ? "not-allowed" : "pointer", opacity: busy ? 0.6 : 1,
+                      }}
+                    >
+                      EQUIP
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={busy || !canAfford}
+                      onClick={() => onPurchase(skin.id)}
+                      style={{
+                        padding: "6px 14px", borderRadius: 8, border: "none",
+                        background: canAfford ? "#ffd700" : "rgba(255,255,255,0.15)",
+                        color: canAfford ? "#001e36" : "rgba(255,255,255,0.5)",
+                        fontWeight: 800, fontSize: "0.85rem",
+                        cursor: (busy || !canAfford) ? "not-allowed" : "pointer",
+                        opacity: busy ? 0.6 : 1,
+                      }}
+                    >
+                      {skin.cost} coins
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 function rand(min: number, max: number) {
   return Math.random() * (max - min) + min;
 }
@@ -834,6 +1016,18 @@ interface LeaderboardProps {
   lastSubmittedId: number | null;
 }
 
+function LeaderboardSkinIcon({ skinId }: { skinId?: string }) {
+  if (!skinId) return null;
+  const skin = getSkinDef(skinId);
+  return (
+    <img
+      src={skin.sprite}
+      alt={skin.name}
+      style={{ width: 22, height: 22, objectFit: "contain", verticalAlign: "middle", flexShrink: 0 }}
+    />
+  );
+}
+
 export const Leaderboard: React.FC<LeaderboardProps> = ({ leaderboard, lastSubmittedId }) => (
   <div style={{ marginTop: "20px", textAlign: "left", background: "rgba(0,0,0,0.3)", padding: "20px", borderRadius: "10px", width: "min(560px, 92vw)", boxSizing: "border-box" }}>
     <h3 style={{ borderBottom: "1px solid #00ffff", paddingBottom: "10px", color: "#00ffff", margin: "0 0 10px 0", fontSize: "clamp(1.1rem, 4.2vw, 1.5rem)", letterSpacing: "clamp(0.5px, 0.4vw, 1px)", overflowWrap: "anywhere" }}>LEADERBOARD</h3>
@@ -844,15 +1038,18 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ leaderboard, lastSubmi
         ) : (
           leaderboard.map((entry, i) => (
             <tr key={i} style={{ color: entry.id === lastSubmittedId ? "#ffd700" : "white" }}>
-              <td style={{ padding: "5px 15px 5px 0" }}>{i + 1}.</td>
-              <td style={{ padding: "5px 15px 5px 0" }}>
-                <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                  <span>{entry.name}</span>
-                  {entry.userId && entry.userId !== entry.name && (
-                    <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.7)" }}>
-                      {entry.userId}
-                    </span>
-                  )}
+              <td style={{ padding: "5px 8px 5px 0", width: 24 }}>{i + 1}.</td>
+              <td style={{ padding: "5px 8px 5px 0" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <LeaderboardSkinIcon skinId={entry.skinId} />
+                  <div style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 }}>
+                    <span>{entry.name}</span>
+                    {entry.userId && entry.userId !== entry.name && (
+                      <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.7)" }}>
+                        {entry.userId}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </td>
               <td style={{ padding: "5px 0", textAlign: "right" }}>{entry.score}</td>
@@ -898,12 +1095,18 @@ export const WeeklyLeaderboardHistory: React.FC<{ weeks: WeeklyLeaderboard[]; ex
             <div style={{ fontWeight: 900, color: "rgba(255,255,255,0.92)" }}>{weekTitle(w)}</div>
             <div style={{ marginTop: 6 }}>
               {w.entries.map((e, i) => (
-                <div key={`${w.weekId}:${e.id}:${i}`} style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: "0.98rem" }}>
-                  <div style={{ display: "flex", gap: 8, minWidth: 0 }}>
-                    <span style={{ width: 22, color: "rgba(255,255,255,0.75)" }}>{i + 1}.</span>
-                    <span style={{ overflowWrap: "anywhere" }}>{e.name}</span>
+                <div key={`${w.weekId}:${e.id}:${i}`} style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: "0.98rem", alignItems: "center", marginBottom: 2 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                    <span style={{ width: 22, flexShrink: 0, color: "rgba(255,255,255,0.75)" }}>{i + 1}.</span>
+                    <LeaderboardSkinIcon skinId={e.skinId} />
+                    <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                      <span style={{ overflowWrap: "anywhere" }}>{e.name}</span>
+                      {e.userId && e.userId !== e.name && (
+                        <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.55)" }}>{e.userId}</span>
+                      )}
+                    </div>
                   </div>
-                  <div style={{ fontWeight: 800, color: "rgba(255,255,255,0.92)" }}>{e.score}</div>
+                  <div style={{ fontWeight: 800, color: "rgba(255,255,255,0.92)", flexShrink: 0 }}>{e.score}</div>
                 </div>
               ))}
             </div>
@@ -1215,6 +1418,7 @@ interface MenuOverlayProps {
   onLogoutClick?: () => void;
   onStreakClick?: () => void;
   onInventoryClick?: () => void;
+  onSkinsClick?: () => void;
   onInboxClick?: () => void;
   inboxCount?: number;
   streakCurrent?: number;
@@ -1231,6 +1435,7 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
   onLogoutClick,
   onStreakClick,
   onInventoryClick,
+  onSkinsClick,
   onInboxClick,
   inboxCount,
   streakCurrent,
@@ -1336,6 +1541,24 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
             }}
           >
             INVENTORY
+          </button>
+        )}
+        {onSkinsClick && loginId && (
+          <button
+            type="button"
+            onClick={onSkinsClick}
+            style={{
+              padding: "10px 18px",
+              fontSize: "1.05rem",
+              background: "rgba(0,0,0,0.25)",
+              color: "rgba(255,255,255,0.9)",
+              border: "1px solid rgba(255,255,255,0.25)",
+              borderRadius: "10px",
+              cursor: "pointer",
+              fontWeight: 700,
+            }}
+          >
+            SKINS
           </button>
         )}
         {onInboxClick && (

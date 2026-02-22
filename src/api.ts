@@ -30,12 +30,13 @@ function getTimezoneHeaders(): Record<string, string> {
 }
 
 export type TubeState = { pieces: number; charges: number };
+export type SkinState = { owned: string[]; equipped: string };
 
 export type AuthUser = {
   userId: string;
   loginId: string;
   refCode: string;
-  inventory?: { dolphinSaved: number; coins: number; tube?: TubeState };
+  inventory?: { dolphinSaved: number; coins: number; tube?: TubeState; skins?: SkinState };
   rewards?: {
     weeklyWinner?: { dolphin: true; weekId: string };
     grants?: { dolphin: number };
@@ -75,7 +76,7 @@ export const leaderboardAPI = {
   },
 
   // Submit a new score
-  async submitScore(name: string, score: number): Promise<{
+  async submitScore(name: string, score: number, skinId?: string): Promise<{
     entry: LeaderboardEntry;
     leaderboard: LeaderboardEntry[];
     rank: number;
@@ -87,7 +88,7 @@ export const leaderboardAPI = {
           'Content-Type': 'application/json',
         },
         credentials: 'include',
-        body: JSON.stringify({ name, score }),
+        body: JSON.stringify({ name, score, skinId }),
       });
 
       if (!response.ok) {
@@ -198,7 +199,7 @@ export type DailyMissionsResponse =
           keptAt?: number;
         };
         streak: { current: number; lastKeptDate: string | null; updatedAt: number };
-        inventory?: { dolphinSaved: number; coins: number; tube?: TubeState };
+        inventory?: { dolphinSaved: number; coins: number; tube?: TubeState; skins?: SkinState };
       };
     };
 
@@ -231,7 +232,7 @@ export const missionsAPI = {
         };
         rewards?: { streak?: { dolphin: number; streakDays: number } };
         coinsEarned?: number;
-        inventory?: { dolphinSaved: number; coins: number; tube?: TubeState };
+        inventory?: { dolphinSaved: number; coins: number; tube?: TubeState; skins?: SkinState };
       }
     | null
   > {
@@ -278,6 +279,35 @@ export const inventoryAPI = {
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({ count }),
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  },
+
+  async purchaseSkin(skinId: string): Promise<{ ok: boolean; skinId: string; cost: number; coins: number; skins: SkinState } | { error: string } | null> {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/inventory/skin/purchase`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ skinId }),
+      });
+      return await res.json();
+    } catch {
+      return null;
+    }
+  },
+
+  async equipSkin(skinId: string): Promise<{ ok: boolean; skins: SkinState } | null> {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/inventory/skin/equip`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ skinId }),
       });
       if (!res.ok) return null;
       return await res.json();

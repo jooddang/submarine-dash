@@ -258,13 +258,47 @@ async function saveTubeState(userId, pieces, charges) {
   return state;
 }
 
+// ── Skin inventory helpers ──
+function keySkinOwned(userId) {
+  return `${KEY_PREFIX}user:${userId}:skins:owned`;
+}
+function keySkinEquipped(userId) {
+  return `${KEY_PREFIX}user:${userId}:skins:equipped`;
+}
+async function getSkinState(userId) {
+  if (!redis) return { owned: ['default'], equipped: 'default' };
+  const [ownedRaw, equippedRaw] = await Promise.all([
+    redis.smembers(keySkinOwned(userId)),
+    redis.get(keySkinEquipped(userId)),
+  ]);
+  const owned = Array.isArray(ownedRaw) ? ownedRaw : [];
+  if (!owned.includes('default')) owned.push('default');
+  const equipped = typeof equippedRaw === 'string' && equippedRaw ? equippedRaw : 'default';
+  return { owned, equipped };
+}
+async function addOwnedSkin(userId, skinId) {
+  if (!redis) return;
+  await redis.sadd(keySkinOwned(userId), skinId);
+}
+async function equipSkin(userId, skinId) {
+  if (!redis) return { ok: false, equipped: '' };
+  const isOwned = await redis.sismember(keySkinOwned(userId), skinId);
+  if (!isOwned && skinId !== 'default') return { ok: false, equipped: '' };
+  await redis.set(keySkinEquipped(userId), skinId);
+  return { ok: true, equipped: skinId };
+}
+const SKIN_COSTS = {
+  default: 0, gold: 150, golden: 150, ocean_blue: 150, coral_red: 150, neon_green: 150,
+  royal_purple: 150, whale: 1000, orca: 1000, scary_orca: 5000, mystical_fish: 20000,
+};
+
 function computeCoinsForScore(score) {
-  if (score < 200) return 0;
-  if (score < 500) return 5;
-  if (score < 1000) return 10;
-  if (score < 2000) return 20;
-  if (score < 3000) return 35;
-  if (score < 5000) return 50;
+  if (score < 500) return 0;
+  if (score < 1000) return 5;
+  if (score < 3000) return 10;
+  if (score < 5000) return 20;
+  if (score < 7000) return 35;
+  if (score < 9000) return 50;
   return 75;
 }
 
@@ -691,7 +725,8 @@ app.get('/api/auth/me', async (req, res) => {
       const saved = Math.max(0, parseIntSafe(savedRaw, 0));
       const coins = await getCoinBalance(user.userId);
       const tube = await getTubeState(user.userId);
-      inventory = { dolphinSaved: saved, coins, tube };
+      const skins = await getSkinState(user.userId);
+      inventory = { dolphinSaved: saved, coins, tube, skins };
     } catch {
       // best-effort
     }
@@ -732,7 +767,8 @@ app.get('/api/missions/daily', async (req, res) => {
       const saved = Math.max(0, parseIntSafe(savedRaw, 0));
       const coins = await getCoinBalance(userId);
       const tube = await getTubeState(userId);
-      inventory = { dolphinSaved: saved, coins, tube };
+      const skins = await getSkinState(userId);
+      inventory = { dolphinSaved: saved, coins, tube, skins };
     } catch {
       // best-effort
     }
@@ -842,7 +878,8 @@ app.post('/api/missions/event', async (req, res) => {
       const saved = Math.max(0, parseIntSafe(savedRaw, 0));
       const coins = await getCoinBalance(userId);
       const tube = await getTubeState(userId);
-      inventory = { dolphinSaved: saved, coins, tube };
+      const skins = await getSkinState(userId);
+      inventory = { dolphinSaved: saved, coins, tube, skins };
     } catch {
       // best-effort
     }
@@ -888,6 +925,51 @@ app.post('/api/inventory/dolphin/import', async (req, res) => {
   }
 });
 
+// POST /api/inventory/skin/purchase
+app.post('/api/inventory/skin/purchase', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Login required' });
+    const skinId = typeof req.body?.skinId === 'string' ? req.body.skinId.trim() : '';
+    if (!skinId || !(skinId in SKIN_COSTS)) return res.status(400).json({ error: 'Invalid skin ID' });
+    const cost = SKIN_COSTS[skinId];
+    const state = await getSkinState(userId);
+    if (state.owned.includes(skinId)) return res.status(400).json({ error: 'Already owned' });
+    const balance = await getCoinBalance(userId);
+    if (balance < cost) return res.status(400).json({ error: 'Insufficient coins', required: cost, balance });
+    const newBalance = await redis.decrby(keyCoinBalance(userId), cost);
+    if (newBalance < 0) {
+      await redis.incrby(keyCoinBalance(userId), cost);
+      return res.status(400).json({ error: 'Insufficient coins' });
+    }
+    await addOwnedSkin(userId, skinId);
+    const updatedState = await getSkinState(userId);
+    return res.json({ ok: true, skinId, cost, coins: newBalance, skins: updatedState });
+  } catch (e) {
+    console.error('POST /api/inventory/skin/purchase error:', e);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/inventory/skin/equip
+app.post('/api/inventory/skin/equip', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Login required' });
+    const skinId = typeof req.body?.skinId === 'string' ? req.body.skinId.trim() : '';
+    if (!skinId) return res.status(400).json({ error: 'Missing skinId' });
+    const result = await equipSkin(userId, skinId);
+    if (!result.ok) return res.status(400).json({ error: 'Skin not owned' });
+    const state = await getSkinState(userId);
+    return res.json({ ok: true, skins: state });
+  } catch (e) {
+    console.error('POST /api/inventory/skin/equip error:', e);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // GET /api/leaderboard - Get top 5 scores
 app.get('/api/leaderboard', async (req, res) => {
   try {
@@ -926,7 +1008,7 @@ app.post('/api/leaderboard', async (req, res) => {
       return res.status(503).json({ error: 'Redis not connected' });
     }
 
-    const { name, score } = req.body;
+    const { name, score, skinId } = req.body;
 
     // Require login for submit in dev backend too (aligns with Vercel function)
     const sessionUserId = await getUserIdForSession(req);
@@ -951,6 +1033,7 @@ app.post('/api/leaderboard', async (req, res) => {
       id: Date.now(),
       name: requestedName ? await sanitizeLeaderboardName(requestedName) : user.loginId,
       userId: user.loginId,
+      skinId: typeof skinId === 'string' ? skinId : undefined,
       score
     };
 

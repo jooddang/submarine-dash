@@ -5,7 +5,8 @@ import { initAudio, playSound } from "./audio";
 import { interpolateColor } from "./graphics";
 import { createBubble, spawnBackgroundEntity } from "./entities";
 import { drawSwordfish, drawUrchin, drawBackgroundEntities, drawTurtleShell } from "./drawing";
-import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, AuthModal, DailyMissionsPanel, DolphinStreakRewardOverlay, DolphinWeeklyWinnerRewardOverlay, InventoryPanel } from "./components/UIOverlays";
+import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, AuthModal, DailyMissionsPanel, DolphinStreakRewardOverlay, DolphinWeeklyWinnerRewardOverlay, InventoryPanel, SkinPanel } from "./components/UIOverlays";
+import { getSkinDef, drawSubmarine, updateTrailParticles, drawTrailParticles, isGoldenTubeEligible, GOLDEN_TUBE_EXTRA_CHARGES, GOLDEN_TUBE_EXTRA_SCORE_BONUS, DEFAULT_SKIN_ID, preloadSkinImages, type TrailParticle, type SkinDef } from "./skins";
 import { authAPI, inventoryAPI, leaderboardAPI, missionsAPI, type DailyMissionsResponse, type AuthUser } from "./api";
 import turtleRescueImg from "../turtle.png";
 import turtleShellItemImg from "../turtle-shell-item.png";
@@ -149,6 +150,12 @@ export const DeepDiveGame = () => {
   const pendingSubmitRef = useRef<boolean>(false);
   const [streakOpen, setStreakOpen] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
+  const [skinsOpen, setSkinsOpen] = useState(false);
+  const [skinBusy, setSkinBusy] = useState(false);
+  const [ownedSkins, setOwnedSkins] = useState<string[]>([DEFAULT_SKIN_ID]);
+  const [equippedSkinId, setEquippedSkinId] = useState(DEFAULT_SKIN_ID);
+  const equippedSkinRef = useRef<SkinDef>(getSkinDef(DEFAULT_SKIN_ID));
+  const trailParticlesRef = useRef<TrailParticle[]>([]);
   const [dailyMissions, setDailyMissions] = useState<DailyMissionsResponse | null>(null);
   const initialPageStyleRef = useRef<{
     bodyOverflow: string;
@@ -214,6 +221,11 @@ export const DeepDiveGame = () => {
   };
 
   const showTubeToast = (text: string) => setTubeToast(text);
+
+  // Keep skin ref in sync
+  useEffect(() => {
+    equippedSkinRef.current = getSkinDef(equippedSkinId);
+  }, [equippedSkinId]);
 
   const clampTubeRescueCharges = (n: number) => Math.max(0, Math.min(3, Math.floor(n)));
   const setTubeRescueCharges = (value: number) => {
@@ -311,6 +323,12 @@ export const DeepDiveGame = () => {
         setTubeRescueCharges(me.inventory.tube.charges ?? 0);
       }
 
+      // Hydrate skin state from server.
+      if (me?.inventory?.skins) {
+        setOwnedSkins(me.inventory.skins.owned);
+        setEquippedSkinId(me.inventory.skins.equipped);
+      }
+
       // One-time import of legacy localStorage dolphins into Redis (prevents losing old items).
       if (me?.userId) {
         const legacy = readLegacyLocalDolphinCount(me.userId);
@@ -391,6 +409,10 @@ export const DeepDiveGame = () => {
   }, [gameState]);
 
   // Streak dolphin awards are granted server-side (Redis source of truth).
+
+  useEffect(() => {
+    preloadSkinImages();
+  }, []);
 
   useEffect(() => {
     const img = new Image();
@@ -724,6 +746,7 @@ export const DeepDiveGame = () => {
     // Reset per-run tube partial progress (pieces collected this run).
     // Rescue charges persist across runs — they are earned rewards.
     setTubePieces(0);
+    trailParticlesRef.current = [];
 
     swordfishTimerRef.current = 0;
     isSwordfishActiveRef.current = false;
@@ -1152,6 +1175,11 @@ export const DeepDiveGame = () => {
             setTubePieces(out.inventory.tube.pieces ?? 0);
             setTubeRescueCharges(out.inventory.tube.charges ?? 0);
           }
+          // Sync skin state from server
+          if (out?.inventory?.skins) {
+            setOwnedSkins(out.inventory.skins.owned);
+            setEquippedSkinId(out.inventory.skins.equipped);
+          }
           const streakGrant = out?.rewards?.streak?.dolphin;
           if (typeof streakGrant === "number" && streakGrant > 0) {
             if (gameStateRef.current === "PLAYING") {
@@ -1193,7 +1221,7 @@ export const DeepDiveGame = () => {
     }
 
     try {
-      const result = await leaderboardAPI.submitScore(name, scoreRef.current);
+      const result = await leaderboardAPI.submitScore(name, scoreRef.current, equippedSkinId);
 
       if (result) {
         setLeaderboard(result.leaderboard);
@@ -1269,7 +1297,7 @@ export const DeepDiveGame = () => {
       if (pendingSubmitRef.current) {
         pendingSubmitRef.current = false;
         // Retry submit (now authenticated). Keep the same score + chosen name.
-        const result = await leaderboardAPI.submitScore(playerName.trim(), scoreRef.current);
+        const result = await leaderboardAPI.submitScore(playerName.trim(), scoreRef.current, equippedSkinId);
         if (result) {
           setLeaderboard(result.leaderboard);
           leaderboardRef.current = result.leaderboard;
@@ -1722,10 +1750,11 @@ export const DeepDiveGame = () => {
           playSound('oxygen');
           if (next >= Constants.TUBE_PIECES_PER_TUBE) {
             // Completion: trigger exactly once per 4 pieces, apply reward once, then reset.
+            const golden = isGoldenTubeEligible(equippedSkinRef.current.id);
             setTubePieces(0);
-            setTubeRescueCharges(tubeRescueChargesRef.current + 1);
-            applyScoreBonus(Constants.TUBE_COMPLETION_BONUS_SCORE);
-            showTubeToast("Tube Completed!");
+            setTubeRescueCharges(tubeRescueChargesRef.current + 1 + (golden ? GOLDEN_TUBE_EXTRA_CHARGES : 0));
+            applyScoreBonus(Constants.TUBE_COMPLETION_BONUS_SCORE + (golden ? GOLDEN_TUBE_EXTRA_SCORE_BONUS : 0));
+            showTubeToast(golden ? "Golden Tube!" : "Tube Completed!");
           } else {
             setTubePieces(next);
           }
@@ -1879,34 +1908,18 @@ export const DeepDiveGame = () => {
     });
 
     const p = playerRef.current;
-    ctx.save();
-    ctx.translate(p.x + p.width / 2, p.y + p.height / 2);
-    ctx.rotate((p.rotation * Math.PI) / 180);
+    const skin = equippedSkinRef.current;
 
-    if (isSwordfishActiveRef.current) {
-      ctx.shadowColor = "#00ffff";
-      ctx.shadowBlur = 20;
-    }
+    // Trail particles (drawn behind the submarine)
+    const dt = 1 / 60;
+    const isPlaying = gameStateRef.current === "PLAYING";
+    trailParticlesRef.current = updateTrailParticles(
+      trailParticlesRef.current, dt, skin, p.x, p.y, p.width, p.height, gameTimeRef.current, isPlaying,
+    );
+    drawTrailParticles(ctx, trailParticlesRef.current, skin.trailType);
 
-    ctx.fillStyle = "#FFD700";
-    ctx.beginPath();
-    ctx.roundRect(-p.width / 2, -p.height / 2, p.width, p.height, 8);
-    ctx.fill();
-
-    ctx.shadowBlur = 0;
-
-    ctx.fillStyle = "#87CEEB";
-    ctx.beginPath();
-    ctx.arc(5, -5, 8, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    ctx.fillStyle = "#666";
-    ctx.fillRect(-p.width / 2 - 5, -5, 5, 10);
-
-    ctx.restore();
+    // Submarine
+    drawSubmarine(ctx, p.x, p.y, p.width, p.height, p.rotation, skin, isSwordfishActiveRef.current, gameTimeRef.current);
 
     // Rescue turtle overlay (draw last so it sits on top)
     const rescue = rescueRef.current;
@@ -2077,6 +2090,8 @@ export const DeepDiveGame = () => {
             setAuthUser(null);
             authUserRef.current = null;
             setCoinBalance(0);
+            setOwnedSkins([DEFAULT_SKIN_ID]);
+            setEquippedSkinId(DEFAULT_SKIN_ID);
             refreshDailyMissions();
           }}
           onLoginClick={() => {
@@ -2089,6 +2104,7 @@ export const DeepDiveGame = () => {
             refreshDailyMissions();
           }}
           onInventoryClick={() => setInventoryOpen(true)}
+          onSkinsClick={() => setSkinsOpen(true)}
         />
       )}
 
@@ -2160,6 +2176,40 @@ export const DeepDiveGame = () => {
         tubePieces={tubePieces}
         tubeRescueCharges={tubeRescueCharges}
         streakCurrent={dailyMissions?.user ? dailyMissions.user.streak.current : 0}
+      />
+
+      <SkinPanel
+        open={skinsOpen}
+        onClose={() => setSkinsOpen(false)}
+        coinBalance={coinBalance}
+        ownedSkins={ownedSkins}
+        equippedSkinId={equippedSkinId}
+        busy={skinBusy}
+        onPurchase={async (skinId) => {
+          setSkinBusy(true);
+          try {
+            const result = await inventoryAPI.purchaseSkin(skinId);
+            if (result && "ok" in result && result.ok) {
+              setOwnedSkins(result.skins.owned);
+              setEquippedSkinId(result.skins.equipped);
+              setCoinBalance(result.coins);
+            }
+          } finally {
+            setSkinBusy(false);
+          }
+        }}
+        onEquip={async (skinId) => {
+          setSkinBusy(true);
+          try {
+            const result = await inventoryAPI.equipSkin(skinId);
+            if (result?.ok) {
+              setOwnedSkins(result.skins.owned);
+              setEquippedSkinId(result.skins.equipped);
+            }
+          } finally {
+            setSkinBusy(false);
+          }
+        }}
       />
     </div>
   );
