@@ -50,6 +50,17 @@ export const SKIN_CATALOG: SkinDef[] = [
     trailColor: '#FF6B00',
   },
   {
+    id: 'golden',
+    name: 'Gold',
+    rarity: 'common',
+    cost: 150,
+    sprite: greySubImg,
+    tint: '#FFD700',
+    glowColor: null,
+    trailType: 'bubbles',
+    trailColor: '#FFD700',
+  },
+  {
     id: 'ocean_blue',
     name: 'Ocean Blue',
     rarity: 'common',

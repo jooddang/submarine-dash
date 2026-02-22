@@ -10,6 +10,7 @@ export const config = { runtime: 'nodejs' };
 const SKIN_COSTS: Record<string, number> = {
   default: 0,
   gold: 150,
+  golden: 150,
   ocean_blue: 150,
   coral_red: 150,
   neon_green: 150,
