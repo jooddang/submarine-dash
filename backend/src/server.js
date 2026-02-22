@@ -288,8 +288,8 @@ async function equipSkin(userId, skinId) {
   return { ok: true, equipped: skinId };
 }
 const SKIN_COSTS = {
-  default: 0, ocean_blue: 50, coral_red: 50, stealth: 150, neon: 150,
-  royal: 300, golden: 500, crystal: 1000, lava: 1000, rainbow: 1500,
+  default: 0, gold: 50, ocean_blue: 50, coral_red: 50, neon_green: 50,
+  royal_purple: 50, whale: 200, orca: 200, scary_orca: 500, mystical_fish: 1500,
 };
 
 function computeCoinsForScore(score) {

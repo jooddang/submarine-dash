@@ -9,15 +9,15 @@ export const config = { runtime: 'nodejs' };
 // Minimal server-side skin catalog (costs only — no rendering data needed).
 const SKIN_COSTS: Record<string, number> = {
   default: 0,
+  gold: 50,
   ocean_blue: 50,
   coral_red: 50,
-  stealth: 150,
-  neon: 150,
-  royal: 300,
-  golden: 500,
-  crystal: 1000,
-  lava: 1000,
-  rainbow: 1500,
+  neon_green: 50,
+  royal_purple: 50,
+  whale: 200,
+  orca: 200,
+  scary_orca: 500,
+  mystical_fish: 1500,
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {

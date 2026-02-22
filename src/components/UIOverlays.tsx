@@ -620,35 +620,20 @@ type SkinPanelProps = {
 };
 
 function SkinMiniPreview({ skin }: { skin: SkinDef }) {
-  const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
-  React.useEffect(() => {
-    const cvs = canvasRef.current;
-    if (!cvs) return;
-    const ctx = cvs.getContext("2d");
-    if (!ctx) return;
-    const s = 2; // scale
-    cvs.width = 40 * s;
-    cvs.height = 40 * s;
-    ctx.scale(s, s);
-    ctx.clearRect(0, 0, 40, 40);
-    // Body
-    ctx.fillStyle = skin.bodyColor;
-    ctx.beginPath();
-    ctx.roundRect(4, 4, 32, 32, 6);
-    ctx.fill();
-    // Window
-    ctx.fillStyle = skin.windowColor;
-    ctx.beginPath();
-    ctx.arc(24, 15, 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = skin.windowStroke;
-    ctx.lineWidth = 0.8;
-    ctx.stroke();
-    // Propeller
-    ctx.fillStyle = skin.propellerColor;
-    ctx.fillRect(0, 15, 4, 10);
-  }, [skin]);
-  return <canvas ref={canvasRef} width={80} height={80} style={{ width: 40, height: 40, imageRendering: "pixelated" }} />;
+  return (
+    <div style={{ width: 44, height: 44, borderRadius: 8, overflow: "hidden", background: "rgba(0,0,0,0.3)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+      <img
+        src={skin.sprite}
+        alt={skin.name}
+        style={{
+          width: 40,
+          height: 40,
+          objectFit: "contain",
+          filter: skin.tint ? `drop-shadow(0 0 0 ${skin.tint})` : undefined,
+        }}
+      />
+    </div>
+  );
 }
 
 function rarityLabel(r: SkinRarity): string {

@@ -59,11 +59,11 @@
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| 4.1 | Skins data model + backend | ✅ | 10 skins (4 rarities), Redis `sd:user:{id}:skins:owned` (set) + `sd:user:{id}:skins:equipped`, purchase/equip APIs |
-| 4.2 | Skins UI — equip + preview | ✅ | SkinPanel modal with mini canvas previews, coin costs, equip/purchase buttons |
-| 4.3 | Skins rendering in game | ✅ | Parameterized `drawSubmarine()` using skin colors, glows, per-skin body/window/propeller |
-| 4.4 | Golden Tube mechanic | ✅ | Epic/Legendary skins grant +1 extra tube charge and +100 bonus score on tube completion |
-| 4.5 | Custom trail effects | ✅ | Particle system with 5 trail types: none, bubbles, sparkle, flame, rainbow |
+| 4.1 | Skins data model + backend | ✅ | 10 skins (4 rarities), image-sprite based. Redis `sd:user:{id}:skins:owned` (set) + equipped, purchase/equip APIs |
+| 4.2 | Skins UI — equip + preview | ✅ | SkinPanel modal with sprite image previews, rarity badges, coin costs, equip/purchase |
+| 4.3 | Skins rendering in game | ✅ | Image-based `drawSubmarine()` — grey-sub tint for commons, dedicated sprites for creatures |
+| 4.4 | Golden Tube mechanic | ✅ | Epic+Legendary creature skins (scary_orca, mystical_fish) grant +1 charge +100 score |
+| 4.5 | Custom trail effects | ✅ | Particle system: bubbles (common/rare), flame (epic), rainbow (legendary) |
 
 ---
 

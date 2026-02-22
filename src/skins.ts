@@ -1,4 +1,10 @@
-// Skin system: data-driven catalog, parameterized submarine rendering, trail particles.
+// Skin system: image-based sprites, color tinting, trail particles.
+
+import greySubImg from '../images/grey-sub.png';
+import whaleImg from '../images/whale.png';
+import orcaImg from '../images/orca.png';
+import scaryOrcaImg from '../images/scary-orca.png';
+import mysticalFishImg from '../images/mystical-fish.png';
 
 export type SkinRarity = 'common' | 'rare' | 'epic' | 'legendary';
 export type TrailType = 'none' | 'bubbles' | 'sparkle' | 'flame' | 'rainbow';
@@ -7,12 +13,12 @@ export type SkinDef = {
   id: string;
   name: string;
   rarity: SkinRarity;
-  cost: number; // coins (0 = free default)
-  bodyColor: string;
-  windowColor: string;
-  windowStroke: string;
-  propellerColor: string;
-  glowColor: string | null; // permanent glow (null = swordfish-only glow)
+  cost: number;
+  /** Path to the sprite image (resolved by Vite import). */
+  sprite: string;
+  /** If set, the grey-sub base sprite is tinted with this color via canvas composite. */
+  tint: string | null;
+  glowColor: string | null;
   trailType: TrailType;
   trailColor: string;
 };
@@ -20,17 +26,27 @@ export type SkinDef = {
 // ── Catalog ──────────────────────────────────────────────────────────
 
 export const SKIN_CATALOG: SkinDef[] = [
+  // ─── Common: grey-sub shape, different color tints ───
   {
     id: 'default',
     name: 'Classic',
     rarity: 'common',
     cost: 0,
-    bodyColor: '#FFD700',
-    windowColor: '#87CEEB',
-    windowStroke: '#fff',
-    propellerColor: '#666',
+    sprite: greySubImg,
+    tint: null, // original grey-sub colors
     glowColor: null,
     trailType: 'none',
+    trailColor: '#999',
+  },
+  {
+    id: 'gold',
+    name: 'Gold',
+    rarity: 'common',
+    cost: 50,
+    sprite: greySubImg,
+    tint: '#FFD700',
+    glowColor: null,
+    trailType: 'bubbles',
     trailColor: '#FFD700',
   },
   {
@@ -38,10 +54,8 @@ export const SKIN_CATALOG: SkinDef[] = [
     name: 'Ocean Blue',
     rarity: 'common',
     cost: 50,
-    bodyColor: '#1E90FF',
-    windowColor: '#E0F7FF',
-    windowStroke: '#fff',
-    propellerColor: '#0D5C99',
+    sprite: greySubImg,
+    tint: '#1E90FF',
     glowColor: null,
     trailType: 'bubbles',
     trailColor: '#1E90FF',
@@ -51,104 +65,80 @@ export const SKIN_CATALOG: SkinDef[] = [
     name: 'Coral Red',
     rarity: 'common',
     cost: 50,
-    bodyColor: '#E74C3C',
-    windowColor: '#FFDEDE',
-    windowStroke: '#fff',
-    propellerColor: '#922B21',
+    sprite: greySubImg,
+    tint: '#E74C3C',
     glowColor: null,
     trailType: 'bubbles',
     trailColor: '#E74C3C',
   },
   {
-    id: 'stealth',
-    name: 'Stealth',
-    rarity: 'rare',
-    cost: 150,
-    bodyColor: '#2C3E50',
-    windowColor: '#5DADE2',
-    windowStroke: '#34495E',
-    propellerColor: '#1A252F',
-    glowColor: null,
+    id: 'neon_green',
+    name: 'Neon Green',
+    rarity: 'common',
+    cost: 50,
+    sprite: greySubImg,
+    tint: '#39FF14',
+    glowColor: 'rgba(57,255,20,0.4)',
     trailType: 'bubbles',
-    trailColor: '#5DADE2',
-  },
-  {
-    id: 'neon',
-    name: 'Neon',
-    rarity: 'rare',
-    cost: 150,
-    bodyColor: '#39FF14',
-    windowColor: '#FFFFFF',
-    windowStroke: '#39FF14',
-    propellerColor: '#2ECC71',
-    glowColor: 'rgba(57,255,20,0.5)',
-    trailType: 'sparkle',
     trailColor: '#39FF14',
   },
   {
-    id: 'royal',
-    name: 'Royal',
-    rarity: 'epic',
-    cost: 300,
-    bodyColor: '#8E44AD',
-    windowColor: '#FFD700',
-    windowStroke: '#FFD700',
-    propellerColor: '#6C3483',
-    glowColor: 'rgba(142,68,173,0.35)',
-    trailType: 'sparkle',
+    id: 'royal_purple',
+    name: 'Royal Purple',
+    rarity: 'common',
+    cost: 50,
+    sprite: greySubImg,
+    tint: '#8E44AD',
+    glowColor: null,
+    trailType: 'bubbles',
     trailColor: '#D2B4DE',
   },
+  // ─── Rare: creature sprites ───
   {
-    id: 'golden',
-    name: 'Golden',
+    id: 'whale',
+    name: 'Whale',
+    rarity: 'rare',
+    cost: 200,
+    sprite: whaleImg,
+    tint: null,
+    glowColor: null,
+    trailType: 'bubbles',
+    trailColor: '#8E7CC3',
+  },
+  {
+    id: 'orca',
+    name: 'Orca',
+    rarity: 'rare',
+    cost: 200,
+    sprite: orcaImg,
+    tint: null,
+    glowColor: null,
+    trailType: 'bubbles',
+    trailColor: '#555555',
+  },
+  // ─── Epic: creature sprite ───
+  {
+    id: 'scary_orca',
+    name: 'Scary Orca',
     rarity: 'epic',
     cost: 500,
-    bodyColor: '#F1C40F',
-    windowColor: '#FFFFFF',
-    windowStroke: '#F39C12',
-    propellerColor: '#D4AC0D',
-    glowColor: 'rgba(241,196,15,0.45)',
-    trailType: 'sparkle',
-    trailColor: '#F1C40F',
-  },
-  {
-    id: 'crystal',
-    name: 'Crystal Ice',
-    rarity: 'legendary',
-    cost: 1000,
-    bodyColor: '#A8E6F0',
-    windowColor: '#FFFFFF',
-    windowStroke: '#76D7EA',
-    propellerColor: '#76D7EA',
-    glowColor: 'rgba(118,215,234,0.55)',
-    trailType: 'flame',
-    trailColor: '#76D7EA',
-  },
-  {
-    id: 'lava',
-    name: 'Lava Core',
-    rarity: 'legendary',
-    cost: 1000,
-    bodyColor: '#E25822',
-    windowColor: '#FFC300',
-    windowStroke: '#FF5733',
-    propellerColor: '#C0392B',
-    glowColor: 'rgba(255,87,51,0.55)',
+    sprite: scaryOrcaImg,
+    tint: null,
+    glowColor: 'rgba(255,50,50,0.4)',
     trailType: 'flame',
     trailColor: '#FF5733',
   },
+  // ─── Legendary: creature sprite ───
   {
-    id: 'rainbow',
-    name: 'Prismatic',
+    id: 'mystical_fish',
+    name: 'Mystical Fish',
     rarity: 'legendary',
     cost: 1500,
-    bodyColor: '#FF0000', // overridden by hue-shift
-    windowColor: '#FFFFFF',
-    windowStroke: '#FFFFFF',
-    propellerColor: '#888',
-    glowColor: 'rgba(255,255,255,0.4)',
+    sprite: mysticalFishImg,
+    tint: null,
+    glowColor: 'rgba(100,220,255,0.5)',
     trailType: 'rainbow',
-    trailColor: '#FFFFFF',
+    trailColor: '#00CED1',
   },
 ];
 
@@ -169,12 +159,59 @@ export const RARITY_COLORS: Record<SkinRarity, string> = {
   legendary: '#F1C40F',
 };
 
-// ── Submarine Drawing ────────────────────────────────────────────────
+// ── Image Preloading ─────────────────────────────────────────────────
 
-function hslFromTime(t: number): string {
-  const hue = (t * 60) % 360;
-  return `hsl(${hue}, 100%, 55%)`;
+const _imageCache = new Map<string, HTMLImageElement>();
+
+/** Preload all skin sprite images. Call once at startup. */
+export function preloadSkinImages(): void {
+  for (const skin of SKIN_CATALOG) {
+    if (!_imageCache.has(skin.sprite)) {
+      const img = new Image();
+      img.src = skin.sprite;
+      _imageCache.set(skin.sprite, img);
+    }
+  }
 }
+
+export function getSkinImage(skin: SkinDef): HTMLImageElement | null {
+  return _imageCache.get(skin.sprite) ?? null;
+}
+
+// ── Tinted Sprite Cache ──────────────────────────────────────────────
+// For tint skins, we pre-render a tinted version of the base sprite
+// onto an offscreen canvas and cache it.
+
+const _tintCache = new Map<string, HTMLCanvasElement>();
+
+function getTintedCanvas(img: HTMLImageElement, tint: string): HTMLCanvasElement {
+  const key = `${img.src}::${tint}`;
+  const cached = _tintCache.get(key);
+  if (cached) return cached;
+
+  const cvs = document.createElement('canvas');
+  cvs.width = img.naturalWidth || img.width;
+  cvs.height = img.naturalHeight || img.height;
+  const ctx = cvs.getContext('2d')!;
+
+  // Draw original image
+  ctx.drawImage(img, 0, 0);
+
+  // Apply color tint using multiply composite
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.fillStyle = tint;
+  ctx.fillRect(0, 0, cvs.width, cvs.height);
+
+  // Restore alpha from original image (multiply kills transparency)
+  ctx.globalCompositeOperation = 'destination-in';
+  ctx.drawImage(img, 0, 0);
+
+  ctx.globalCompositeOperation = 'source-over';
+  _tintCache.set(key, cvs);
+  return cvs;
+}
+
+// ── Submarine Drawing ────────────────────────────────────────────────
 
 export function drawSubmarine(
   ctx: CanvasRenderingContext2D,
@@ -185,14 +222,13 @@ export function drawSubmarine(
   rotation: number,
   skin: SkinDef,
   isSwordfishActive: boolean,
-  gameTime: number,
+  _gameTime: number,
 ) {
+  const img = getSkinImage(skin);
+
   ctx.save();
   ctx.translate(x + w / 2, y + h / 2);
   ctx.rotate((rotation * Math.PI) / 180);
-
-  const isRainbow = skin.id === 'rainbow';
-  const bodyColor = isRainbow ? hslFromTime(gameTime) : skin.bodyColor;
 
   // Glow
   if (isSwordfishActive) {
@@ -203,27 +239,25 @@ export function drawSubmarine(
     ctx.shadowBlur = 14;
   }
 
-  // Body
-  ctx.fillStyle = bodyColor;
-  ctx.beginPath();
-  ctx.roundRect(-w / 2, -h / 2, w, h, 8);
-  ctx.fill();
+  if (img && img.complete && img.naturalWidth > 0) {
+    // Determine source to draw: tinted offscreen canvas or raw image
+    let source: CanvasImageSource;
+    if (skin.tint) {
+      source = getTintedCanvas(img, skin.tint);
+    } else {
+      source = img;
+    }
+    // Draw centered, fitting into w x h
+    ctx.drawImage(source, -w / 2, -h / 2, w, h);
+  } else {
+    // Fallback: simple colored rectangle while image loads
+    ctx.fillStyle = skin.tint ?? '#888';
+    ctx.beginPath();
+    ctx.roundRect(-w / 2, -h / 2, w, h, 8);
+    ctx.fill();
+  }
 
   ctx.shadowBlur = 0;
-
-  // Window
-  ctx.fillStyle = skin.windowColor;
-  ctx.beginPath();
-  ctx.arc(5, -5, 8, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = skin.windowStroke;
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  // Propeller
-  ctx.fillStyle = skin.propellerColor;
-  ctx.fillRect(-w / 2 - 5, -5, 5, 10);
-
   ctx.restore();
 }
 
@@ -241,6 +275,11 @@ export type TrailParticle = {
 };
 
 const TRAIL_POOL_MAX = 80;
+
+function hslFromTime(t: number): string {
+  const hue = (t * 60) % 360;
+  return `hsl(${hue}, 100%, 55%)`;
+}
 
 export function updateTrailParticles(
   particles: TrailParticle[],
@@ -359,12 +398,11 @@ export function drawTrailParticles(
 
 // ── Golden Tube ──────────────────────────────────────────────────────
 
-export const GOLDEN_TUBE_UNLOCK_SKIN_IDS = ['golden', 'crystal', 'lava', 'rainbow'];
+export const GOLDEN_TUBE_UNLOCK_SKIN_IDS = ['scary_orca', 'mystical_fish'];
 
 export function isGoldenTubeEligible(skinId: string): boolean {
   return GOLDEN_TUBE_UNLOCK_SKIN_IDS.includes(skinId);
 }
 
-// Golden tube bonus: +1 extra rescue charge when completing a tube while wearing an eligible skin.
 export const GOLDEN_TUBE_EXTRA_CHARGES = 1;
 export const GOLDEN_TUBE_EXTRA_SCORE_BONUS = 100;
