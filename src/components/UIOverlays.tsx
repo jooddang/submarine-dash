@@ -1,7 +1,7 @@
 import React from "react";
 import type { LeaderboardEntry, WeeklyLeaderboard } from "../types";
 import { OXYGEN_MAX, TUBE_PIECE_UNLOCK_SCORE, TUBE_PIECES_PER_TUBE } from "../constants";
-import { SKIN_CATALOG, RARITY_COLORS, type SkinDef, type SkinRarity } from "../skins";
+import { SKIN_CATALOG, RARITY_COLORS, getSkinImage, type SkinDef, type SkinRarity } from "../skins";
 import turtleShellItemImg from "../../turtle-shell-item.png";
 import dolphinItemImg from "../../dolphin.png";
 import tubeImg from "../../tube.png";
@@ -620,18 +620,55 @@ type SkinPanelProps = {
 };
 
 function SkinMiniPreview({ skin }: { skin: SkinDef }) {
+  const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
+
+  React.useEffect(() => {
+    const cvs = canvasRef.current;
+    if (!cvs) return;
+    const ctx = cvs.getContext("2d");
+    if (!ctx) return;
+
+    const size = 80; // 2x for retina
+    cvs.width = size;
+    cvs.height = size;
+
+    const img = getSkinImage(skin);
+    if (!img) return;
+
+    const draw = () => {
+      ctx.clearRect(0, 0, size, size);
+
+      // Fit image into canvas preserving aspect ratio
+      const aspect = img.naturalWidth / img.naturalHeight;
+      let dw = size, dh = size;
+      if (aspect > 1) { dh = size / aspect; } else { dw = size * aspect; }
+      const dx = (size - dw) / 2;
+      const dy = (size - dh) / 2;
+
+      if (skin.tint) {
+        // Draw original, apply 'color' blend tint, restore alpha
+        ctx.drawImage(img, dx, dy, dw, dh);
+        ctx.globalCompositeOperation = "color";
+        ctx.fillStyle = skin.tint;
+        ctx.fillRect(0, 0, size, size);
+        ctx.globalCompositeOperation = "destination-in";
+        ctx.drawImage(img, dx, dy, dw, dh);
+        ctx.globalCompositeOperation = "source-over";
+      } else {
+        ctx.drawImage(img, dx, dy, dw, dh);
+      }
+    };
+
+    if (img.complete && img.naturalWidth > 0) {
+      draw();
+    } else {
+      img.onload = draw;
+    }
+  }, [skin]);
+
   return (
     <div style={{ width: 44, height: 44, borderRadius: 8, overflow: "hidden", background: "rgba(0,0,0,0.3)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-      <img
-        src={skin.sprite}
-        alt={skin.name}
-        style={{
-          width: 40,
-          height: 40,
-          objectFit: "contain",
-          filter: skin.tint ? `drop-shadow(0 0 0 ${skin.tint})` : undefined,
-        }}
-      />
+      <canvas ref={canvasRef} width={80} height={80} style={{ width: 40, height: 40 }} />
     </div>
   );
 }
