@@ -207,10 +207,9 @@ export const DeepDiveGame = () => {
     const next = clampTubePieces(value);
     tubePiecesRef.current = next;
     setTubePiecesState(next);
-    try {
-      sessionStorage.setItem(TUBE_SESSION_KEY, String(next));
-    } catch {
-      // ignore
+    // sessionStorage fallback for guests only
+    if (!authUserRef.current) {
+      try { sessionStorage.setItem(TUBE_SESSION_KEY, String(next)); } catch { /* ignore */ }
     }
   };
 
@@ -221,10 +220,9 @@ export const DeepDiveGame = () => {
     const next = clampTubeRescueCharges(value);
     tubeRescueChargesRef.current = next;
     setTubeRescueChargesState(next);
-    try {
-      sessionStorage.setItem(TUBE_RESCUE_CHARGES_SESSION_KEY, String(next));
-    } catch {
-      // ignore
+    // sessionStorage fallback for guests only
+    if (!authUserRef.current) {
+      try { sessionStorage.setItem(TUBE_RESCUE_CHARGES_SESSION_KEY, String(next)); } catch { /* ignore */ }
     }
   };
 
@@ -413,7 +411,9 @@ export const DeepDiveGame = () => {
   }, []);
 
   useEffect(() => {
-    // Tube pieces persist for the lifetime of the tab/session.
+    // Tube pieces: sessionStorage is guest-only fallback.
+    // For logged-in users, loadMe() hydrates from Redis (runs in the same mount effect).
+    // We read sessionStorage eagerly; if loadMe() succeeds it will overwrite with server state.
     try {
       const raw = sessionStorage.getItem(TUBE_SESSION_KEY);
       if (raw != null) {
@@ -721,9 +721,9 @@ export const DeepDiveGame = () => {
     didSendRunEndRef.current = false;
     dolphinUsesThisRunRef.current = 0;
 
-    // Reset per-run tube progress.
+    // Reset per-run tube partial progress (pieces collected this run).
+    // Rescue charges persist across runs — they are earned rewards.
     setTubePieces(0);
-    setTubeRescueCharges(0);
 
     swordfishTimerRef.current = 0;
     isSwordfishActiveRef.current = false;
