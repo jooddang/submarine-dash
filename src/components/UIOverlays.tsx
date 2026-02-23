@@ -2,6 +2,7 @@ import React from "react";
 import type { LeaderboardEntry, WeeklyLeaderboard } from "../types";
 import { OXYGEN_MAX, TUBE_PIECE_UNLOCK_SCORE, TUBE_PIECES_PER_TUBE } from "../constants";
 import { SKIN_CATALOG, RARITY_COLORS, getSkinImage, getSkinDef, type SkinDef, type SkinRarity } from "../skins";
+import { useRef, useEffect } from "react";
 import turtleShellItemImg from "../../turtle-shell-item.png";
 import dolphinItemImg from "../../dolphin.png";
 import tubeImg from "../../tube.png";
@@ -1016,14 +1017,41 @@ interface LeaderboardProps {
   lastSubmittedId: number | null;
 }
 
+const ICON_W = 28;
+const ICON_H = 22;
+
 function LeaderboardSkinIcon({ skinId }: { skinId?: string }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    if (!skinId) return;
+    const skin = getSkinDef(skinId);
+    const img = getSkinImage(skin);
+    if (!img || !canvasRef.current) return;
+    const cvs = canvasRef.current;
+    const ctx = cvs.getContext("2d");
+    if (!ctx) return;
+
+    ctx.clearRect(0, 0, cvs.width, cvs.height);
+    ctx.drawImage(img, 0, 0, cvs.width, cvs.height);
+
+    if (skin.tint) {
+      ctx.globalCompositeOperation = "color";
+      ctx.fillStyle = skin.tint;
+      ctx.fillRect(0, 0, cvs.width, cvs.height);
+      ctx.globalCompositeOperation = "destination-in";
+      ctx.drawImage(img, 0, 0, cvs.width, cvs.height);
+      ctx.globalCompositeOperation = "source-over";
+    }
+  }, [skinId]);
+
   if (!skinId) return null;
-  const skin = getSkinDef(skinId);
   return (
-    <img
-      src={skin.sprite}
-      alt={skin.name}
-      style={{ width: 22, height: 22, objectFit: "contain", verticalAlign: "middle", flexShrink: 0 }}
+    <canvas
+      ref={canvasRef}
+      width={ICON_W * 2}
+      height={ICON_H * 2}
+      style={{ width: ICON_W, height: ICON_H, flexShrink: 0 }}
     />
   );
 }
