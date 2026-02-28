@@ -5,6 +5,9 @@ import whaleImg from '../images/whale.png';
 import orcaImg from '../images/orca.png';
 import scaryOrcaImg from '../images/scary-orca.png';
 import mysticalFishImg from '../images/mystical-fish.png';
+import octopusImg from '../images/octopus.png';
+import jellyfishImg from '../images/jellyfish.png';
+import krakenImg from '../images/kraken.png';
 
 export type SkinRarity = 'common' | 'rare' | 'epic' | 'legendary';
 export type TrailType = 'none' | 'bubbles' | 'sparkle' | 'flame' | 'rainbow';
@@ -139,6 +142,28 @@ export const SKIN_CATALOG: SkinDef[] = [
     trailType: 'flame',
     trailColor: '#FF5733',
   },
+  {
+    id: 'octopus',
+    name: 'Octopus',
+    rarity: 'epic',
+    cost: 5000,
+    sprite: octopusImg,
+    tint: null,
+    glowColor: 'rgba(255,140,50,0.4)',
+    trailType: 'sparkle',
+    trailColor: '#FF8C32',
+  },
+  {
+    id: 'jellyfish',
+    name: 'Jellyfish',
+    rarity: 'epic',
+    cost: 5000,
+    sprite: jellyfishImg,
+    tint: null,
+    glowColor: 'rgba(200,100,255,0.4)',
+    trailType: 'sparkle',
+    trailColor: '#C864FF',
+  },
   // ─── Legendary: creature sprite ───
   {
     id: 'mystical_fish',
@@ -150,6 +175,17 @@ export const SKIN_CATALOG: SkinDef[] = [
     glowColor: 'rgba(100,220,255,0.5)',
     trailType: 'rainbow',
     trailColor: '#00CED1',
+  },
+  {
+    id: 'kraken',
+    name: 'Kraken',
+    rarity: 'legendary',
+    cost: 20000,
+    sprite: krakenImg,
+    tint: null,
+    glowColor: 'rgba(50,255,100,0.5)',
+    trailType: 'flame',
+    trailColor: '#32FF64',
   },
 ];
 
@@ -410,7 +446,9 @@ export function drawTrailParticles(
 
 // ── Golden Tube ──────────────────────────────────────────────────────
 
-export const GOLDEN_TUBE_UNLOCK_SKIN_IDS = ['scary_orca', 'mystical_fish'];
+export const GOLDEN_TUBE_UNLOCK_SKIN_IDS = [
+  'scary_orca', 'mystical_fish', 'octopus', 'jellyfish', 'kraken',
+];
 
 export function isGoldenTubeEligible(skinId: string): boolean {
   return GOLDEN_TUBE_UNLOCK_SKIN_IDS.includes(skinId);

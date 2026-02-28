@@ -18,7 +18,10 @@ const SKIN_COSTS: Record<string, number> = {
   whale: 1000,
   orca: 1000,
   scary_orca: 5000,
+  octopus: 5000,
+  jellyfish: 5000,
   mystical_fish: 20000,
+  kraken: 20000,
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
