@@ -1028,20 +1028,31 @@ function LeaderboardSkinIcon({ skinId }: { skinId?: string }) {
     const skin = getSkinDef(skinId);
     const img = getSkinImage(skin);
     if (!img || !canvasRef.current) return;
-    const cvs = canvasRef.current;
-    const ctx = cvs.getContext("2d");
-    if (!ctx) return;
 
-    ctx.clearRect(0, 0, cvs.width, cvs.height);
-    ctx.drawImage(img, 0, 0, cvs.width, cvs.height);
+    function draw() {
+      const cvs = canvasRef.current;
+      if (!cvs) return;
+      const ctx = cvs.getContext("2d");
+      if (!ctx) return;
 
-    if (skin.tint) {
-      ctx.globalCompositeOperation = "color";
-      ctx.fillStyle = skin.tint;
-      ctx.fillRect(0, 0, cvs.width, cvs.height);
-      ctx.globalCompositeOperation = "destination-in";
-      ctx.drawImage(img, 0, 0, cvs.width, cvs.height);
-      ctx.globalCompositeOperation = "source-over";
+      ctx.clearRect(0, 0, cvs.width, cvs.height);
+      ctx.drawImage(img!, 0, 0, cvs.width, cvs.height);
+
+      if (skin.tint) {
+        ctx.globalCompositeOperation = "color";
+        ctx.fillStyle = skin.tint;
+        ctx.fillRect(0, 0, cvs.width, cvs.height);
+        ctx.globalCompositeOperation = "destination-in";
+        ctx.drawImage(img!, 0, 0, cvs.width, cvs.height);
+        ctx.globalCompositeOperation = "source-over";
+      }
+    }
+
+    if (img.complete && img.naturalWidth > 0) {
+      draw();
+    } else {
+      img.addEventListener("load", draw, { once: true });
+      return () => img.removeEventListener("load", draw);
     }
   }, [skinId]);
 
