@@ -633,7 +633,22 @@ export const DeepDiveGame = () => {
 
   const attemptJump = (allowDolphin: boolean) => {
     const player = playerRef.current;
-    if (player.isTrapped || isSwordfishActiveRef.current) return false;
+    if (player.isTrapped) return false;
+    // Don't consume jump input during rescue countdown — buffer it for after countdown ends.
+    if (rescueRef.current.active || tubeRescueRef.current.active) return false;
+    // During active swordfish flight (timer > 0), jumping is disabled.
+    // When timer expired (safe-landing hover), spacebar cancels hover and resumes play with a jump.
+    if (isSwordfishActiveRef.current) {
+      if (swordfishTimerRef.current > 0) return false;
+      isSwordfishActiveRef.current = false;
+      player.dy = Constants.JUMP_FORCE_INITIAL;
+      player.grounded = false;
+      player.rotation = -20;
+      player.isBoosting = true;
+      player.boostTimer = 0;
+      playSound('jump');
+      return true;
+    }
 
     const isImminentLandingWhileFalling = (): boolean => {
       // If we're not falling, there's no risk of "buffered landing jump" consuming the dolphin.
@@ -1346,7 +1361,12 @@ export const DeepDiveGame = () => {
 
     // 0. Update Jump Buffer
     if (jumpBufferTimerRef.current > 0) {
-      jumpBufferTimerRef.current -= dt;
+      // Freeze buffer during swordfish safe-landing hover so input isn't lost
+      // while waiting for the timer to expire or a platform to appear.
+      const isSwordfishHover = isSwordfishActiveRef.current && swordfishTimerRef.current <= 0;
+      if (!isSwordfishHover) {
+        jumpBufferTimerRef.current -= dt;
+      }
     }
 
     // 1. Manage Powerup Timers
