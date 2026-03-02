@@ -25,7 +25,12 @@ export type SoundType =
   | 'shell_crack'
   | 'die_fall'
   | 'die_urchin'
-  | 'die_quicksand';
+  | 'die_quicksand'
+  | 'orca_devour'
+  | 'octopus_charm'
+  | 'jellyfish_float'
+  | 'mystical_revive'
+  | 'kraken_grab';
 
 export const playSound = (type: SoundType) => {
   if (!audioCtx || !audioUnlocked) return;
@@ -150,5 +155,90 @@ export const playSound = (type: SoundType) => {
       osc.start(now);
       osc.stop(now + 0.8);
       break;
+
+    case 'orca_devour': {
+      // Deep crunch: low sine thump + noise burst
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(120, now);
+      osc.frequency.exponentialRampToValueAtTime(40, now + 0.25);
+      gain.gain.setValueAtTime(0.18, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+      osc.start(now);
+      osc.stop(now + 0.3);
+      try {
+        const noiseLen = Math.floor(audioCtx.sampleRate * 0.08);
+        const buffer = audioCtx.createBuffer(1, noiseLen, audioCtx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < noiseLen; i++) {
+          const t = i / noiseLen;
+          data[i] = (Math.random() * 2 - 1) * Math.exp(-t * 5) * 0.6;
+        }
+        const src = audioCtx.createBufferSource();
+        src.buffer = buffer;
+        const ng = audioCtx.createGain();
+        ng.gain.setValueAtTime(0.14, now);
+        ng.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+        src.connect(ng);
+        ng.connect(audioCtx.destination);
+        src.start(now);
+        src.stop(now + 0.1);
+      } catch { /* ignore */ }
+      break;
+    }
+
+    case 'octopus_charm': {
+      // Cute sparkle: rising sine with shimmer
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(600, now);
+      osc.frequency.linearRampToValueAtTime(1200, now + 0.15);
+      osc.frequency.linearRampToValueAtTime(900, now + 0.3);
+      osc.frequency.linearRampToValueAtTime(1400, now + 0.45);
+      gain.gain.setValueAtTime(0.08, now);
+      gain.gain.linearRampToValueAtTime(0.12, now + 0.2);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+      osc.start(now);
+      osc.stop(now + 0.5);
+      break;
+    }
+
+    case 'jellyfish_float': {
+      // Light ascending: gentle rising sine
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(300, now);
+      osc.frequency.linearRampToValueAtTime(700, now + 0.4);
+      gain.gain.setValueAtTime(0.1, now);
+      gain.gain.linearRampToValueAtTime(0.06, now + 0.2);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+      osc.start(now);
+      osc.stop(now + 0.5);
+      break;
+    }
+
+    case 'mystical_revive': {
+      // Magical restoration: ascending arpeggio
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(440, now);
+      osc.frequency.setValueAtTime(554, now + 0.12);
+      osc.frequency.setValueAtTime(659, now + 0.24);
+      osc.frequency.setValueAtTime(880, now + 0.36);
+      gain.gain.setValueAtTime(0.1, now);
+      gain.gain.linearRampToValueAtTime(0.08, now + 0.3);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+      osc.start(now);
+      osc.stop(now + 0.5);
+      break;
+    }
+
+    case 'kraken_grab': {
+      // Tentacle grab: descending sweep + thump
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(400, now);
+      osc.frequency.exponentialRampToValueAtTime(80, now + 0.2);
+      gain.gain.setValueAtTime(0.12, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+      osc.start(now);
+      osc.stop(now + 0.3);
+      break;
+    }
   }
 };

@@ -9,6 +9,23 @@ import tubeImg from "../../tube.png";
 
 type AuthMode = "login" | "signup" | "changePassword";
 
+// Skin ability display constants
+const ABILITY_COLORS: Record<string, string> = {
+  scary_orca: "#FF5733",
+  octopus: "#FF8C32",
+  jellyfish: "#C864FF",
+  mystical_fish: "#64DCFF",
+  kraken: "#32FF64",
+};
+
+const ABILITY_LABELS: Record<string, string> = {
+  scary_orca: "DEVOUR",
+  octopus: "CHARM",
+  jellyfish: "FLOAT",
+  mystical_fish: "REVIVE",
+  kraken: "TENTACLE",
+};
+
 // Styles
 const overlayStyle: React.CSSProperties = {
   position: "absolute",
@@ -1171,6 +1188,9 @@ interface HUDProps {
   onToggleDolphinUse?: () => void;
   tubePieces?: number;
   tubeRescueCharges?: number;
+  abilityAvailable?: string | null;
+  octopusSlowActive?: boolean;
+  onActivateOctopus?: () => void;
 }
 
 export const HUD: React.FC<HUDProps> = ({
@@ -1184,6 +1204,9 @@ export const HUD: React.FC<HUDProps> = ({
   onToggleDolphinUse,
   tubePieces,
   tubeRescueCharges,
+  abilityAvailable,
+  octopusSlowActive,
+  onActivateOctopus,
 }) => {
   const dolphinSlotRef = React.useRef<HTMLDivElement | null>(null);
   const dolphinSpendFxRef = React.useRef<HTMLDivElement | null>(null);
@@ -1440,6 +1463,64 @@ export const HUD: React.FC<HUDProps> = ({
           })}
         </div>
         <span style={{ fontSize: "14px", opacity: 0.85 }}>{tp}/{TUBE_PIECES_PER_TUBE}</span>
+      </div>
+    )}
+
+    {/* Skin ability indicator */}
+    {abilityAvailable && (
+      <div style={{ marginTop: "8px", display: "flex", alignItems: "center", gap: "8px" }}>
+        <span style={{ fontSize: "14px", opacity: 0.9 }}>ABILITY:</span>
+        {abilityAvailable === "octopus" ? (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onActivateOctopus?.(); }}
+            onTouchStart={(e) => { e.stopPropagation(); }}
+            style={{
+              padding: "4px 12px",
+              borderRadius: 8,
+              border: `2px solid ${ABILITY_COLORS.octopus}`,
+              background: "rgba(0,0,0,0.45)",
+              color: ABILITY_COLORS.octopus,
+              fontSize: 12,
+              fontWeight: 800,
+              letterSpacing: 0.4,
+              boxShadow: `0 0 10px ${ABILITY_COLORS.octopus}`,
+              cursor: "pointer",
+            }}
+          >
+            CHARM (C)
+          </button>
+        ) : (
+          <div
+            style={{
+              padding: "3px 10px",
+              borderRadius: 8,
+              border: `2px solid ${ABILITY_COLORS[abilityAvailable] ?? "rgba(255,255,255,0.8)"}`,
+              background: "rgba(0,0,0,0.35)",
+              color: ABILITY_COLORS[abilityAvailable] ?? "white",
+              fontSize: 12,
+              fontWeight: 800,
+              letterSpacing: 0.4,
+              boxShadow: `0 0 10px ${ABILITY_COLORS[abilityAvailable] ?? "rgba(255,255,255,0.3)"}`,
+            }}
+          >
+            {ABILITY_LABELS[abilityAvailable] ?? "READY"}
+          </div>
+        )}
+      </div>
+    )}
+
+    {/* Octopus slowdown active indicator */}
+    {octopusSlowActive && (
+      <div style={{
+        marginTop: "4px",
+        fontSize: "12px",
+        fontWeight: 800,
+        color: "#FF8C32",
+        textShadow: "0 0 8px rgba(255,140,50,0.6)",
+        letterSpacing: 0.4,
+      }}>
+        SLOW MOTION
       </div>
     )}
   </div>

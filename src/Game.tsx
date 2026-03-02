@@ -175,6 +175,19 @@ export const DeepDiveGame = () => {
   const dolphinUseEnabledRef = useRef<boolean>(true);
   const dolphinUsesThisRunRef = useRef<number>(0);
 
+  // ── Skin Special Abilities (epic+ skins, once per run) ──
+  const abilityUsedOrcaRef = useRef<boolean>(false);      // scary_orca: survive urchin hit
+  const abilityUsedOctopusRef = useRef<boolean>(false);    // octopus: 25% slowdown 5s
+  const octopusSlowTimerRef = useRef<number>(0);           // remaining ms of slowdown
+  const abilityUsedJellyfishRef = useRef<boolean>(false);  // jellyfish: survive quicksand
+  const abilityUsedMysticalRef = useRef<boolean>(false);   // mystical_fish: +10s oxygen on death
+  const abilityUsedKrakenRef = useRef<boolean>(false);     // kraken: catch missed swordfish
+  // Visual flash overlay for ability activations
+  const abilityFlashRef = useRef<{ color: string; timer: number } | null>(null);
+  // State for HUD ability availability indicator
+  const [abilityAvailable, setAbilityAvailable] = useState<string | null>(null);
+  const [octopusSlowActive, setOctopusSlowActive] = useState(false);
+
   // Coin balance (server-authoritative, client is display cache)
   const [coinBalance, setCoinBalance] = useState(0);
   const [coinsEarnedLastRun, setCoinsEarnedLastRun] = useState(0);
@@ -522,6 +535,11 @@ export const DeepDiveGame = () => {
           }
         }
       }
+
+      // Octopus ability: "C" key activates charm slowdown
+      if (e.code === "KeyC" && !e.repeat && gameStateRef.current === "PLAYING") {
+        activateOctopusAbility();
+      }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
@@ -749,6 +767,18 @@ export const DeepDiveGame = () => {
     return false;
   };
 
+  const activateOctopusAbility = () => {
+    if (equippedSkinRef.current.id !== 'octopus') return;
+    if (abilityUsedOctopusRef.current) return;
+    if (rescueRef.current.active || tubeRescueRef.current.active) return;
+    abilityUsedOctopusRef.current = true;
+    setAbilityAvailable(null);
+    octopusSlowTimerRef.current = 5000; // 5 seconds
+    setOctopusSlowActive(true);
+    playSound('octopus_charm');
+    abilityFlashRef.current = { color: 'rgba(255,140,50,0.3)', timer: 0.6 };
+  };
+
   const startGame = () => {
     initAudio();
     if (!canvasRef.current) return;
@@ -767,6 +797,20 @@ export const DeepDiveGame = () => {
     didSubmitRef.current = false;
     didSendRunEndRef.current = false;
     dolphinUsesThisRunRef.current = 0;
+
+    // Reset skin special abilities for the new run
+    abilityUsedOrcaRef.current = false;
+    abilityUsedOctopusRef.current = false;
+    octopusSlowTimerRef.current = 0;
+    abilityUsedJellyfishRef.current = false;
+    abilityUsedMysticalRef.current = false;
+    abilityUsedKrakenRef.current = false;
+    abilityFlashRef.current = null;
+    setOctopusSlowActive(false);
+    // Set ability availability indicator based on equipped skin
+    const skinId = equippedSkinRef.current.id;
+    const hasAbility = ['scary_orca', 'octopus', 'jellyfish', 'mystical_fish', 'kraken'].includes(skinId);
+    setAbilityAvailable(hasAbility ? skinId : null);
 
     // Reset per-run tube partial progress (pieces collected this run).
     // Rescue charges persist across runs — they are earned rewards.
@@ -1414,13 +1458,43 @@ export const DeepDiveGame = () => {
       swordfishTimerRef.current -= dt * 1000;
     }
 
+    // Octopus slowdown timer
+    if (octopusSlowTimerRef.current > 0) {
+      octopusSlowTimerRef.current -= dt * 1000;
+      if (octopusSlowTimerRef.current <= 0) {
+        octopusSlowTimerRef.current = 0;
+        setOctopusSlowActive(false);
+      }
+    }
+
+    // Ability flash overlay timer
+    if (abilityFlashRef.current) {
+      abilityFlashRef.current.timer -= dt;
+      if (abilityFlashRef.current.timer <= 0) {
+        abilityFlashRef.current = null;
+      }
+    }
+
     // 2. Update Oxygen
     oxygenRef.current -= Constants.OXYGEN_DEPLETION_RATE * dt;
     if (oxygenRef.current <= 0) {
-      oxygenRef.current = 0;
-      setOxygen(0);
-      gameOver();
-      return;
+      // Mystical Fish ability: +10s oxygen instead of dying
+      if (
+        equippedSkinRef.current.id === 'mystical_fish' &&
+        !abilityUsedMysticalRef.current
+      ) {
+        abilityUsedMysticalRef.current = true;
+        setAbilityAvailable(null);
+        oxygenRef.current = 10;
+        setOxygen(10);
+        playSound('mystical_revive');
+        abilityFlashRef.current = { color: 'rgba(100,220,255,0.4)', timer: 0.7 };
+      } else {
+        oxygenRef.current = 0;
+        setOxygen(0);
+        gameOver();
+        return;
+      }
     }
 
     setOxygen(oxygenRef.current);
@@ -1429,6 +1503,10 @@ export const DeepDiveGame = () => {
     let effectiveSpeed = speedRef.current;
     if (swordfishTimerRef.current > 0) {
       effectiveSpeed *= Constants.SWORDFISH_SPEED_MULT;
+    }
+    // Octopus charm: 25% speed reduction
+    if (octopusSlowTimerRef.current > 0) {
+      effectiveSpeed *= 0.75;
     }
 
     speedRef.current = Math.min(Constants.MAX_SPEED, speedRef.current + 0.1 * dt);
@@ -1587,6 +1665,28 @@ export const DeepDiveGame = () => {
     // Auto-use Turtle Shell to escape quicksand
     if (player.isTrapped && trappedQuickSand && turtleShellSavedRef.current) {
       startRescueFromQuickSand(trappedQuickSand);
+      return;
+    }
+
+    // Jellyfish ability: auto-rescue from quicksand (floats up)
+    if (
+      player.isTrapped && trappedQuickSand &&
+      !turtleShellSavedRef.current &&
+      equippedSkinRef.current.id === 'jellyfish' &&
+      !abilityUsedJellyfishRef.current
+    ) {
+      abilityUsedJellyfishRef.current = true;
+      setAbilityAvailable(null);
+      playSound('jellyfish_float');
+      abilityFlashRef.current = { color: 'rgba(200,100,255,0.35)', timer: 0.6 };
+      // Rescue: un-trap player, place them above the quicksand
+      player.isTrapped = false;
+      player.dy = Constants.JUMP_FORCE_INITIAL * 0.8; // gentle float up
+      player.grounded = false;
+      player.rotation = 0;
+      quickSandTimerRef.current = null;
+      // Stop the platform from sinking further
+      trappedQuickSand.sinking = false;
       return;
     }
 
@@ -1776,6 +1876,26 @@ export const DeepDiveGame = () => {
       // Keep dead urchins longer so we see them fall off screen
       if (item.x + item.width < -50 || item.y > canvas.height + 50) return false;
 
+      // Kraken ability: catch missed swordfish with tentacle
+      // Triggers when a swordfish scrolls past the player's x position while player was in a jump
+      if (
+        item.type === "SWORDFISH" &&
+        !item.collected &&
+        item.x + item.width < player.x &&
+        !player.grounded &&
+        equippedSkinRef.current.id === 'kraken' &&
+        !abilityUsedKrakenRef.current &&
+        !isSwordfishActiveRef.current
+      ) {
+        abilityUsedKrakenRef.current = true;
+        setAbilityAvailable(null);
+        isSwordfishActiveRef.current = true;
+        swordfishTimerRef.current = Constants.SWORDFISH_DURATION;
+        playSound('kraken_grab');
+        abilityFlashRef.current = { color: 'rgba(50,255,100,0.35)', timer: 0.5 };
+        return false; // consume the swordfish
+      }
+
       // Collision Item
       if (
         player.x < item.x + item.width &&
@@ -1828,6 +1948,18 @@ export const DeepDiveGame = () => {
             item.dy = -5; // Bounce up
             playSound('die_urchin'); // Re-using die sound for hitting it
             return true; // Keep in array for animation
+          } else if (
+            equippedSkinRef.current.id === 'scary_orca' &&
+            !abilityUsedOrcaRef.current
+          ) {
+            // Scary Orca ability: devour the urchin and survive
+            abilityUsedOrcaRef.current = true;
+            setAbilityAvailable(null);
+            item.isDead = true;
+            item.dy = -5;
+            playSound('orca_devour');
+            abilityFlashRef.current = { color: 'rgba(255,50,50,0.35)', timer: 0.5 };
+            return true;
           } else {
             playSound('die_urchin');
             gameOver();
@@ -1981,6 +2113,25 @@ export const DeepDiveGame = () => {
     // Submarine
     drawSubmarine(ctx, p.x, p.y, p.width, p.height, p.rotation, skin, isSwordfishActiveRef.current, gameTimeRef.current);
 
+    // Octopus slowdown visual overlay (subtle blue tint over the whole screen)
+    if (octopusSlowTimerRef.current > 0) {
+      ctx.save();
+      const slowAlpha = Math.min(0.12, octopusSlowTimerRef.current / 5000 * 0.12);
+      ctx.fillStyle = `rgba(255, 140, 50, ${slowAlpha})`;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
+
+    // Ability activation flash overlay
+    if (abilityFlashRef.current) {
+      ctx.save();
+      const flashAlpha = Math.min(1, abilityFlashRef.current.timer / 0.3);
+      ctx.fillStyle = abilityFlashRef.current.color;
+      ctx.globalAlpha = flashAlpha;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
+
     // Rescue turtle overlay (draw last so it sits on top)
     const rescue = rescueRef.current;
     if (rescue.active) {
@@ -2076,6 +2227,9 @@ export const DeepDiveGame = () => {
           onToggleDolphinUse={() => setDolphinUseEnabled((prev) => !prev)}
           tubePieces={tubePieces}
           tubeRescueCharges={tubeRescueCharges}
+          abilityAvailable={abilityAvailable}
+          octopusSlowActive={octopusSlowActive}
+          onActivateOctopus={activateOctopusAbility}
         />
       )}
 
