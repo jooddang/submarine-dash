@@ -100,6 +100,7 @@ export const DeepDiveGame = () => {
   const turtleShellUseCountRef = useRef<number>(0);
   const rescueRef = useRef<RescueState>({ active: false });
   const tubeRescueRef = useRef<TubeRescueState>({ active: false });
+  const rescueJumpChargesRef = useRef<number>(0);
   const devForceLongQuickSandOnceRef = useRef<boolean>(false);
   const rescueTurtleImgRef = useRef<HTMLImageElement | null>(null);
   const turtleShellItemImgRef = useRef<HTMLImageElement | null>(null);
@@ -123,6 +124,7 @@ export const DeepDiveGame = () => {
   const [tubeToast, setTubeToast] = useState<string | null>(null);
   const [tubeRescueCharges, setTubeRescueChargesState] = useState(0);
   const [restartCountdown, setRestartCountdown] = useState<number | null>(null);
+  const [rescueCharges, setRescueCharges] = useState(0);
   const [dolphinRewardOpen, setDolphinRewardOpen] = useState(false);
   const [weeklyDolphinRewardOpen, setWeeklyDolphinRewardOpen] = useState(false);
   const [weeklyDolphinRewardWeekId, setWeeklyDolphinRewardWeekId] = useState<string | null>(null);
@@ -509,6 +511,10 @@ export const DeepDiveGame = () => {
           jumpBufferTimerRef.current = Constants.JUMP_BUFFER_TIME;
 
           if (gameStateRef.current === "PLAYING") {
+            if (rescueRef.current.active || tubeRescueRef.current.active) {
+              rescueJumpChargesRef.current++;
+              setRescueCharges(rescueJumpChargesRef.current);
+            }
             const jumped = attemptJump(true);
             if (jumped) jumpBufferTimerRef.current = 0;
           } else if (gameStateRef.current === "MENU" || gameStateRef.current === "GAME_OVER") {
@@ -555,6 +561,10 @@ export const DeepDiveGame = () => {
       jumpBufferTimerRef.current = Constants.JUMP_BUFFER_TIME;
 
       if (gameStateRef.current === "PLAYING") {
+        if (rescueRef.current.active || tubeRescueRef.current.active) {
+          rescueJumpChargesRef.current++;
+          setRescueCharges(rescueJumpChargesRef.current);
+        }
         const jumped = attemptJump(true);
         if (jumped) jumpBufferTimerRef.current = 0;
       }
@@ -633,7 +643,22 @@ export const DeepDiveGame = () => {
 
   const attemptJump = (allowDolphin: boolean) => {
     const player = playerRef.current;
-    if (player.isTrapped || isSwordfishActiveRef.current) return false;
+    if (player.isTrapped) return false;
+    // Don't consume jump input during rescue countdown — buffer it for after countdown ends.
+    if (rescueRef.current.active || tubeRescueRef.current.active) return false;
+    // During active swordfish flight (timer > 0), jumping is disabled.
+    // When timer expired (safe-landing hover), spacebar cancels hover and resumes play with a jump.
+    if (isSwordfishActiveRef.current) {
+      if (swordfishTimerRef.current > 0) return false;
+      isSwordfishActiveRef.current = false;
+      player.dy = Constants.JUMP_FORCE_INITIAL;
+      player.grounded = false;
+      player.rotation = -20;
+      player.isBoosting = true;
+      player.boostTimer = 0;
+      playSound('jump');
+      return true;
+    }
 
     const isImminentLandingWhileFalling = (): boolean => {
       // If we're not falling, there's no risk of "buffered landing jump" consuming the dolphin.
@@ -899,6 +924,8 @@ export const DeepDiveGame = () => {
     player.dy = 0;
     isSwordfishActiveRef.current = false;
     swordfishTimerRef.current = 0;
+    rescueJumpChargesRef.current = 0;
+    setRescueCharges(0);
   };
 
   const startTubeRescueFromFall = () => {
@@ -948,6 +975,8 @@ export const DeepDiveGame = () => {
     player.rotation = 0;
     isSwordfishActiveRef.current = false;
     swordfishTimerRef.current = 0;
+    rescueJumpChargesRef.current = 0;
+    setRescueCharges(0);
   };
 
   const updateTubeRescue = (dt: number) => {
@@ -1037,6 +1066,19 @@ export const DeepDiveGame = () => {
       rescue.tubeY -= dt * 140;
 
       if (rescue.countdownMs <= 0) {
+        const charges = rescueJumpChargesRef.current;
+        if (charges > 0) {
+          const player = playerRef.current;
+          const chargeForce = Math.min(charges, 10) * 0.5;
+          player.dy = Constants.JUMP_FORCE_INITIAL - chargeForce;
+          player.grounded = false;
+          player.isBoosting = true;
+          player.boostTimer = 0;
+          jumpBufferTimerRef.current = 0;
+          playSound('jump');
+        }
+        rescueJumpChargesRef.current = 0;
+        setRescueCharges(0);
         tubeRescueRef.current = { active: false };
         setRestartCountdown(null);
         quickSandTimerRef.current = null;
@@ -1137,6 +1179,19 @@ export const DeepDiveGame = () => {
       rescue.turtleY -= dt * 120;
 
       if (rescue.countdownMs <= 0) {
+        const charges = rescueJumpChargesRef.current;
+        if (charges > 0) {
+          const player = playerRef.current;
+          const chargeForce = Math.min(charges, 10) * 0.5;
+          player.dy = Constants.JUMP_FORCE_INITIAL - chargeForce;
+          player.grounded = false;
+          player.isBoosting = true;
+          player.boostTimer = 0;
+          jumpBufferTimerRef.current = 0;
+          playSound('jump');
+        }
+        rescueJumpChargesRef.current = 0;
+        setRescueCharges(0);
         // Resume the current run from the next sand (no reset, keep speed/score/oxygen)
         rescueRef.current = { active: false };
         setRestartCountdown(null);
@@ -1346,7 +1401,12 @@ export const DeepDiveGame = () => {
 
     // 0. Update Jump Buffer
     if (jumpBufferTimerRef.current > 0) {
-      jumpBufferTimerRef.current -= dt;
+      // Freeze buffer during swordfish safe-landing hover so input isn't lost
+      // while waiting for the timer to expire or a platform to appear.
+      const isSwordfishHover = isSwordfishActiveRef.current && swordfishTimerRef.current <= 0;
+      if (!isSwordfishHover) {
+        jumpBufferTimerRef.current -= dt;
+      }
     }
 
     // 1. Manage Powerup Timers
@@ -2051,6 +2111,7 @@ export const DeepDiveGame = () => {
           width: "100%",
           height: "100%",
           display: "flex",
+          flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
           zIndex: 20,
@@ -2061,6 +2122,15 @@ export const DeepDiveGame = () => {
           fontSize: "clamp(64px, 14vw, 140px)",
         }}>
           {restartCountdown}
+          {rescueCharges > 0 && (
+            <div style={{
+              fontSize: "clamp(20px, 4vw, 40px)",
+              marginTop: "8px",
+              textShadow: "0 3px 0 rgba(0,0,0,0.6)",
+            }}>
+              ⚡×{rescueCharges}
+            </div>
+          )}
         </div>
       )}
 
