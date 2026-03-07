@@ -18,6 +18,16 @@ import {
   type TubeState,
 } from '../_lib/tubeInventory.js';
 import { getSkinState, type SkinState } from '../_lib/skinInventory.js';
+import {
+  getAchievementState,
+  saveAchievementState,
+  evaluateRunEndAchievements,
+  getAchievementRewardCoins,
+} from '../_lib/achievements.js';
+import {
+  readWeeklyStore,
+  currentWeekIdPst,
+} from '../_lib/weeklyLeaderboard.js';
 
 export const config = { runtime: 'nodejs' };
 
@@ -45,7 +55,7 @@ type StreakRecord = {
 };
 
 type MissionEvent =
-  | { type: 'run_end'; score: number; tubePieces?: number; tubeCharges?: number }
+  | { type: 'run_end'; score: number; tubePieces?: number; tubeCharges?: number; deathCause?: string | null; perfectPlatformer?: boolean; allOxygenCollected?: boolean }
   | { type: 'oxygen_collected'; count?: number };
 
 function todayKeyUTC(d = new Date()): string {
@@ -271,6 +281,62 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     await redisRW.set(progressKey, JSON.stringify(progress));
 
+    // ── Achievement evaluation (run_end only) ──
+    let newAchievements: string[] = [];
+    if (body.type === 'run_end') {
+      try {
+        const achState = await getAchievementState(redisRO, userId);
+        const skinState = await getSkinState(redisRO, userId);
+
+        // Get weekly top score for "beat weekly high score" achievement
+        let weeklyTopScore = 0;
+        try {
+          const store = await readWeeklyStore();
+          const weekId = currentWeekIdPst();
+          const week = store.weeks[weekId];
+          if (week && week.entries.length > 0) {
+            weeklyTopScore = week.entries[0].score;
+          }
+        } catch {
+          // best-effort
+        }
+
+        const score = typeof body.score === 'number' ? body.score : 0;
+        const result = evaluateRunEndAchievements(
+          achState,
+          {
+            score,
+            deathCause: typeof body.deathCause === 'string' ? body.deathCause : null,
+            perfectPlatformer: body.perfectPlatformer === true,
+            allOxygenCollected: body.allOxygenCollected === true,
+          },
+          skinState.equipped,
+          progress.runs,
+          date,
+          weeklyTopScore,
+        );
+        newAchievements = result.newlyUnlocked;
+        if (newAchievements.length > 0) {
+          await saveAchievementState(redisRW, userId, result.state);
+          // Award coins for newly unlocked achievements
+          const achCoins = getAchievementRewardCoins(newAchievements);
+          if (achCoins > 0) {
+            try {
+              await addCoins(redisRW, userId, achCoins, { type: 'achievement', meta: { achievements: newAchievements } });
+              coinsEarned += achCoins;
+            } catch {
+              // best-effort
+            }
+          }
+        } else {
+          // Still save state for progress tracking (streaks, personal best, etc.)
+          await saveAchievementState(redisRW, userId, result.state);
+        }
+      } catch {
+        // best-effort — don't break the main response
+      }
+    }
+
     // Include latest inventory snapshot (best-effort).
     let inventory: { dolphinSaved: number; coins: number; tube?: TubeState; skins?: SkinState } | undefined = undefined;
     try {
@@ -290,6 +356,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       rewards: streakReward ? { streak: streakReward } : undefined,
       coinsEarned: coinsEarned > 0 ? coinsEarned : undefined,
       inventory,
+      newAchievements: newAchievements.length > 0 ? newAchievements : undefined,
     });
   } catch (error) {
     console.error('Missions event API error:', error);

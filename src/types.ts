@@ -23,6 +23,7 @@ export interface Platform {
   height: number;
   type: "NORMAL" | "QUICKSAND";
   sinking?: boolean;
+  landed?: boolean;
 }
 
 // Item Interface

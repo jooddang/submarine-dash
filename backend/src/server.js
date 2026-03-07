@@ -4,6 +4,7 @@ import Redis from 'ioredis';
 import dotenv from 'dotenv';
 import { sanitizeLeaderboardName } from '../../shared/profanity.js';
 import { getPstCurrentWeekId, getPrevWeekId, getWeekEndDate } from '../../shared/week.js';
+import { ACHIEVEMENT_CATALOG, getAchievementRewardCoins } from '../../shared/achievements.js';
 import crypto from 'node:crypto';
 
 // Load environment variables from parent directory
@@ -291,6 +292,129 @@ const SKIN_COSTS = {
   default: 0, gold: 150, golden: 150, ocean_blue: 150, coral_red: 150, neon_green: 150,
   royal_purple: 150, whale: 1000, orca: 1000, scary_orca: 5000, mystical_fish: 20000,
 };
+
+// ── Achievement helpers ──
+
+const SKIN_RARITIES = {
+  default: 'common', gold: 'common', golden: 'common', ocean_blue: 'common',
+  coral_red: 'common', neon_green: 'common', royal_purple: 'common',
+  whale: 'rare', orca: 'rare',
+  scary_orca: 'epic', octopus: 'epic', jellyfish: 'epic',
+  mystical_fish: 'legendary', kraken: 'legendary',
+};
+
+function keyAchievements(userId) {
+  return `${KEY_PREFIX}user:${userId}:achievements`;
+}
+
+function defaultAchievementState() {
+  return {
+    unlocked: {},
+    progress: {
+      scoreStreak500: 0, scoreStreak1000: 0, scoreStreak2000: 0, scoreStreak3000: 0,
+      personalBest: 0, highScoreBeatenStreak: 0,
+      deathStreakUrchin: 0, deathStreakQuicksand: 0,
+      dailyGrinder: { lastDate: null, consecutiveDays: 0 },
+    },
+  };
+}
+
+async function getAchievementState(userId) {
+  if (!redis) return defaultAchievementState();
+  const raw = await redis.get(keyAchievements(userId));
+  if (!raw) return defaultAchievementState();
+  const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  const def = defaultAchievementState();
+  return {
+    unlocked: { ...def.unlocked, ...(parsed.unlocked || {}) },
+    progress: { ...def.progress, ...(parsed.progress || {}), dailyGrinder: { ...def.progress.dailyGrinder, ...(parsed.progress?.dailyGrinder || {}) } },
+  };
+}
+
+async function saveAchievementState(userId, state) {
+  if (!redis) return;
+  await redis.set(keyAchievements(userId), JSON.stringify(state));
+}
+
+function evaluateRunEndAchievements(state, run, equippedSkinId, dailyRunCount, todayDate, weeklyTopScore) {
+  const newlyUnlocked = [];
+  const p = state.progress;
+
+  function unlock(id) {
+    if (!state.unlocked[id]) {
+      state.unlocked[id] = Date.now();
+      newlyUnlocked.push(id);
+    }
+  }
+
+  // Score streaks
+  const streakConfigs = [
+    [500, 5, 'scoreStreak500', 'score_streak_500'],
+    [1000, 5, 'scoreStreak1000', 'score_streak_1000'],
+    [2000, 5, 'scoreStreak2000', 'score_streak_2000'],
+    [3000, 3, 'scoreStreak3000', 'score_streak_3000'],
+  ];
+  for (const [threshold, required, key, achId] of streakConfigs) {
+    if (run.score >= threshold) { p[key] = (p[key] || 0) + 1; }
+    else { p[key] = 0; }
+    if (p[key] >= required) unlock(achId);
+  }
+
+  // Beat weekly high score
+  if (run.score >= 2000 && weeklyTopScore > 0 && run.score > weeklyTopScore) {
+    unlock('beat_weekly_high_score');
+  }
+
+  // Beat personal high score
+  if (p.personalBest > 0 && run.score >= 2000 && run.score > p.personalBest) {
+    unlock('beat_high_score');
+    p.highScoreBeatenStreak += 1;
+    if (p.highScoreBeatenStreak >= 2) unlock('beat_high_score_x2');
+  } else if (run.score <= p.personalBest) {
+    p.highScoreBeatenStreak = 0;
+  }
+  p.personalBest = Math.max(p.personalBest, run.score);
+
+  // Perfect Platformer
+  if (run.perfectPlatformer && run.score >= 1500) unlock('perfect_platformer');
+
+  // Oxygen Master
+  if (run.allOxygenCollected && run.score >= 1000) unlock('oxygen_master');
+
+  // Skin-score achievements
+  const rarity = SKIN_RARITIES[equippedSkinId] || 'common';
+  if (run.score >= 2500) {
+    if (rarity === 'epic') unlock('epic_explorer');
+    if (rarity === 'rare') unlock('rare_voyager');
+    if (rarity === 'legendary') unlock('legendary_captain');
+  }
+
+  // Death streaks
+  if (run.deathCause === 'urchin') { p.deathStreakUrchin += 1; p.deathStreakQuicksand = 0; }
+  else if (run.deathCause === 'quicksand') { p.deathStreakQuicksand += 1; p.deathStreakUrchin = 0; }
+  else { p.deathStreakUrchin = 0; p.deathStreakQuicksand = 0; }
+  if (p.deathStreakUrchin >= 3) unlock('urchin_magnet');
+  if (p.deathStreakQuicksand >= 3) unlock('quicksand_victim');
+
+  // Daily grinder
+  if (dailyRunCount >= 25) {
+    const dg = p.dailyGrinder;
+    if (dg.lastDate !== todayDate) {
+      if (dg.lastDate) {
+        const prev = new Date(`${dg.lastDate}T00:00:00Z`);
+        prev.setUTCDate(prev.getUTCDate() + 1);
+        const nextDay = prev.toISOString().slice(0, 10);
+        dg.consecutiveDays = nextDay === todayDate ? dg.consecutiveDays + 1 : 1;
+      } else { dg.consecutiveDays = 1; }
+      dg.lastDate = todayDate;
+    }
+    if (dg.consecutiveDays >= 1) unlock('daily_grinder_1');
+    if (dg.consecutiveDays >= 2) unlock('daily_grinder_2');
+    if (dg.consecutiveDays >= 3) unlock('daily_grinder_3');
+  }
+
+  return { state, newlyUnlocked };
+}
 
 function computeCoinsForScore(score) {
   if (score < 500) return 0;
@@ -871,6 +995,51 @@ app.post('/api/missions/event', async (req, res) => {
     }
 
     await redis.set(progressKey, JSON.stringify(progress));
+
+    // Achievement evaluation (run_end only)
+    let newAchievements = [];
+    if (body.type === 'run_end') {
+      try {
+        const achState = await getAchievementState(userId);
+        const skinState = await getSkinState(userId);
+
+        // Get weekly top score
+        let weeklyTopScore = 0;
+        try {
+          const storeRaw = parseWeeklyStore(await redis.get(WEEKLY_LEADERBOARDS_KEY)) || { version: 1, weeks: {} };
+          const weekId = getPstCurrentWeekId();
+          const week = storeRaw.weeks[weekId];
+          if (week && week.entries.length > 0) weeklyTopScore = week.entries[0].score;
+        } catch { /* best-effort */ }
+
+        const score = typeof body.score === 'number' ? body.score : 0;
+        const result = evaluateRunEndAchievements(
+          achState,
+          {
+            score,
+            deathCause: typeof body.deathCause === 'string' ? body.deathCause : null,
+            perfectPlatformer: body.perfectPlatformer === true,
+            allOxygenCollected: body.allOxygenCollected === true,
+          },
+          skinState.equipped,
+          progress.runs,
+          date,
+          weeklyTopScore,
+        );
+        newAchievements = result.newlyUnlocked;
+        if (newAchievements.length > 0) {
+          await saveAchievementState(userId, result.state);
+          const achCoins = getAchievementRewardCoins(newAchievements);
+          if (achCoins > 0) {
+            try { await addCoins(userId, achCoins, { type: 'achievement', meta: { achievements: newAchievements } }); coinsEarned += achCoins; }
+            catch { /* best-effort */ }
+          }
+        } else {
+          await saveAchievementState(userId, result.state);
+        }
+      } catch { /* best-effort */ }
+    }
+
     let inventory = undefined;
     try {
       await migratePendingDolphins(userId);
@@ -883,7 +1052,7 @@ app.post('/api/missions/event', async (req, res) => {
     } catch {
       // best-effort
     }
-    return res.json({ date, progress, rewards: streakReward ? { streak: streakReward } : undefined, coinsEarned: coinsEarned > 0 ? coinsEarned : undefined, inventory });
+    return res.json({ date, progress, rewards: streakReward ? { streak: streakReward } : undefined, coinsEarned: coinsEarned > 0 ? coinsEarned : undefined, inventory, newAchievements: newAchievements.length > 0 ? newAchievements : undefined });
   } catch (e) {
     console.error('POST /api/missions/event error:', e);
     return res.status(500).json({ error: 'Internal server error' });
@@ -966,6 +1135,33 @@ app.post('/api/inventory/skin/equip', async (req, res) => {
     return res.json({ ok: true, skins: state });
   } catch (e) {
     console.error('POST /api/inventory/skin/equip error:', e);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/achievements - Get achievement catalog + user unlock state
+app.get('/api/achievements', async (req, res) => {
+  try {
+    let unlocked = {};
+    if (redis) {
+      const userId = await getUserIdForSession(req);
+      if (userId) {
+        const state = await getAchievementState(userId);
+        unlocked = state.unlocked;
+      }
+    }
+    const achievements = ACHIEVEMENT_CATALOG.map((a) => ({
+      id: a.id,
+      name: a.name,
+      description: a.description,
+      category: a.category,
+      reward: a.reward,
+      unlocked: !!unlocked[a.id],
+      unlockedAt: unlocked[a.id] || null,
+    }));
+    return res.json({ achievements });
+  } catch (e) {
+    console.error('GET /api/achievements error:', e);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });

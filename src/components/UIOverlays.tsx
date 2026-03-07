@@ -3,6 +3,7 @@ import type { LeaderboardEntry, WeeklyLeaderboard } from "../types";
 import { OXYGEN_MAX, TUBE_PIECE_UNLOCK_SCORE, TUBE_PIECES_PER_TUBE } from "../constants";
 import { SKIN_CATALOG, RARITY_COLORS, getSkinImage, getSkinDef, type SkinDef, type SkinRarity } from "../skins";
 import { useRef, useEffect } from "react";
+import type { AchievementEntry } from "../api";
 import turtleShellItemImg from "../../turtle-shell-item.png";
 import dolphinItemImg from "../../dolphin.png";
 import tubeImg from "../../tube.png";
@@ -1458,6 +1459,8 @@ interface MenuOverlayProps {
   onStreakClick?: () => void;
   onInventoryClick?: () => void;
   onSkinsClick?: () => void;
+  onAchievementsClick?: () => void;
+  achievementProgress?: string;
   onInboxClick?: () => void;
   inboxCount?: number;
   streakCurrent?: number;
@@ -1475,6 +1478,8 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
   onStreakClick,
   onInventoryClick,
   onSkinsClick,
+  onAchievementsClick,
+  achievementProgress,
   onInboxClick,
   inboxCount,
   streakCurrent,
@@ -1598,6 +1603,24 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
             }}
           >
             SKINS
+          </button>
+        )}
+        {onAchievementsClick && loginId && (
+          <button
+            type="button"
+            onClick={onAchievementsClick}
+            style={{
+              padding: "10px 18px",
+              fontSize: "1.05rem",
+              background: "rgba(0,0,0,0.25)",
+              color: "rgba(255,255,255,0.9)",
+              border: "1px solid rgba(255,255,255,0.25)",
+              borderRadius: "10px",
+              cursor: "pointer",
+              fontWeight: 700,
+            }}
+          >
+            ACHIEVEMENTS{achievementProgress ? ` (${achievementProgress})` : ""}
           </button>
         )}
         {onInboxClick && (
@@ -1813,3 +1836,152 @@ export const GameOverOverlay: React.FC<GameOverOverlayProps> = ({ score, didSubm
     <p style={{ ...subtitleStyle, marginTop: "40px" }}>Press SPACE to Retry</p>
   </div>
 );
+
+// ── Achievements Panel ──────────────────────────────────────────────
+
+const CATEGORY_LABELS: Record<string, string> = {
+  score: "Score",
+  skill: "Skill",
+  skin: "Skin",
+  death: "Death",
+  daily: "Daily",
+};
+
+const CATEGORY_ORDER = ["score", "skill", "skin", "death", "daily"];
+
+type AchievementsPanelProps = {
+  open: boolean;
+  onClose: () => void;
+  achievements: AchievementEntry[];
+};
+
+export const AchievementsPanel: React.FC<AchievementsPanelProps> = ({
+  open,
+  onClose,
+  achievements,
+}) => {
+  if (!open) return null;
+
+  const unlockedCount = achievements.filter((a) => a.unlocked).length;
+  const totalCount = achievements.length;
+
+  // Group by category
+  const grouped: Record<string, AchievementEntry[]> = {};
+  for (const a of achievements) {
+    const cat = a.category || "other";
+    if (!grouped[cat]) grouped[cat] = [];
+    grouped[cat].push(a);
+  }
+
+  return (
+    <div style={modalBackdropStyle} onMouseDown={onClose}>
+      <div
+        style={{
+          ...modalCardStyle,
+          width: "min(600px, 94vw)",
+          maxHeight: "min(85vh, 700px)",
+          overflowY: "auto",
+        }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <div style={{ textAlign: "left" }}>
+            <h2 style={panelTitleStyle}>ACHIEVEMENTS</h2>
+            <p style={panelSubtitleStyle}>{unlockedCount}/{totalCount} unlocked</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "rgba(255,255,255,0.85)",
+              fontSize: "20px",
+              cursor: "pointer",
+              padding: "6px 10px",
+            }}
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 18 }}>
+          {CATEGORY_ORDER.filter((cat) => grouped[cat]).map((cat) => (
+            <div key={cat}>
+              <div style={{
+                fontWeight: 900,
+                fontSize: "0.85rem",
+                color: "rgba(0,255,255,0.7)",
+                letterSpacing: 1.5,
+                textTransform: "uppercase",
+                marginBottom: 8,
+                textAlign: "left",
+              }}>
+                {CATEGORY_LABELS[cat] || cat}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {grouped[cat].map((ach) => (
+                  <div
+                    key={ach.id}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 10,
+                      border: ach.unlocked
+                        ? "1px solid rgba(0,255,255,0.35)"
+                        : "1px solid rgba(255,255,255,0.12)",
+                      background: ach.unlocked
+                        ? "rgba(0,255,255,0.08)"
+                        : "rgba(0,0,0,0.25)",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 10,
+                      opacity: ach.unlocked ? 1 : 0.55,
+                    }}
+                  >
+                    <div style={{ textAlign: "left", flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        fontWeight: 800,
+                        color: ach.unlocked ? "#00ffff" : "rgba(255,255,255,0.7)",
+                        fontSize: "0.95rem",
+                      }}>
+                        {ach.name}
+                      </div>
+                      <div style={{
+                        marginTop: 2,
+                        fontSize: "0.82rem",
+                        color: "rgba(255,255,255,0.6)",
+                        lineHeight: 1.3,
+                      }}>
+                        {ach.description}
+                      </div>
+                    </div>
+                    <div style={{
+                      textAlign: "right",
+                      flexShrink: 0,
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "flex-end",
+                      gap: 2,
+                    }}>
+                      {ach.unlocked ? (
+                        <span style={{ fontSize: "0.8rem", color: "#7CFF6B", fontWeight: 700 }}>
+                          UNLOCKED
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: "0.8rem", color: "#ffd700", fontWeight: 700 }}>
+                          +{ach.reward.amount}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
