@@ -90,6 +90,7 @@ export const DeepDiveGame = () => {
   const distanceRef = useRef<number>(0);
 
   const quickSandTimerRef = useRef<number | null>(null);
+  const wasTrappedInQuickSandRef = useRef<boolean>(false);
 
   // Swordfish Power-up Refs
   const swordfishTimerRef = useRef<number>(0);
@@ -779,6 +780,7 @@ export const DeepDiveGame = () => {
     speedRef.current = Constants.GAME_SPEED_START;
     distanceRef.current = 0;
     quickSandTimerRef.current = null;
+    wasTrappedInQuickSandRef.current = false;
     didSubmitRef.current = false;
     didSendRunEndRef.current = false;
     dolphinUsesThisRunRef.current = 0;
@@ -904,6 +906,7 @@ export const DeepDiveGame = () => {
     turtleShellSavedRef.current = false;
     setHasTurtleShell(false);
     turtleShellUseCountRef.current += 1;
+    wasTrappedInQuickSandRef.current = false;
 
     // Find the next NORMAL platform after the quicksand they fell from
     const targetPlat = platformsRef.current
@@ -1583,7 +1586,10 @@ export const DeepDiveGame = () => {
 
         if (plat.sinking) {
           player.isTrapped = true;
-          if (plat.type === "QUICKSAND") trappedQuickSand = plat;
+          if (plat.type === "QUICKSAND") {
+            trappedQuickSand = plat;
+            wasTrappedInQuickSandRef.current = true;
+          }
           if (player.dy >= 0 || player.grounded) {
             player.y = plat.y - player.height + 15;
             player.dy = 0;
@@ -1631,7 +1637,7 @@ export const DeepDiveGame = () => {
         startTubeRescueFromFall();
         return;
       }
-      if (player.isTrapped) {
+      if (wasTrappedInQuickSandRef.current) {
         playSound('die_quicksand');
         deathCauseRef.current = 'quicksand';
       } else {
