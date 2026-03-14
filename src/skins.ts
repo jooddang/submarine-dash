@@ -185,7 +185,7 @@ export const SKIN_CATALOG: SkinDef[] = [
     tint: null,
     glowColor: 'rgba(50,255,100,0.5)',
     trailType: 'ink',
-    trailColor: '#1a1a1a',
+    trailColor: '#0a2a1a',
   },
 ];
 
@@ -445,8 +445,15 @@ export function drawTrailParticles(
       ctx.shadowBlur = 0;
     } else if (trailType === 'ink') {
       const r = p.size * (0.4 + alpha * 0.6);
-      // Light edge so the ink blob is visible on dark backgrounds
-      ctx.strokeStyle = `rgba(180,180,200,${alpha * 0.5})`;
+      // Parse fill color to derive a lighter edge tint
+      const hex = p.color.replace('#', '');
+      const cr = parseInt(hex.substring(0, 2), 16);
+      const cg = parseInt(hex.substring(2, 4), 16);
+      const cb = parseInt(hex.substring(4, 6), 16);
+      const er = Math.min(255, cr + 140);
+      const eg = Math.min(255, cg + 140);
+      const eb = Math.min(255, cb + 140);
+      ctx.strokeStyle = `rgba(${er},${eg},${eb},${alpha * 0.5})`;
       ctx.lineWidth = 1.2;
       ctx.fillStyle = p.color;
       ctx.beginPath();
