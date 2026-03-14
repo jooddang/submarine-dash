@@ -1566,6 +1566,30 @@ export const DeepDiveGame = () => {
     let trappedQuickSand: Platform | null = null;
     player.isTrapped = false;
 
+    // Mark all contiguous platforms as landed (treats touching platforms as one island)
+    const markIslandLanded = (landedPlat: Platform) => {
+      landedPlat.landed = true;
+      const platforms = platformsRef.current;
+      // Propagate forward: mark touching platforms to the right
+      for (let i = platforms.indexOf(landedPlat) + 1; i < platforms.length; i++) {
+        const prev = platforms[i - 1];
+        if (Math.abs(prev.x + prev.width - platforms[i].x) < 1) {
+          platforms[i].landed = true;
+        } else {
+          break;
+        }
+      }
+      // Propagate backward: mark touching platforms to the left
+      for (let i = platforms.indexOf(landedPlat) - 1; i >= 0; i--) {
+        const next = platforms[i + 1];
+        if (Math.abs(platforms[i].x + platforms[i].width - next.x) < 1) {
+          platforms[i].landed = true;
+        } else {
+          break;
+        }
+      }
+    };
+
     for (const plat of platformsRef.current) {
       if (
         player.x < plat.x + plat.width &&
@@ -1594,14 +1618,14 @@ export const DeepDiveGame = () => {
             player.y = plat.y - player.height + 15;
             player.dy = 0;
             onGround = true;
-            plat.landed = true;
+            markIslandLanded(plat);
           }
         } else {
           if (player.dy > 0) {
             player.y = plat.y - player.height;
             player.dy = 0;
             onGround = true;
-            plat.landed = true;
+            markIslandLanded(plat);
           }
         }
       }
