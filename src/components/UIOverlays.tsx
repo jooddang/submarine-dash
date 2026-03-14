@@ -1084,23 +1084,26 @@ function AchievementBadges({ summary }: { summary?: UserAchievementSummary }) {
 
   return (
     <div style={{ marginTop: 2 }}>
-      <span
+      <button
         onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
         style={{
           cursor: "pointer",
           fontSize: "11px",
           color: "#ffd700",
           background: "rgba(255, 215, 0, 0.15)",
+          border: "none",
           borderRadius: 4,
           padding: "1px 5px",
           userSelect: "none",
+          fontFamily: "inherit",
+          lineHeight: "inherit",
         }}
       >
         {"\u{1F3C6}"} {summary.count}
         <span style={{ marginLeft: 3, fontSize: "9px", color: "rgba(255,215,0,0.7)" }}>
           {expanded ? "\u25B2" : "\u25BC"}
         </span>
-      </span>
+      </button>
       {expanded && (
         <div style={{
           marginTop: 3,
