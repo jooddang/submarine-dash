@@ -351,7 +351,7 @@ function evaluateRunEndAchievements(state, run, equippedSkinId, dailyRunCount, t
   const streakConfigs = [
     [500, 5, 'scoreStreak500', 'score_streak_500'],
     [1000, 5, 'scoreStreak1000', 'score_streak_1000'],
-    [2000, 5, 'scoreStreak2000', 'score_streak_2000'],
+    [2000, 3, 'scoreStreak2000', 'score_streak_2000'],
     [3000, 3, 'scoreStreak3000', 'score_streak_3000'],
   ];
   for (const [threshold, required, key, achId] of streakConfigs) {
@@ -362,15 +362,10 @@ function evaluateRunEndAchievements(state, run, equippedSkinId, dailyRunCount, t
 
   // Beat weekly high score
   if (run.score >= 2000 && weeklyTopScore > 0 && run.score > weeklyTopScore) {
-    unlock('beat_weekly_high_score');
-  }
-
-  // Beat personal high score
-  if (p.personalBest > 0 && run.score >= 2000 && run.score > p.personalBest) {
     unlock('beat_high_score');
     p.highScoreBeatenStreak += 1;
     if (p.highScoreBeatenStreak >= 2) unlock('beat_high_score_x2');
-  } else if (run.score <= p.personalBest) {
+  } else {
     p.highScoreBeatenStreak = 0;
   }
   p.personalBest = Math.max(p.personalBest, run.score);

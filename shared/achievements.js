@@ -33,7 +33,7 @@ const ACHIEVEMENT_CATALOG = [
   {
     id: 'score_streak_2000',
     name: 'Deep Sea Pro',
-    description: 'Score 2000+ five times in a row',
+    description: 'Score 2000+ three times in a row',
     category: 'score',
     reward: { type: 'coins', amount: 75 },
   },
@@ -44,25 +44,18 @@ const ACHIEVEMENT_CATALOG = [
     category: 'score',
     reward: { type: 'coins', amount: 75 },
   },
-  // ── High score ──
-  {
-    id: 'beat_weekly_high_score',
-    name: 'Beat the Weekly High Score',
-    description: 'Beat the #1 weekly leaderboard score (min 2000)',
-    category: 'score',
-    reward: { type: 'coins', amount: 200 },
-  },
+  // ── Weekly high score ──
   {
     id: 'beat_high_score',
     name: 'Personal Best',
-    description: 'Beat your own high score (min 2000)',
+    description: 'Beat the #1 weekly leaderboard score (min 2000)',
     category: 'score',
     reward: { type: 'coins', amount: 175 },
   },
   {
     id: 'beat_high_score_x2',
     name: 'On Fire',
-    description: 'Beat your high score 2 times in a row',
+    description: 'Beat the weekly high score 2 times in a row',
     category: 'score',
     reward: { type: 'coins', amount: 250 },
   },
