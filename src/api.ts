@@ -359,3 +359,32 @@ export const achievementsAPI = {
     }
   },
 };
+
+// --- PVP API ---
+export type PvpSettleBetRequest = {
+  winnerUserId: string;
+  loserUserId: string;
+  bet: { coins: number; dolphins: number; tubePieces: number };
+};
+
+export type PvpSettleBetResponse = {
+  ok: boolean;
+  transferred: { coins: number; dolphins: number; tubePieces: number };
+};
+
+export const pvpAPI = {
+  async settleBet(payload: PvpSettleBetRequest): Promise<PvpSettleBetResponse | null> {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/pvp/settle-bet`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  },
+};

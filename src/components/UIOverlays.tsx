@@ -1532,6 +1532,7 @@ interface MenuOverlayProps {
   achievementProgress?: string;
   onInboxClick?: () => void;
   inboxCount?: number;
+  onPvpClick?: () => void;
   streakCurrent?: number;
   coinBalance?: number;
   userAchievements?: Record<string, UserAchievementSummary>;
@@ -1552,6 +1553,7 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
   achievementProgress,
   onInboxClick,
   inboxCount,
+  onPvpClick,
   streakCurrent,
   coinBalance,
   userAchievements,
@@ -1621,6 +1623,27 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
     </div>
 
     <div style={{ marginTop: "18px", display: "flex", flexDirection: "column", gap: "10px", alignItems: "center" }}>
+      {onPvpClick && (
+        <button
+          type="button"
+          onClick={onPvpClick}
+          style={{
+            padding: "12px 32px",
+            fontSize: "1.15rem",
+            background: "linear-gradient(135deg, rgba(0,180,255,0.3), rgba(255,100,0,0.2))",
+            color: "#fff",
+            border: "2px solid rgba(0,200,255,0.5)",
+            borderRadius: "12px",
+            cursor: "pointer",
+            fontWeight: 900,
+            letterSpacing: 1.5,
+            boxShadow: "0 0 20px rgba(0,200,255,0.15)",
+            marginBottom: 6,
+          }}
+        >
+          PVP MODE
+        </button>
+      )}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
         {onStreakClick && (
           <button
