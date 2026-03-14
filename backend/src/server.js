@@ -1161,6 +1161,50 @@ app.get('/api/achievements', async (req, res) => {
   }
 });
 
+// GET /api/achievements/users - Get achievement summaries for multiple users by loginId
+app.get('/api/achievements/users', async (req, res) => {
+  try {
+    if (!redis) return res.json({ users: {} });
+
+    const raw = req.query.loginIds;
+    const loginIdsParam = typeof raw === 'string' ? raw : '';
+    if (!loginIdsParam) return res.status(400).json({ error: 'loginIds query parameter required' });
+
+    const loginIds = [...new Set(loginIdsParam.split(',').map(id => id.trim()).filter(Boolean))];
+    if (loginIds.length === 0) return res.status(400).json({ error: 'No valid loginIds provided' });
+    if (loginIds.length > 20) return res.status(400).json({ error: 'Too many loginIds (max 20)' });
+
+    const ACHIEVEMENT_NAME_MAP = Object.fromEntries(
+      ACHIEVEMENT_CATALOG.map((a) => [a.id, { name: a.name, category: a.category }])
+    );
+
+    const result = {};
+    for (const loginId of loginIds) {
+      const userId = await redis.get(keyLoginId(loginId.toLowerCase()));
+      if (!userId) {
+        result[loginId] = { count: 0, achievements: [] };
+        continue;
+      }
+      const state = await getAchievementState(userId);
+      const unlockedIds = Object.keys(state.unlocked);
+      result[loginId] = {
+        count: unlockedIds.length,
+        achievements: unlockedIds
+          .map(id => {
+            const meta = ACHIEVEMENT_NAME_MAP[id];
+            return meta ? { id, name: meta.name, category: meta.category } : null;
+          })
+          .filter(a => a !== null),
+      };
+    }
+
+    return res.json({ users: result });
+  } catch (e) {
+    console.error('GET /api/achievements/users error:', e);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // GET /api/leaderboard - Get top 5 scores
 app.get('/api/leaderboard', async (req, res) => {
   try {
