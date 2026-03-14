@@ -31,7 +31,7 @@ export type AchievementProgress = {
   personalBest: number;
   highScoreBeatenStreak: number;
   deathStreakUrchin: number;
-  deathStreakQuicksand: number;
+  deathCountQuicksand: number;
   dailyGrinder: DailyGrinderProgress;
 };
 
@@ -59,7 +59,7 @@ function defaultState(): AchievementState {
       personalBest: 0,
       highScoreBeatenStreak: 0,
       deathStreakUrchin: 0,
-      deathStreakQuicksand: 0,
+      deathCountQuicksand: 0,
       dailyGrinder: { lastDate: null, consecutiveDays: 0 },
     },
   };
@@ -157,16 +157,14 @@ export function evaluateRunEndAchievements(
   // ── Death streaks ──
   if (run.deathCause === 'urchin') {
     p.deathStreakUrchin += 1;
-    p.deathStreakQuicksand = 0;
-  } else if (run.deathCause === 'quicksand') {
-    p.deathStreakQuicksand += 1;
-    p.deathStreakUrchin = 0;
   } else {
     p.deathStreakUrchin = 0;
-    p.deathStreakQuicksand = 0;
+  }
+  if (run.deathCause === 'quicksand') {
+    p.deathCountQuicksand += 1;
   }
   if (p.deathStreakUrchin >= 3) unlock('urchin_magnet');
-  if (p.deathStreakQuicksand >= 3) unlock('quicksand_victim');
+  if (p.deathCountQuicksand >= 3) unlock('quicksand_victim');
 
   // ── Daily grinder ──
   if (dailyRunCount >= 25) {

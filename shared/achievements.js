@@ -107,7 +107,7 @@ const ACHIEVEMENT_CATALOG = [
   {
     id: 'quicksand_victim',
     name: 'Quicksand Victim',
-    description: 'Die from quicksand 3 times in a row',
+    description: 'Die from quicksand 3 times',
     category: 'death',
     reward: { type: 'coins', amount: 10 },
   },
