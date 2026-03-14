@@ -10,7 +10,7 @@ import jellyfishImg from '../images/jellyfish.png';
 import krakenImg from '../images/kraken.png';
 
 export type SkinRarity = 'common' | 'rare' | 'epic' | 'legendary';
-export type TrailType = 'none' | 'bubbles' | 'sparkle' | 'flame' | 'rainbow';
+export type TrailType = 'none' | 'bubbles' | 'sparkle' | 'flame' | 'rainbow' | 'ink';
 
 export type SkinDef = {
   id: string;
@@ -150,8 +150,8 @@ export const SKIN_CATALOG: SkinDef[] = [
     sprite: octopusImg,
     tint: null,
     glowColor: 'rgba(255,140,50,0.4)',
-    trailType: 'sparkle',
-    trailColor: '#FF8C32',
+    trailType: 'ink',
+    trailColor: '#1a1a1a',
   },
   {
     id: 'jellyfish',
@@ -184,8 +184,8 @@ export const SKIN_CATALOG: SkinDef[] = [
     sprite: krakenImg,
     tint: null,
     glowColor: 'rgba(50,255,100,0.5)',
-    trailType: 'flame',
-    trailColor: '#32FF64',
+    trailType: 'ink',
+    trailColor: '#1a1a1a',
   },
 ];
 
@@ -356,7 +356,7 @@ export function updateTrailParticles(
   // Spawn new particles from behind the submarine
   const spawnX = playerX - 4;
   const spawnY = playerY + playerH / 2;
-  const spawnRate = skin.trailType === 'flame' ? 3 : skin.trailType === 'rainbow' ? 2 : 1;
+  const spawnRate = skin.trailType === 'flame' ? 3 : skin.trailType === 'rainbow' ? 2 : skin.trailType === 'ink' ? 2 : 1;
 
   for (let i = 0; i < spawnRate; i++) {
     if (particles.length >= TRAIL_POOL_MAX) break;
@@ -388,6 +388,11 @@ export function updateTrailParticles(
       vx = -50 - Math.random() * 40;
       vy = (Math.random() - 0.5) * 35;
       maxLife = 0.4 + Math.random() * 0.3;
+    } else if (skin.trailType === 'ink') {
+      size = 4 + Math.random() * 5;
+      vx = -30 - Math.random() * 40;
+      vy = (Math.random() - 0.5) * 30;
+      maxLife = 0.6 + Math.random() * 0.4;
     }
 
     particles.push({
@@ -438,6 +443,16 @@ export function drawTrailParticles(
       const s = p.size * (0.5 + alpha * 0.5);
       ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s * 0.7);
       ctx.shadowBlur = 0;
+    } else if (trailType === 'ink') {
+      const r = p.size * (0.4 + alpha * 0.6);
+      // Light edge so the ink blob is visible on dark backgrounds
+      ctx.strokeStyle = `rgba(180,180,200,${alpha * 0.5})`;
+      ctx.lineWidth = 1.2;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
     }
   }
   ctx.globalAlpha = 1;
