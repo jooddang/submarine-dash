@@ -7,7 +7,7 @@ import { createBubble, spawnBackgroundEntity } from "./entities";
 import { drawSwordfish, drawUrchin, drawBackgroundEntities, drawTurtleShell } from "./drawing";
 import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, AuthModal, DailyMissionsPanel, DolphinStreakRewardOverlay, DolphinWeeklyWinnerRewardOverlay, InventoryPanel, SkinPanel, AchievementsPanel } from "./components/UIOverlays";
 import { getSkinDef, drawSubmarine, updateTrailParticles, drawTrailParticles, isGoldenTubeEligible, GOLDEN_TUBE_EXTRA_CHARGES, GOLDEN_TUBE_EXTRA_SCORE_BONUS, DEFAULT_SKIN_ID, preloadSkinImages, type TrailParticle, type SkinDef } from "./skins";
-import { authAPI, inventoryAPI, leaderboardAPI, missionsAPI, achievementsAPI, type DailyMissionsResponse, type AuthUser } from "./api";
+import { authAPI, inventoryAPI, leaderboardAPI, missionsAPI, achievementsAPI, type DailyMissionsResponse, type AuthUser, type UserAchievementSummary } from "./api";
 import turtleRescueImg from "../turtle.png";
 import turtleShellItemImg from "../turtle-shell-item.png";
 import tubeImg from "../tube.png";
@@ -189,6 +189,7 @@ export const DeepDiveGame = () => {
   const [achievementsOpen, setAchievementsOpen] = useState(false);
   const [achievementsList, setAchievementsList] = useState<{ id: string; name: string; description: string; category: string; reward: { type: string; amount: number }; unlocked: boolean; unlockedAt: number | null }[]>([]);
   const [achievementToast, setAchievementToast] = useState<string | null>(null);
+  const [userAchievements, setUserAchievements] = useState<Record<string, UserAchievementSummary>>({});
 
   // Dolphin is sourced from Redis (server is source of truth).
   // Client state is a cache for UI; it is reconciled via /auth/me, /missions/daily, and consume endpoint.
@@ -289,6 +290,13 @@ export const DeepDiveGame = () => {
     }
   };
 
+  const fetchUserAchievements = (entries: LeaderboardEntry[]) => {
+    const loginIds = [...new Set(entries.map(e => e.userId).filter((id): id is string => !!id))];
+    if (loginIds.length > 0) {
+      achievementsAPI.getByUsers(loginIds).then(setUserAchievements).catch(() => undefined);
+    }
+  };
+
   useEffect(() => {
     // Load leaderboard from backend API
     const loadLeaderboard = async () => {
@@ -300,10 +308,12 @@ export const DeepDiveGame = () => {
           setWeeklyLeaderboards(data.weeks || []);
           setLeaderboard(data.current || []);
           leaderboardRef.current = data.current || [];
+          fetchUserAchievements(data.current || []);
         } catch {
           const data = await leaderboardAPI.getLeaderboard();
           setLeaderboard(data);
           leaderboardRef.current = data;
+          fetchUserAchievements(data);
         }
       } catch (e) {
         console.error("Failed to load leaderboard", e);
@@ -1317,6 +1327,7 @@ export const DeepDiveGame = () => {
         setLeaderboard(result.leaderboard);
         leaderboardRef.current = result.leaderboard;
         setLastSubmittedId(result.entry.id);
+        fetchUserAchievements(result.leaderboard);
       }
     } catch (error) {
       console.error("Failed to submit high score:", error);
@@ -1392,6 +1403,7 @@ export const DeepDiveGame = () => {
           setLeaderboard(result.leaderboard);
           leaderboardRef.current = result.leaderboard;
           setLastSubmittedId(result.entry.id);
+          fetchUserAchievements(result.leaderboard);
         }
         didSubmitRef.current = true;
         gameStateRef.current = "GAME_OVER";
@@ -2259,6 +2271,7 @@ export const DeepDiveGame = () => {
             achievementsAPI.getAll().then(setAchievementsList).catch(() => undefined);
           }}
           achievementProgress={achievementsList.length > 0 ? `${achievementsList.filter(a => a.unlocked).length}/${achievementsList.length}` : undefined}
+          userAchievements={userAchievements}
         />
       )}
 
@@ -2288,6 +2301,7 @@ export const DeepDiveGame = () => {
           currentWeekId={currentWeekId}
           coinsEarned={coinsEarnedLastRun}
           coinBalance={coinBalance}
+          userAchievements={userAchievements}
         />
       )}
 
