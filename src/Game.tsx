@@ -780,6 +780,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void }> = ({ onPvpClick
     if (!canvasRef.current) return;
 
     // Reset Game State
+    setAchievementsOpen(false);
     gameStateRef.current = "PLAYING";
     setGameState("PLAYING");
     scoreRef.current = 0;
