@@ -5,9 +5,9 @@ import { initAudio, playSound } from "./audio";
 import { interpolateColor } from "./graphics";
 import { createBubble, spawnBackgroundEntity } from "./entities";
 import { drawSwordfish, drawUrchin, drawBackgroundEntities, drawTurtleShell } from "./drawing";
-import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, AuthModal, DailyMissionsPanel, DolphinStreakRewardOverlay, DolphinWeeklyWinnerRewardOverlay, InventoryPanel, SkinPanel } from "./components/UIOverlays";
+import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, AuthModal, DailyMissionsPanel, DolphinStreakRewardOverlay, DolphinWeeklyWinnerRewardOverlay, InventoryPanel, SkinPanel, AchievementsPanel } from "./components/UIOverlays";
 import { getSkinDef, drawSubmarine, updateTrailParticles, drawTrailParticles, isGoldenTubeEligible, GOLDEN_TUBE_EXTRA_CHARGES, GOLDEN_TUBE_EXTRA_SCORE_BONUS, DEFAULT_SKIN_ID, preloadSkinImages, type TrailParticle, type SkinDef } from "./skins";
-import { authAPI, inventoryAPI, leaderboardAPI, missionsAPI, type DailyMissionsResponse, type AuthUser } from "./api";
+import { authAPI, inventoryAPI, leaderboardAPI, missionsAPI, achievementsAPI, type DailyMissionsResponse, type AuthUser } from "./api";
 import turtleRescueImg from "../turtle.png";
 import turtleShellItemImg from "../turtle-shell-item.png";
 import tubeImg from "../tube.png";
@@ -175,9 +175,19 @@ export const DeepDiveGame = () => {
   const dolphinUseEnabledRef = useRef<boolean>(true);
   const dolphinUsesThisRunRef = useRef<number>(0);
 
+  // ── Achievement tracking refs (per-run) ──
+  const deathCauseRef = useRef<string | null>(null);
+  const perfectPlatformerRef = useRef<boolean>(true);
+  const allOxygenCollectedRef = useRef<boolean>(true);
+
   // Coin balance (server-authoritative, client is display cache)
   const [coinBalance, setCoinBalance] = useState(0);
   const [coinsEarnedLastRun, setCoinsEarnedLastRun] = useState(0);
+
+  // Achievements UI state
+  const [achievementsOpen, setAchievementsOpen] = useState(false);
+  const [achievementsList, setAchievementsList] = useState<{ id: string; name: string; description: string; category: string; reward: { type: string; amount: number }; unlocked: boolean; unlockedAt: number | null }[]>([]);
+  const [achievementToast, setAchievementToast] = useState<string | null>(null);
 
   // Dolphin is sourced from Redis (server is source of truth).
   // Client state is a cache for UI; it is reconciled via /auth/me, /missions/daily, and consume endpoint.
@@ -378,8 +388,13 @@ export const DeepDiveGame = () => {
   }, [dolphinUseEnabled]);
 
   useEffect(() => {
-    // Refresh missions when auth changes (login/logout)
+    // Refresh missions and achievements when auth changes (login/logout)
     refreshDailyMissions();
+    if (authUser?.userId) {
+      achievementsAPI.getAll().then(setAchievementsList).catch(() => undefined);
+    } else {
+      setAchievementsList([]);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authUser?.userId]);
 
@@ -767,6 +782,9 @@ export const DeepDiveGame = () => {
     didSubmitRef.current = false;
     didSendRunEndRef.current = false;
     dolphinUsesThisRunRef.current = 0;
+    deathCauseRef.current = null;
+    perfectPlatformerRef.current = true;
+    allOxygenCollectedRef.current = true;
 
     // Reset per-run tube partial progress (pieces collected this run).
     // Rescue charges persist across runs — they are earned rewards.
@@ -1214,6 +1232,9 @@ export const DeepDiveGame = () => {
           score: finalScore,
           tubePieces: tubePiecesRef.current,
           tubeCharges: tubeRescueChargesRef.current,
+          deathCause: deathCauseRef.current,
+          perfectPlatformer: perfectPlatformerRef.current,
+          allOxygenCollected: allOxygenCollectedRef.current,
         })
         .then((out) => {
           if (out?.inventory && typeof out.inventory.dolphinSaved === "number") {
@@ -1242,6 +1263,17 @@ export const DeepDiveGame = () => {
             } else {
               setDolphinRewardOpen(true);
             }
+          }
+          // Show achievement toast for newly unlocked achievements
+          if (out?.newAchievements && out.newAchievements.length > 0) {
+            const names = out.newAchievements.map((id: string) => {
+              const found = achievementsList.find((a) => a.id === id);
+              return found ? found.name : id;
+            });
+            setAchievementToast(names.join(', '));
+            setTimeout(() => setAchievementToast(null), 4000);
+            // Refresh achievements list
+            achievementsAPI.getAll().then(setAchievementsList).catch(() => undefined);
           }
           refreshDailyMissions();
         })
@@ -1419,6 +1451,7 @@ export const DeepDiveGame = () => {
     if (oxygenRef.current <= 0) {
       oxygenRef.current = 0;
       setOxygen(0);
+      deathCauseRef.current = 'oxygen';
       gameOver();
       return;
     }
@@ -1555,12 +1588,14 @@ export const DeepDiveGame = () => {
             player.y = plat.y - player.height + 15;
             player.dy = 0;
             onGround = true;
+            plat.landed = true;
           }
         } else {
           if (player.dy > 0) {
             player.y = plat.y - player.height;
             player.dy = 0;
             onGround = true;
+            plat.landed = true;
           }
         }
       }
@@ -1596,8 +1631,13 @@ export const DeepDiveGame = () => {
         startTubeRescueFromFall();
         return;
       }
-      if (player.isTrapped) playSound('die_quicksand');
-      else playSound('die_fall');
+      if (player.isTrapped) {
+        playSound('die_quicksand');
+        deathCauseRef.current = 'quicksand';
+      } else {
+        playSound('die_fall');
+        deathCauseRef.current = 'fall';
+      }
       gameOver();
       return;
     }
@@ -1611,7 +1651,10 @@ export const DeepDiveGame = () => {
     });
 
     if (platformsRef.current.length > 0 && platformsRef.current[0].x + platformsRef.current[0].width < -100) {
-      platformsRef.current.shift();
+      const removed = platformsRef.current.shift();
+      if (removed && !removed.landed && scoreRef.current <= 1500) {
+        perfectPlatformerRef.current = false;
+      }
     }
 
     const lastPlat = platformsRef.current[platformsRef.current.length - 1];
@@ -1774,7 +1817,12 @@ export const DeepDiveGame = () => {
     itemsRef.current = itemsRef.current.filter(item => {
       if (item.collected) return false;
       // Keep dead urchins longer so we see them fall off screen
-      if (item.x + item.width < -50 || item.y > canvas.height + 50) return false;
+      if (item.x + item.width < -50 || item.y > canvas.height + 50) {
+        if (item.type === "OXYGEN" && scoreRef.current <= 1000) {
+          allOxygenCollectedRef.current = false;
+        }
+        return false;
+      }
 
       // Collision Item
       if (
@@ -1830,6 +1878,7 @@ export const DeepDiveGame = () => {
             return true; // Keep in array for animation
           } else {
             playSound('die_urchin');
+            deathCauseRef.current = 'urchin';
             gameOver();
             return false;
           }
@@ -2175,6 +2224,11 @@ export const DeepDiveGame = () => {
           }}
           onInventoryClick={() => setInventoryOpen(true)}
           onSkinsClick={() => setSkinsOpen(true)}
+          onAchievementsClick={() => {
+            setAchievementsOpen(true);
+            achievementsAPI.getAll().then(setAchievementsList).catch(() => undefined);
+          }}
+          achievementProgress={achievementsList.length > 0 ? `${achievementsList.filter(a => a.unlocked).length}/${achievementsList.length}` : undefined}
         />
       )}
 
@@ -2281,6 +2335,34 @@ export const DeepDiveGame = () => {
           }
         }}
       />
+
+      <AchievementsPanel
+        open={achievementsOpen}
+        onClose={() => setAchievementsOpen(false)}
+        achievements={achievementsList}
+      />
+
+      {achievementToast && (
+        <div style={{
+          position: "absolute",
+          top: 20,
+          left: "50%",
+          transform: "translateX(-50%)",
+          background: "rgba(0,40,60,0.95)",
+          border: "1px solid rgba(0,255,255,0.5)",
+          borderRadius: 12,
+          padding: "12px 24px",
+          color: "#00ffff",
+          fontWeight: 800,
+          fontSize: "1.1rem",
+          zIndex: 9999,
+          textAlign: "center",
+          boxShadow: "0 0 20px rgba(0,255,255,0.3)",
+          pointerEvents: "none",
+        }}>
+          Achievement Unlocked: {achievementToast}
+        </div>
+      )}
     </div>
   );
 };

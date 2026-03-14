@@ -218,7 +218,7 @@ export const missionsAPI = {
 
   async postEvent(
     event:
-      | { type: 'run_end'; score: number; tubePieces?: number; tubeCharges?: number }
+      | { type: 'run_end'; score: number; tubePieces?: number; tubeCharges?: number; deathCause?: string | null; perfectPlatformer?: boolean; allOxygenCollected?: boolean }
       | { type: 'oxygen_collected'; count?: number }
   ): Promise<
     | {
@@ -233,6 +233,7 @@ export const missionsAPI = {
         rewards?: { streak?: { dolphin: number; streakDays: number } };
         coinsEarned?: number;
         inventory?: { dolphinSaved: number; coins: number; tube?: TubeState; skins?: SkinState };
+        newAchievements?: string[];
       }
     | null
   > {
@@ -313,6 +314,29 @@ export const inventoryAPI = {
       return await res.json();
     } catch {
       return null;
+    }
+  },
+};
+
+export type AchievementEntry = {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  reward: { type: string; amount: number };
+  unlocked: boolean;
+  unlockedAt: number | null;
+};
+
+export const achievementsAPI = {
+  async getAll(): Promise<AchievementEntry[]> {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/achievements`, { credentials: 'include' });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.achievements || [];
+    } catch {
+      return [];
     }
   },
 };
