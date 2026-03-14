@@ -1,6 +1,6 @@
 # Deep Dive Dash — Game Design Document (Current)
 
-> **Last updated**: 2026-02-17
+> **Last updated**: 2026-03-14
 > **Status**: Reflects the actual shipped state of the codebase plus planned features.
 
 ---
@@ -23,7 +23,7 @@
 ### Non-Goals (Current)
 
 - Real-money IAP or virtual currency economy (not yet implemented).
-- Real-time multiplayer or PvP.
+- Network-based multiplayer (current PvP is same-device only; ghost race deferred).
 - OAuth / social login (Google, Apple, etc.).
 - Advanced anti-cheat at scale.
 - Native mobile apps.
@@ -236,6 +236,107 @@ Three fixed missions per day (reset daily based on client timezone):
 
 ---
 
+## 8.5) PVP Mode — LIVE
+
+Same-device 2-player split-screen battle mode. Two submarines run identical procedurally generated worlds simultaneously; the last player alive wins the round.
+
+### 8.5.1 Split-Screen Layout
+
+```
+┌─────────────────────────┐
+│     PLAYER 1 (top)      │  height/2 - 2px
+│   ← submarine game →   │
+├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┤  4px dashed divider
+│     PLAYER 2 (bottom)   │  height/2 - 2px
+│   ← submarine game →   │
+└─────────────────────────┘
+```
+
+- Single canvas, two clipped viewport regions
+- Each player has independent HUD (score, oxygen bar, items)
+- Divider: white dashed line with "P1"/"P2" labels
+
+### 8.5.2 Controls
+
+| Action | Player 1 | Player 2 |
+|--------|----------|----------|
+| Jump / Hold jump | `Space` | `Arrow Up` |
+| Touch (mobile) | Tap top half | Tap bottom half |
+
+### 8.5.3 Identical Worlds (Seeded RNG)
+
+- Each round generates a random seed (`Date.now()`)
+- Both players share the same seed → deterministic `mulberry32` PRNG
+- Platform layout, gap positions, item spawns, and background entities are identical
+- Each player has their own RNG instance (initialized from the same seed) to maintain sync
+
+### 8.5.4 Match Formats
+
+| Format | Description |
+|--------|-------------|
+| **Single** | One round, winner takes all |
+| **Best of 3** | First to 2 round wins |
+| **Best of 5** | First to 3 round wins |
+
+- Between rounds: result overlay shows series score and "Next Round" button
+- Fresh world (new seed) each round
+
+### 8.5.5 Power-Up Modes
+
+| Mode | Items That Spawn | Inventory Items | Login Required |
+|------|-----------------|-----------------|----------------|
+| **Earned Only** (default) | Oxygen, Swordfish, Turtle Shell, Tube Pieces | None | No |
+| **Inventory** | All above + Dolphins & Tubes from account | Dolphins, Tube charges loaded at match start | Yes |
+| **None** | Oxygen only | None | No |
+| **Score Attack** | Oxygen, Swordfish, Turtle Shell, Tube Pieces, Urchins | None | No |
+
+### 8.5.6 Score Attack Mode
+
+Items have **no gameplay effect** (no swordfish flight, no turtle rescue, urchins don't kill). Instead, each item collected modifies the score:
+
+| Item | Points |
+|------|--------|
+| Swordfish | +300 |
+| Turtle Shell | +100 |
+| Tube Piece | +75 |
+| Urchin | -500 |
+
+- Winner determined by highest score (not last alive)
+- Floating point indicators appear below the score meter for each item collected (+300, -500, etc.), rising and fading over 1.5 seconds
+- Oxygen still depletes and kills normally
+
+### 8.5.7 Win Condition
+
+- **Standard modes (Earned/Inventory/None)**: Last player alive wins the round. If both die simultaneously, it's a draw.
+- **Score Attack**: When one player dies, the other wins. If both die in the same frame, highest score wins.
+
+### 8.5.8 Betting System
+
+- **Optional**: Toggled on/off in the lobby
+- **Login required**: Both players must authenticate
+- **Bettable items**: Coins, Dolphins, Tube Pieces
+- **Flow**:
+  1. Both players set their bet amounts (capped at owned inventory)
+  2. Both must confirm before match starts
+  3. On match completion, winner receives loser's bet items
+- **Backend**: `POST /api/pvp/settle-bet` — atomic transfer via Redis; validates both users, transfers available amounts (handles race conditions gracefully)
+- **Symmetry**: Each player sets their own bet independently
+
+### 8.5.9 Pre-Game Flow
+
+1. **PVP Lobby**: Select match format, power-up mode, betting (if applicable)
+2. **Instructions Screen** (4 seconds): Shows player positions, controls, mode rules, Score Attack point values (if applicable)
+3. **Countdown**: 3... 2... 1... GO!
+4. **Gameplay**: Split-screen battle
+5. **Round Result**: Winner announcement, series score
+6. **Match Result** (final round): Winner declaration, bet settlement summary
+
+### 8.5.10 Score Isolation
+
+PVP scores are **never** submitted to the weekly leaderboard. PVP is a local competitive experience only.
+
+---
+
 ## 9) Authentication & Backend — LIVE
 
 ### 9.1 Auth System
@@ -265,6 +366,7 @@ Three fixed missions per day (reset daily based on client timezone):
 | POST | `/api/missions/event` | Report mission event |
 | POST | `/api/inventory/dolphin/consume` | Consume 1 dolphin |
 | POST | `/api/inventory/dolphin/import` | Import legacy localStorage dolphins |
+| POST | `/api/pvp/settle-bet` | PVP bet settlement (transfer items winner↔loser) |
 | GET | `/api/health` | Health check |
 
 ### 9.3 Infrastructure
@@ -507,6 +609,7 @@ The outdated "Game Design Document" contained several discrepancies from the act
 - Wager uses coins only (virtual, no real-money cash-out).
 - Winner gets `stake * 0.9` (10% fee sink).
 - **Status**: Not implemented. Explicitly deferred; requires coin economy first.
+- **Note**: Same-device PvP is now live (see Section 8.5). Ghost Race would be a network-based asynchronous variant.
 
 ---
 
@@ -579,7 +682,14 @@ The outdated "Game Design Document" contained several discrepancies from the act
 | `src/drawing.ts` | Canvas drawing functions (swordfish, urchin, items) |
 | `src/api.ts` | API client (leaderboard, auth, missions, inventory) |
 | `src/components/UIOverlays.tsx` | All UI overlays (HUD, menus, modals) |
+| `src/pvp/pvpTypes.ts` | PVP type definitions (PvpPlayerState, PvpMatchConfig, PvpBet, etc.) |
+| `src/pvp/pvpWorld.ts` | Seeded RNG (mulberry32) + deterministic world generation |
+| `src/pvp/pvpGameLogic.ts` | Pure game update functions for PVP (physics, collision, items) |
+| `src/pvp/pvpRenderer.ts` | Split-screen rendering (viewports, HUD, effects, score popups) |
+| `src/pvp/PvpGame.tsx` | PVP game component (game loop, input, round/match management) |
+| `src/pvp/PvpLobby.tsx` | PVP lobby UI (mode selection, betting, login) |
 | `api/` | Vercel serverless functions |
-| `api/_lib/` | Shared backend helpers (Redis, auth, dolphin inventory, weekly leaderboard) |
-| `backend/src/server.js` | Express dev server (~911 lines) |
+| `api/_lib/` | Shared backend helpers (Redis, auth, dolphin/coin/tube inventory, weekly leaderboard) |
+| `api/pvp/settle-bet.ts` | PVP bet settlement endpoint (atomic item transfer) |
+| `backend/src/server.js` | Express dev server (~911 lines, includes PVP settle-bet route) |
 | `shared/` | Profanity filter + week boundary calculations |

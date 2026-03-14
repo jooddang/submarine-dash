@@ -26,7 +26,7 @@ React 19 + HTML5 Canvas 기반 브라우저 게임 모놀리스. 프론트엔드
 ```
 submarine-dash/
 ├── index.html                          # Entry HTML (mobile-optimized viewport)
-├── index.tsx                           # React entry point, mounts DeepDiveGame
+├── index.tsx                           # React entry point, App routing (싱글/PVP)
 ├── package.json                        # Frontend dependencies & scripts
 ├── vite.config.ts                      # Vite build config
 ├── tsconfig.json                       # TypeScript config (ES2022, React JSX)
@@ -51,9 +51,17 @@ submarine-dash/
 │   ├── audio.ts                        # Web Audio API 합성 사운드
 │   ├── graphics.ts                     # 색상 보간 헬퍼
 │   ├── drawing.ts                      # Canvas 드로잉 함수 (황새치, 성게 등)
-│   ├── api.ts                          # API 클라이언트 (리더보드, 인증, 미션, 인벤토리)
-│   └── components/
-│       └── UIOverlays.tsx              # 모든 UI 오버레이 (HUD, 메뉴, 모달, 리더보드)
+│   ├── api.ts                          # API 클라이언트 (리더보드, 인증, 미션, 인벤토리, PVP)
+│   ├── skins.ts                        # 잠수함 스킨 렌더링 & 트레일 파티클
+│   ├── components/
+│   │   └── UIOverlays.tsx              # 모든 UI 오버레이 (HUD, 메뉴, 모달, 리더보드)
+│   └── pvp/                            # PVP 모드 전용 모듈
+│       ├── pvpTypes.ts                 # PVP 타입 정의 (PvpPlayerState, PvpMatchConfig 등)
+│       ├── pvpWorld.ts                 # 시드 RNG + 결정적 월드 생성
+│       ├── pvpGameLogic.ts             # 순수 게임 로직 함수 (업데이트, 물리, 충돌)
+│       ├── pvpRenderer.ts              # 분할 화면 렌더링 (뷰포트, HUD, 이펙트)
+│       ├── PvpGame.tsx                 # PVP 게임 메인 컴포넌트 (게임 루프, 입력, 라운드 관리)
+│       └── PvpLobby.tsx                # PVP 로비 UI (모드 선택, 베팅, 로그인)
 │
 ├── api/                                # Vercel 서버리스 함수 (프로덕션)
 │   ├── health.ts                       # 헬스 체크
@@ -73,6 +81,8 @@ submarine-dash/
 │   │   └── dolphin/
 │   │       ├── consume.ts              # 돌고래 1개 소모
 │   │       └── import.ts              # 레거시 돌고래 마이그레이션
+│   ├── pvp/
+│   │   └── settle-bet.ts              # PVP 베팅 정산 (아이템 이전)
 │   └── _lib/
 │       ├── redis.ts                    # Upstash Redis 클라이언트
 │       ├── auth.ts                     # 인증 헬퍼 (해싱, 세션, 쿠키)
@@ -114,6 +124,14 @@ submarine-dash/
 ### `src/constants.ts`
 - **역할**: 모든 게임 튜닝 상수 (물리, 스폰 확률, 타이밍 등).
 - **규칙**: 매직 넘버를 Game.tsx에 직접 쓰지 않는다. 여기에 정의 후 import.
+
+### `src/pvp/`
+- **역할**: PVP 모드 전용 코드. 분할 화면 2인 대전 게임 로직, 렌더링, UI.
+- **규칙**: Game.tsx의 단일 플레이어 로직을 직접 import하지 않는다. 공유 모듈(drawing, audio, entities, constants, skins)은 재사용하되, 게임 루프와 상태 관리는 독립적으로 구현. `PvpPlayerState` 객체(mutable plain object)를 순수 함수로 업데이트.
+
+### `api/pvp/`
+- **역할**: PVP 관련 서버리스 API 엔드포인트 (현재: 베팅 정산).
+- **규칙**: `api/_lib/`의 인벤토리 헬퍼를 재사용. 양 플레이어 인증 검증 필수.
 
 ### `api/`
 - **역할**: Vercel 서버리스 함수 (프로덕션 API).
@@ -179,6 +197,8 @@ Redis                          (Storage)
 | Canvas 드로잉 함수 | `src/drawing.ts` |
 | 사운드 이펙트 | `src/audio.ts` |
 | API 호출 클라이언트 | `src/api.ts` |
+| PVP 게임 로직 / 렌더링 / UI | `src/pvp/` |
+| PVP 서버 API | `api/pvp/` |
 | 새 API 엔드포인트 (프로덕션) | `api/[domain]/[action].ts` |
 | API 공유 헬퍼 (프로덕션) | `api/_lib/` |
 | 새 API 엔드포인트 (개발) | `backend/src/server.js` (기존 파일에 추가) |
@@ -223,3 +243,13 @@ Redis                          (Storage)
 - **결정**: Web Audio API OscillatorNode로 모든 SFX를 런타임 합성.
 - **근거**: 에셋 파일 0개, 번들 크기 절감, 라이선스 문제 없음.
 - **대안**: 오디오 파일 (.mp3/.ogg) — BGM 추가 시 재검토 필요.
+
+### ADR-006: PVP 모드 — 독립 모듈 + 순수 함수 아키텍처
+- **상태**: Accepted
+- **맥락**: 동일 디바이스 2인 분할 화면 PVP 모드 추가 필요. Game.tsx의 단일 플레이어 로직(~2100줄, mutable refs 기반)을 재사용할지 새로 구현할지 결정.
+- **결정**: `src/pvp/` 하위에 독립 모듈로 구현. Game.tsx의 업데이트/렌더링 로직을 순수 함수로 재구현하여 `PvpPlayerState` 객체에 대해 동작하도록 설계. 공유 유틸리티(drawing, audio, entities, constants, skins)는 재사용.
+- **근거**:
+  - Game.tsx가 React refs에 강하게 결합되어 있어, 두 플레이어 상태를 분리하려면 대규모 리팩토링 필요.
+  - 순수 함수 접근은 동일 시드로 두 플레이어에게 동일 월드를 생성하기 용이.
+  - 기존 단일 플레이어 모드에 영향을 주지 않음 (무회귀).
+- **대안**: Game.tsx를 리팩토링하여 공유 (리스크 높음, 회귀 위험), iframe 2개 (입력/상태 동기화 복잡).
