@@ -1273,6 +1273,73 @@ app.delete('/api/leaderboard', async (req, res) => {
   }
 });
 
+// ─── PVP: Settle Bet ──────────────────────────────────────────
+app.post('/api/pvp/settle-bet', async (req, res) => {
+  if (!redis) return res.status(500).json({ error: 'No Redis' });
+  try {
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Login required' });
+
+    const { winnerUserId, loserUserId, bet } = req.body || {};
+    if (!winnerUserId || !loserUserId || !bet) {
+      return res.status(400).json({ error: 'Missing winnerUserId, loserUserId, or bet' });
+    }
+    if (userId !== winnerUserId && userId !== loserUserId) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    const transferred = { coins: 0, dolphins: 0, tubePieces: 0 };
+
+    // Coins
+    const requestedCoins = Math.max(0, Math.floor(bet.coins || 0));
+    if (requestedCoins > 0) {
+      const loserCoins = await getCoinBalance(loserUserId);
+      const actual = Math.min(requestedCoins, loserCoins);
+      if (actual > 0) {
+        await redis.decrby(keyCoinBalance(loserUserId), actual);
+        await redis.incrby(keyCoinBalance(winnerUserId), actual);
+        transferred.coins = actual;
+      }
+    }
+
+    // Dolphins
+    const requestedDolphins = Math.max(0, Math.floor(bet.dolphins || 0));
+    if (requestedDolphins > 0) {
+      const loserDolphinsRaw = await redis.get(keyDolphinSaved(loserUserId));
+      const loserDolphins = Math.max(0, parseInt(loserDolphinsRaw) || 0);
+      const actual = Math.min(requestedDolphins, loserDolphins);
+      if (actual > 0) {
+        await redis.decrby(keyDolphinSaved(loserUserId), actual);
+        await redis.incrby(keyDolphinSaved(winnerUserId), actual);
+        transferred.dolphins = actual;
+      }
+    }
+
+    // Tube pieces
+    const requestedTubes = Math.max(0, Math.floor(bet.tubePieces || 0));
+    if (requestedTubes > 0) {
+      const keyTube = (uid) => `${KEY_PREFIX}user:${uid}:tube`;
+      const loserTubeRaw = await redis.get(keyTube(loserUserId));
+      const loserTube = loserTubeRaw ? JSON.parse(loserTubeRaw) : { pieces: 0, charges: 0 };
+      const actual = Math.min(requestedTubes, loserTube.pieces || 0);
+      if (actual > 0) {
+        loserTube.pieces -= actual;
+        await redis.set(keyTube(loserUserId), JSON.stringify(loserTube));
+        const winnerTubeRaw = await redis.get(keyTube(winnerUserId));
+        const winnerTube = winnerTubeRaw ? JSON.parse(winnerTubeRaw) : { pieces: 0, charges: 0 };
+        winnerTube.pieces += actual;
+        await redis.set(keyTube(winnerUserId), JSON.stringify(winnerTube));
+        transferred.tubePieces = actual;
+      }
+    }
+
+    return res.json({ ok: true, transferred });
+  } catch (error) {
+    console.error('POST /api/pvp/settle-bet error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({
