@@ -3,7 +3,7 @@ import type { LeaderboardEntry, WeeklyLeaderboard } from "../types";
 import { OXYGEN_MAX, TUBE_PIECE_UNLOCK_SCORE, TUBE_PIECES_PER_TUBE } from "../constants";
 import { SKIN_CATALOG, RARITY_COLORS, getSkinImage, getSkinDef, type SkinDef, type SkinRarity } from "../skins";
 import { useRef, useEffect } from "react";
-import type { AchievementEntry } from "../api";
+import type { AchievementEntry, UserAchievementSummary } from "../api";
 import turtleShellItemImg from "../../turtle-shell-item.png";
 import dolphinItemImg from "../../dolphin.png";
 import tubeImg from "../../tube.png";
@@ -1016,6 +1016,7 @@ export const DolphinWeeklyWinnerRewardOverlay: React.FC<{ open: boolean; weekId?
 interface LeaderboardProps {
   leaderboard: LeaderboardEntry[];
   lastSubmittedId: number | null;
+  userAchievements?: Record<string, UserAchievementSummary>;
 }
 
 const ICON_W = 28;
@@ -1068,7 +1069,69 @@ function LeaderboardSkinIcon({ skinId }: { skinId?: string }) {
   );
 }
 
-export const Leaderboard: React.FC<LeaderboardProps> = ({ leaderboard, lastSubmittedId }) => (
+const CATEGORY_ICONS: Record<string, string> = {
+  score: "\u{1F3AF}",
+  skill: "\u{2B50}",
+  skin: "\u{1F3A8}",
+  death: "\u{1F480}",
+  daily: "\u{1F525}",
+};
+
+function AchievementBadges({ summary }: { summary?: UserAchievementSummary }) {
+  const [expanded, setExpanded] = React.useState(false);
+
+  if (!summary || summary.count === 0) return null;
+
+  return (
+    <div style={{ marginTop: 2 }}>
+      <span
+        onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
+        style={{
+          cursor: "pointer",
+          fontSize: "11px",
+          color: "#ffd700",
+          background: "rgba(255, 215, 0, 0.15)",
+          borderRadius: 4,
+          padding: "1px 5px",
+          userSelect: "none",
+        }}
+      >
+        {"\u{1F3C6}"} {summary.count}
+        <span style={{ marginLeft: 3, fontSize: "9px", color: "rgba(255,215,0,0.7)" }}>
+          {expanded ? "\u25B2" : "\u25BC"}
+        </span>
+      </span>
+      {expanded && (
+        <div style={{
+          marginTop: 3,
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 3,
+        }}>
+          {summary.achievements.map(a => (
+            <span
+              key={a.id}
+              title={a.name}
+              style={{
+                fontSize: "10px",
+                color: "#fff",
+                background: "rgba(0, 255, 255, 0.15)",
+                border: "1px solid rgba(0, 255, 255, 0.3)",
+                borderRadius: 3,
+                padding: "1px 4px",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {CATEGORY_ICONS[a.category] || "\u{1F3C6}"} {a.name}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export const Leaderboard: React.FC<LeaderboardProps> = ({ leaderboard, lastSubmittedId, userAchievements }) => (
   <div style={{ marginTop: "20px", textAlign: "left", background: "rgba(0,0,0,0.3)", padding: "20px", borderRadius: "10px", width: "min(560px, 92vw)", boxSizing: "border-box" }}>
     <h3 style={{ borderBottom: "1px solid #00ffff", paddingBottom: "10px", color: "#00ffff", margin: "0 0 10px 0", fontSize: "clamp(1.1rem, 4.2vw, 1.5rem)", letterSpacing: "clamp(0.5px, 0.4vw, 1px)", overflowWrap: "anywhere" }}>LEADERBOARD</h3>
     <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -1078,9 +1141,9 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ leaderboard, lastSubmi
         ) : (
           leaderboard.map((entry, i) => (
             <tr key={i} style={{ color: entry.id === lastSubmittedId ? "#ffd700" : "white" }}>
-              <td style={{ padding: "5px 8px 5px 0", width: 24 }}>{i + 1}.</td>
+              <td style={{ padding: "5px 8px 5px 0", width: 24, verticalAlign: "top" }}>{i + 1}.</td>
               <td style={{ padding: "5px 8px 5px 0" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
                   <LeaderboardSkinIcon skinId={entry.skinId} />
                   <div style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 }}>
                     <span>{entry.name}</span>
@@ -1089,10 +1152,13 @@ export const Leaderboard: React.FC<LeaderboardProps> = ({ leaderboard, lastSubmi
                         {entry.userId}
                       </span>
                     )}
+                    {entry.userId && userAchievements && (
+                      <AchievementBadges summary={userAchievements[entry.userId]} />
+                    )}
                   </div>
                 </div>
               </td>
-              <td style={{ padding: "5px 0", textAlign: "right" }}>{entry.score}</td>
+              <td style={{ padding: "5px 0", textAlign: "right", verticalAlign: "top" }}>{entry.score}</td>
             </tr>
           ))
         )}
@@ -1466,6 +1532,7 @@ interface MenuOverlayProps {
   onPvpClick?: () => void;
   streakCurrent?: number;
   coinBalance?: number;
+  userAchievements?: Record<string, UserAchievementSummary>;
 }
 
 export const MenuOverlay: React.FC<MenuOverlayProps> = ({
@@ -1486,6 +1553,7 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
   onPvpClick,
   streakCurrent,
   coinBalance,
+  userAchievements,
 }) => (
   <div style={overlayStyle} data-allow-scroll="1">
     <h1 style={titleStyle}>DEEP DIVE DASH</h1>
@@ -1741,7 +1809,7 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
         LOG IN / SIGN UP
       </button>
     ))}
-    <Leaderboard leaderboard={leaderboard} lastSubmittedId={lastSubmittedId} />
+    <Leaderboard leaderboard={leaderboard} lastSubmittedId={lastSubmittedId} userAchievements={userAchievements} />
     {!!weeklyLeaderboards && weeklyLeaderboards.length > 0 && (
       <WeeklyLeaderboardHistory weeks={weeklyLeaderboards} excludeWeekId={currentWeekId ?? undefined} />
     )}
@@ -1834,9 +1902,10 @@ interface GameOverOverlayProps {
   currentWeekId?: string | null;
   coinsEarned?: number;
   coinBalance?: number;
+  userAchievements?: Record<string, UserAchievementSummary>;
 }
 
-export const GameOverOverlay: React.FC<GameOverOverlayProps> = ({ score, didSubmit, leaderboard, lastSubmittedId, weeklyLeaderboards, currentWeekId, coinsEarned, coinBalance }) => (
+export const GameOverOverlay: React.FC<GameOverOverlayProps> = ({ score, didSubmit, leaderboard, lastSubmittedId, weeklyLeaderboards, currentWeekId, coinsEarned, coinBalance, userAchievements }) => (
   <div style={overlayStyle} data-allow-scroll="1">
     <h1 style={{ ...titleStyle, color: didSubmit ? "#ffd700" : "#ff6b6b" }}>
       {didSubmit ? "LEADERBOARD" : "GAME OVER"}
@@ -1852,7 +1921,7 @@ export const GameOverOverlay: React.FC<GameOverOverlayProps> = ({ score, didSubm
         )}
       </div>
     )}
-    <Leaderboard leaderboard={leaderboard} lastSubmittedId={lastSubmittedId} />
+    <Leaderboard leaderboard={leaderboard} lastSubmittedId={lastSubmittedId} userAchievements={userAchievements} />
     {!!weeklyLeaderboards && weeklyLeaderboards.length > 0 && (
       <WeeklyLeaderboardHistory weeks={weeklyLeaderboards} excludeWeekId={currentWeekId ?? undefined} />
     )}

@@ -328,6 +328,11 @@ export type AchievementEntry = {
   unlockedAt: number | null;
 };
 
+export type UserAchievementSummary = {
+  count: number;
+  achievements: { id: string; name: string; category: string }[];
+};
+
 export const achievementsAPI = {
   async getAll(): Promise<AchievementEntry[]> {
     try {
@@ -337,6 +342,20 @@ export const achievementsAPI = {
       return data.achievements || [];
     } catch {
       return [];
+    }
+  },
+
+  async getByUsers(loginIds: string[]): Promise<Record<string, UserAchievementSummary>> {
+    if (loginIds.length === 0) return {};
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/achievements/users?loginIds=${encodeURIComponent(loginIds.join(','))}`,
+      );
+      if (!res.ok) return {};
+      const data = await res.json();
+      return data.users || {};
+    } catch {
+      return {};
     }
   },
 };

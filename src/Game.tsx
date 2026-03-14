@@ -7,7 +7,7 @@ import { createBubble, spawnBackgroundEntity } from "./entities";
 import { drawSwordfish, drawUrchin, drawBackgroundEntities, drawTurtleShell } from "./drawing";
 import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, AuthModal, DailyMissionsPanel, DolphinStreakRewardOverlay, DolphinWeeklyWinnerRewardOverlay, InventoryPanel, SkinPanel, AchievementsPanel } from "./components/UIOverlays";
 import { getSkinDef, drawSubmarine, updateTrailParticles, drawTrailParticles, isGoldenTubeEligible, GOLDEN_TUBE_EXTRA_CHARGES, GOLDEN_TUBE_EXTRA_SCORE_BONUS, DEFAULT_SKIN_ID, preloadSkinImages, type TrailParticle, type SkinDef } from "./skins";
-import { authAPI, inventoryAPI, leaderboardAPI, missionsAPI, achievementsAPI, type DailyMissionsResponse, type AuthUser } from "./api";
+import { authAPI, inventoryAPI, leaderboardAPI, missionsAPI, achievementsAPI, type DailyMissionsResponse, type AuthUser, type UserAchievementSummary } from "./api";
 import turtleRescueImg from "../turtle.png";
 import turtleShellItemImg from "../turtle-shell-item.png";
 import tubeImg from "../tube.png";
@@ -90,6 +90,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void }> = ({ onPvpClick
   const distanceRef = useRef<number>(0);
 
   const quickSandTimerRef = useRef<number | null>(null);
+  const wasTrappedInQuickSandRef = useRef<boolean>(false);
 
   // Swordfish Power-up Refs
   const swordfishTimerRef = useRef<number>(0);
@@ -188,6 +189,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void }> = ({ onPvpClick
   const [achievementsOpen, setAchievementsOpen] = useState(false);
   const [achievementsList, setAchievementsList] = useState<{ id: string; name: string; description: string; category: string; reward: { type: string; amount: number }; unlocked: boolean; unlockedAt: number | null }[]>([]);
   const [achievementToast, setAchievementToast] = useState<string | null>(null);
+  const [userAchievements, setUserAchievements] = useState<Record<string, UserAchievementSummary>>({});
 
   // Dolphin is sourced from Redis (server is source of truth).
   // Client state is a cache for UI; it is reconciled via /auth/me, /missions/daily, and consume endpoint.
@@ -288,6 +290,13 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void }> = ({ onPvpClick
     }
   };
 
+  const fetchUserAchievements = (entries: LeaderboardEntry[]) => {
+    const loginIds = [...new Set(entries.map(e => e.userId).filter((id): id is string => !!id))];
+    if (loginIds.length > 0) {
+      achievementsAPI.getByUsers(loginIds).then(setUserAchievements).catch(() => undefined);
+    }
+  };
+
   useEffect(() => {
     // Load leaderboard from backend API
     const loadLeaderboard = async () => {
@@ -299,10 +308,12 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void }> = ({ onPvpClick
           setWeeklyLeaderboards(data.weeks || []);
           setLeaderboard(data.current || []);
           leaderboardRef.current = data.current || [];
+          fetchUserAchievements(data.current || []);
         } catch {
           const data = await leaderboardAPI.getLeaderboard();
           setLeaderboard(data);
           leaderboardRef.current = data;
+          fetchUserAchievements(data);
         }
       } catch (e) {
         console.error("Failed to load leaderboard", e);
@@ -779,6 +790,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void }> = ({ onPvpClick
     speedRef.current = Constants.GAME_SPEED_START;
     distanceRef.current = 0;
     quickSandTimerRef.current = null;
+    wasTrappedInQuickSandRef.current = false;
     didSubmitRef.current = false;
     didSendRunEndRef.current = false;
     dolphinUsesThisRunRef.current = 0;
@@ -904,6 +916,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void }> = ({ onPvpClick
     turtleShellSavedRef.current = false;
     setHasTurtleShell(false);
     turtleShellUseCountRef.current += 1;
+    wasTrappedInQuickSandRef.current = false;
 
     // Find the next NORMAL platform after the quicksand they fell from
     const targetPlat = platformsRef.current
@@ -1314,6 +1327,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void }> = ({ onPvpClick
         setLeaderboard(result.leaderboard);
         leaderboardRef.current = result.leaderboard;
         setLastSubmittedId(result.entry.id);
+        fetchUserAchievements(result.leaderboard);
       }
     } catch (error) {
       console.error("Failed to submit high score:", error);
@@ -1389,6 +1403,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void }> = ({ onPvpClick
           setLeaderboard(result.leaderboard);
           leaderboardRef.current = result.leaderboard;
           setLastSubmittedId(result.entry.id);
+          fetchUserAchievements(result.leaderboard);
         }
         didSubmitRef.current = true;
         gameStateRef.current = "GAME_OVER";
@@ -1563,6 +1578,30 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void }> = ({ onPvpClick
     let trappedQuickSand: Platform | null = null;
     player.isTrapped = false;
 
+    // Mark all contiguous platforms as landed (treats touching platforms as one island)
+    const markIslandLanded = (landedPlat: Platform) => {
+      landedPlat.landed = true;
+      const platforms = platformsRef.current;
+      // Propagate forward: mark touching platforms to the right
+      for (let i = platforms.indexOf(landedPlat) + 1; i < platforms.length; i++) {
+        const prev = platforms[i - 1];
+        if (Math.abs(prev.x + prev.width - platforms[i].x) < 1) {
+          platforms[i].landed = true;
+        } else {
+          break;
+        }
+      }
+      // Propagate backward: mark touching platforms to the left
+      for (let i = platforms.indexOf(landedPlat) - 1; i >= 0; i--) {
+        const next = platforms[i + 1];
+        if (Math.abs(platforms[i].x + platforms[i].width - next.x) < 1) {
+          platforms[i].landed = true;
+        } else {
+          break;
+        }
+      }
+    };
+
     for (const plat of platformsRef.current) {
       if (
         player.x < plat.x + plat.width &&
@@ -1583,19 +1622,22 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void }> = ({ onPvpClick
 
         if (plat.sinking) {
           player.isTrapped = true;
-          if (plat.type === "QUICKSAND") trappedQuickSand = plat;
+          if (plat.type === "QUICKSAND") {
+            trappedQuickSand = plat;
+            wasTrappedInQuickSandRef.current = true;
+          }
           if (player.dy >= 0 || player.grounded) {
             player.y = plat.y - player.height + 15;
             player.dy = 0;
             onGround = true;
-            plat.landed = true;
+            markIslandLanded(plat);
           }
         } else {
           if (player.dy > 0) {
             player.y = plat.y - player.height;
             player.dy = 0;
             onGround = true;
-            plat.landed = true;
+            markIslandLanded(plat);
           }
         }
       }
@@ -1631,7 +1673,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void }> = ({ onPvpClick
         startTubeRescueFromFall();
         return;
       }
-      if (player.isTrapped) {
+      if (wasTrappedInQuickSandRef.current) {
         playSound('die_quicksand');
         deathCauseRef.current = 'quicksand';
       } else {
@@ -2230,6 +2272,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void }> = ({ onPvpClick
           }}
           achievementProgress={achievementsList.length > 0 ? `${achievementsList.filter(a => a.unlocked).length}/${achievementsList.length}` : undefined}
           onPvpClick={onPvpClick}
+          userAchievements={userAchievements}
         />
       )}
 
@@ -2259,6 +2302,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void }> = ({ onPvpClick
           currentWeekId={currentWeekId}
           coinsEarned={coinsEarnedLastRun}
           coinBalance={coinBalance}
+          userAchievements={userAchievements}
         />
       )}
 
