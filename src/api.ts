@@ -388,3 +388,265 @@ export const pvpAPI = {
     }
   },
 };
+
+// --- Online PvP API ---
+export const onlinePvpAPI = {
+  async getWsTicket(): Promise<{ ticket: string; user: { userId: string; loginId: string }; expiresAt: number }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/ws-ticket`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+    });
+    if (!res.ok) throw new Error(`WS ticket failed (${res.status})`);
+    return res.json();
+  },
+
+  async bootstrap(): Promise<{
+    user: { userId: string; loginId: string; refCode: string };
+    inventory: { coins: number; dolphinSaved: number; tube: { pieces: number; charges: number }; skins: { owned: string[]; equipped: string } };
+    inboxUnreadCount: number;
+    activeRoomSummary: import('./pvp-online/onlinePvpTypes').OnlineRoom | null;
+  }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/bootstrap`, { credentials: 'include' });
+    if (!res.ok) throw new Error(`Bootstrap failed (${res.status})`);
+    return res.json();
+  },
+
+  async getInbox(cursor?: string, limit?: number): Promise<{ items: unknown[]; nextCursor: string | null }> {
+    const params = new URLSearchParams();
+    if (cursor) params.set('cursor', cursor);
+    if (limit) params.set('limit', String(limit));
+    const qs = params.toString();
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/inbox${qs ? '?' + qs : ''}`, { credentials: 'include' });
+    if (!res.ok) throw new Error(`Inbox failed (${res.status})`);
+    return res.json();
+  },
+
+  async markInboxRead(inboxId: string): Promise<{ ok: boolean }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/inbox/${inboxId}/read`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (!res.ok) throw new Error(`Mark read failed (${res.status})`);
+    return res.json();
+  },
+
+  async markAllInboxRead(): Promise<{ ok: boolean }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/inbox/read-all`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (!res.ok) throw new Error(`Mark all read failed (${res.status})`);
+    return res.json();
+  },
+
+  async getLobby(): Promise<{ users: { userId: string; loginId: string; status: string; enteredLobbyAt: number | null }[]; asOf: number }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/lobby`, { credentials: 'include' });
+    if (!res.ok) throw new Error(`Lobby failed (${res.status})`);
+    return res.json();
+  },
+
+  async getOpenRooms(): Promise<{ rooms: import('./pvp-online/onlinePvpTypes').OnlineRoom[]; asOf: number }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/lobby/rooms`, { credentials: 'include' });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Open rooms failed (${res.status}) ${text}`);
+    }
+    return res.json();
+  },
+
+  async enterLobby(): Promise<{ ok: boolean }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/lobby/enter`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (!res.ok) throw new Error(`Enter lobby failed (${res.status})`);
+    return res.json();
+  },
+
+  async leaveLobby(): Promise<{ ok: boolean }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/lobby/leave`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (!res.ok) throw new Error(`Leave lobby failed (${res.status})`);
+    return res.json();
+  },
+
+  async getRoom(roomId: string): Promise<{ room: unknown }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/rooms/${roomId}`, { credentials: 'include' });
+    if (!res.ok) throw new Error(`Room failed (${res.status})`);
+    return res.json();
+  },
+
+  async getMatch(matchId: string): Promise<{ match: unknown }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/matches/${matchId}`, { credentials: 'include' });
+    if (!res.ok) throw new Error(`Match failed (${res.status})`);
+    return res.json();
+  },
+
+  async sendMatchInput(matchId: string, seq: number, action: 'down' | 'up'): Promise<{ ok: boolean }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/matches/${matchId}/input`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ seq, action }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Match input failed (${res.status}) ${text}`);
+    }
+    return res.json();
+  },
+
+  async updateMatchState(matchId: string, payload: object): Promise<{ match: unknown }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/matches/${matchId}/state`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Match state update failed (${res.status}) ${text}`);
+    }
+    return res.json();
+  },
+
+  async createRoom(config: import('./pvp-online/onlinePvpTypes').RoomConfig, skinId: string): Promise<{ room: import('./pvp-online/onlinePvpTypes').OnlineRoom }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/rooms/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ config, skinId }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Create room failed (${res.status}) ${text}`);
+    }
+    return res.json();
+  },
+
+  async joinRoom(roomId: string, skinId: string): Promise<{ room: import('./pvp-online/onlinePvpTypes').OnlineRoom }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/rooms/join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ roomId, skinId }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Join room failed (${res.status}) ${text}`);
+    }
+    return res.json();
+  },
+
+  async updateRoomConfig(roomId: string, roomVersion: number, config: object): Promise<{ room: import('./pvp-online/onlinePvpTypes').OnlineRoom }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/rooms/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ roomVersion, config }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Update room config failed (${res.status}) ${text}`);
+    }
+    return res.json();
+  },
+
+  async setReady(roomId: string, roomVersion: number, ready: boolean): Promise<{ room: import('./pvp-online/onlinePvpTypes').OnlineRoom }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/rooms/ready`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ roomVersion, ready }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Set ready failed (${res.status}) ${text}`);
+    }
+    return res.json();
+  },
+
+  async leaveRoom(roomId: string, roomVersion: number): Promise<{ ok: boolean }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/rooms/leave`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ roomVersion }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Leave room failed (${res.status}) ${text}`);
+    }
+    return res.json();
+  },
+
+  async cancelRoom(roomId: string, roomVersion: number): Promise<{ ok: boolean }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/rooms/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ roomVersion }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Cancel room failed (${res.status}) ${text}`);
+    }
+    return res.json();
+  },
+
+  async sendInvite(
+    roomId: string,
+    roomVersion: number,
+    targetUserId?: string,
+    targetLoginId?: string,
+  ): Promise<{ invite: import('./pvp-online/onlinePvpTypes').PvpInvite }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/invites/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ roomVersion, targetUserId, targetLoginId }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Send invite failed (${res.status}) ${text}`);
+    }
+    return res.json();
+  },
+
+  async acceptInvite(inviteId: string): Promise<{ room: import('./pvp-online/onlinePvpTypes').OnlineRoom }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/invites/accept`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ inviteId }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Accept invite failed (${res.status}) ${text}`);
+    }
+    return res.json();
+  },
+
+  async declineInvite(inviteId: string): Promise<{ ok: boolean }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/invites/decline`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ inviteId }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Decline invite failed (${res.status}) ${text}`);
+    }
+    return res.json();
+  },
+
+  async getPendingInvites(): Promise<{ invites: import('./pvp-online/onlinePvpTypes').PvpInvite[] }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/invites/pending`, { credentials: 'include' });
+    if (!res.ok) throw new Error(`Get pending invites failed (${res.status})`);
+    return res.json();
+  },
+};

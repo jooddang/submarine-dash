@@ -4,6 +4,7 @@ import { OXYGEN_MAX, TUBE_PIECE_UNLOCK_SCORE, TUBE_PIECES_PER_TUBE } from "../co
 import { SKIN_CATALOG, RARITY_COLORS, getSkinImage, getSkinDef, type SkinDef, type SkinRarity } from "../skins";
 import { useRef, useEffect } from "react";
 import type { AchievementEntry, UserAchievementSummary } from "../api";
+import type { PvpInvite } from "../pvp-online/onlinePvpTypes";
 import turtleShellItemImg from "../../turtle-shell-item.png";
 import dolphinItemImg from "../../dolphin.png";
 import tubeImg from "../../tube.png";
@@ -87,6 +88,99 @@ const modalCardStyle: React.CSSProperties = {
   boxSizing: "border-box",
   color: "white",
   textAlign: "center",
+};
+
+type OnlineInvitePopupProps = {
+  invites: PvpInvite[];
+  busyInviteId?: string | null;
+  onAccept: (invite: PvpInvite) => void;
+  onDecline: (invite: PvpInvite) => void;
+};
+
+export const OnlineInvitePopup: React.FC<OnlineInvitePopupProps> = ({
+  invites,
+  busyInviteId,
+  onAccept,
+  onDecline,
+}) => {
+  if (invites.length === 0) return null;
+
+  const invite = invites[0];
+  const busy = busyInviteId === invite.inviteId;
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        top: 16,
+        right: 16,
+        zIndex: 120,
+        pointerEvents: "none",
+        width: "min(360px, calc(100vw - 32px))",
+      }}
+    >
+      <div
+        style={{
+          pointerEvents: "auto",
+          background: "rgba(0, 20, 40, 0.96)",
+          border: "1px solid rgba(0,255,255,0.35)",
+          boxShadow: "0 12px 28px rgba(0,0,0,0.35)",
+          borderRadius: 14,
+          padding: "14px 16px",
+          color: "white",
+          fontFamily: "monospace",
+        }}
+      >
+        <div style={{ fontSize: "0.82rem", fontWeight: 900, color: "#00ff88", letterSpacing: 0.8 }}>
+          ONLINE PVP INVITE
+        </div>
+        <div style={{ marginTop: 8, fontSize: "0.92rem", lineHeight: 1.45 }}>
+          <strong>{invite.fromLoginId}</strong> invited you to play.
+        </div>
+        {invites.length > 1 && (
+          <div style={{ marginTop: 6, fontSize: "0.75rem", color: "rgba(255,255,255,0.65)" }}>
+            {invites.length - 1} more invite{invites.length - 1 === 1 ? "" : "s"} pending
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <button
+            type="button"
+            onClick={() => onAccept(invite)}
+            disabled={busy}
+            style={{
+              flex: 1,
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid rgba(0,255,136,0.4)",
+              background: "rgba(0,255,136,0.16)",
+              color: "white",
+              fontWeight: 800,
+              cursor: busy ? "default" : "pointer",
+            }}
+          >
+            {busy ? "JOINING..." : "JOIN"}
+          </button>
+          <button
+            type="button"
+            onClick={() => onDecline(invite)}
+            disabled={busy}
+            style={{
+              flex: 1,
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid rgba(255,255,255,0.2)",
+              background: "rgba(255,255,255,0.06)",
+              color: "white",
+              fontWeight: 700,
+              cursor: busy ? "default" : "pointer",
+            }}
+          >
+            Decline
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 const panelTitleStyle: React.CSSProperties = {
@@ -1533,6 +1627,7 @@ interface MenuOverlayProps {
   onInboxClick?: () => void;
   inboxCount?: number;
   onPvpClick?: () => void;
+  onOnlinePvpClick?: () => void;
   streakCurrent?: number;
   coinBalance?: number;
   userAchievements?: Record<string, UserAchievementSummary>;
@@ -1554,6 +1649,7 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
   onInboxClick,
   inboxCount,
   onPvpClick,
+  onOnlinePvpClick,
   streakCurrent,
   coinBalance,
   userAchievements,
@@ -1642,6 +1738,33 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
           }}
         >
           PVP MODE
+        </button>
+      )}
+      {onOnlinePvpClick && loginId && (
+        <button
+          type="button"
+          onClick={onOnlinePvpClick}
+          style={{
+            padding: "12px 32px",
+            fontSize: "1.15rem",
+            background: "linear-gradient(135deg, rgba(0,255,136,0.2), rgba(0,180,255,0.25))",
+            color: "#fff",
+            border: "2px solid rgba(0,255,136,0.4)",
+            borderRadius: "12px",
+            cursor: "pointer",
+            fontWeight: 900,
+            letterSpacing: 1.5,
+            boxShadow: "0 0 20px rgba(0,255,136,0.12)",
+            marginBottom: 6,
+            position: "relative",
+          }}
+        >
+          ONLINE PVP
+          <span style={{
+            position: "absolute", top: -6, right: -10,
+            background: "#00ff88", color: "#001428", fontSize: "0.55rem",
+            fontWeight: 900, padding: "2px 6px", borderRadius: 6,
+          }}>NEW</span>
         </button>
       )}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>

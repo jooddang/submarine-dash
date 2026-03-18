@@ -1,7 +1,8 @@
 import type { Player, Platform, Item, Bubble, BackgroundEntity } from "../types";
+import type { SeededRNG } from '../pvp-core/rng';
 
-// --- Seeded RNG ---
-export type SeededRNG = () => number;
+// --- Seeded RNG (canonical source: pvp-core/rng.ts) ---
+export type { SeededRNG };
 
 // --- Power-up Mode ---
 export type PvpPowerUpMode = "inventory" | "earned" | "none" | "score_attack";
@@ -132,7 +133,7 @@ export interface ScorePopup {
 
 // --- Round Result ---
 export interface PvpRoundResult {
-  winner: 1 | 2;
+  winner: 0 | 1 | 2;
   p1Score: number;
   p2Score: number;
   p1DeathCause: string | null;

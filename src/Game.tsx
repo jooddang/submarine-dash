@@ -51,7 +51,7 @@ type TubeRescueState =
     lastCountdownDisplay: number | null;
   };
 
-export const DeepDiveGame: React.FC<{ onPvpClick?: () => void }> = ({ onPvpClick }) => {
+export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?: () => void }> = ({ onPvpClick, onOnlinePvpClick }) => {
   // --- Refs for Game Loop ---
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef<number>(0);
@@ -2273,6 +2273,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void }> = ({ onPvpClick
           }}
           achievementProgress={achievementsList.length > 0 ? `${achievementsList.filter(a => a.unlocked).length}/${achievementsList.length}` : undefined}
           onPvpClick={onPvpClick}
+          onOnlinePvpClick={onOnlinePvpClick}
           userAchievements={userAchievements}
         />
       )}

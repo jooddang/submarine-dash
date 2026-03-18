@@ -121,6 +121,76 @@ function clearSessionCookie(req, res) {
   res.setHeader('Set-Cookie', parts.join('; '));
 }
 
+function normalizeOnlineRoomConfig(config) {
+  const input = config && typeof config === 'object' ? config : {};
+  const sanitizeBet = (bet) => {
+    const raw = bet && typeof bet === 'object' ? bet : {};
+    return {
+      coins: Math.max(0, Math.floor(raw.coins || 0)),
+      dolphins: Math.max(0, Math.floor(raw.dolphins || 0)),
+      tubePieces: Math.max(0, Math.floor(raw.tubePieces || 0)),
+    };
+  };
+
+  return {
+    format: input.format === 'bo3' || input.format === 'bo5' || input.format === 'single' ? input.format : 'single',
+    powerUpMode:
+      input.powerUpMode === 'inventory' ||
+      input.powerUpMode === 'earned' ||
+      input.powerUpMode === 'none' ||
+      input.powerUpMode === 'score_attack'
+        ? input.powerUpMode
+        : 'earned',
+    betting: Boolean(input.betting),
+    p1Bet: sanitizeBet(input.p1Bet),
+    p2Bet: sanitizeBet(input.p2Bet),
+  };
+}
+
+async function getActivePvpRoomMembership(userId) {
+  if (!redis) return null;
+  const key = `sd:pvp:room-membership:${userId}`;
+  const roomId = await redis.get(key);
+  if (!roomId) return null;
+  const raw = await redis.get(`sd:pvp:room:${roomId}`);
+  if (!raw) {
+    await redis.del(key);
+    return null;
+  }
+  try {
+    const room = JSON.parse(raw);
+    if (room && room.phase !== 'CANCELED' && room.phase !== 'COMPLETED') {
+      return roomId;
+    }
+  } catch {}
+  await redis.del(key);
+  return null;
+}
+
+async function listJoinableRooms() {
+  const roomIds = await redis.smembers('sd:pvp:rooms:all');
+  const rooms = [];
+  for (const roomId of roomIds || []) {
+    const raw = await redis.get(`sd:pvp:room:${roomId}`);
+    if (!raw) {
+      await redis.srem('sd:pvp:rooms:all', roomId);
+      continue;
+    }
+    try {
+      const room = JSON.parse(raw);
+      if (room.phase === 'OPEN' && room.slots?.guest === null) {
+        rooms.push(room);
+      } else if (room.phase === 'CANCELED' || room.phase === 'COMPLETED') {
+        await redis.srem('sd:pvp:rooms:all', roomId);
+      }
+    } catch {
+      await redis.srem('sd:pvp:rooms:all', roomId);
+    }
+  }
+  rooms.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  return rooms;
+}
+
 function keyLoginId(loginIdLower) {
   return `${KEY_PREFIX}loginId:${loginIdLower}`;
 }
@@ -1381,6 +1451,739 @@ app.post('/api/pvp/settle-bet', async (req, res) => {
   } catch (error) {
     console.error('POST /api/pvp/settle-bet error:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// =============================================
+// Online PvP REST endpoints
+// =============================================
+
+app.post('/api/pvp-online/ws-ticket', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+    const userRaw = await redis.get(`${KEY_PREFIX}user:${userId}`);
+    if (!userRaw) return res.status(401).json({ error: 'User not found' });
+    const user = JSON.parse(userRaw);
+
+    const ticket = 'wst_' + crypto.randomBytes(16).toString('hex');
+    const expiresAt = Date.now() + 60000;
+    await redis.set(`sd:pvp:ws-ticket:${ticket}`, JSON.stringify({ userId: user.userId, loginId: user.loginId }), 'EX', 60);
+
+    return res.json({ ticket, user: { userId: user.userId, loginId: user.loginId }, expiresAt });
+  } catch (error) {
+    console.error('POST /api/pvp-online/ws-ticket error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/pvp-online/bootstrap', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+    const userRaw = await redis.get(`${KEY_PREFIX}user:${userId}`);
+    if (!userRaw) return res.status(401).json({ error: 'User not found' });
+    const user = JSON.parse(userRaw);
+
+    const [coinsRaw, dolphinsRaw, tubeRaw, skinsOwnedRaw, skinsEquipped, unreadRaw, activeRoomId] = await Promise.all([
+      redis.get(`sd:user:${userId}:coins`),
+      redis.get(`sd:user:${userId}:dolphin:saved`),
+      redis.get(`sd:user:${userId}:tube`),
+      redis.smembers(`sd:user:${userId}:skins:owned`),
+      redis.get(`sd:user:${userId}:skins:equipped`),
+      redis.get(`sd:inbox:unread:${userId}`),
+      getActivePvpRoomMembership(userId),
+    ]);
+
+    const tube = tubeRaw ? JSON.parse(tubeRaw) : { pieces: 0, charges: 0 };
+    const skins = { owned: skinsOwnedRaw && skinsOwnedRaw.length > 0 ? skinsOwnedRaw : ['default'], equipped: skinsEquipped || 'default' };
+
+    let activeRoomSummary = null;
+    if (activeRoomId) {
+      const roomRaw = await redis.get(`sd:pvp:room:${activeRoomId}`);
+      if (roomRaw) activeRoomSummary = JSON.parse(roomRaw);
+    }
+
+    return res.json({
+      user: { userId: user.userId, loginId: user.loginId, refCode: user.refCode },
+      inventory: {
+        coins: parseInt(coinsRaw || '0', 10) || 0,
+        dolphinSaved: parseInt(dolphinsRaw || '0', 10) || 0,
+        tube,
+        skins,
+      },
+      inboxUnreadCount: parseInt(unreadRaw || '0', 10) || 0,
+      activeRoomSummary,
+    });
+  } catch (error) {
+    console.error('GET /api/pvp-online/bootstrap error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/pvp-online/inbox', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+    const cursor = typeof req.query.cursor === 'string' ? parseInt(req.query.cursor, 10) : 0;
+    const limit = Math.min(typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : 20, 50);
+
+    const rawItems = await redis.lrange(`sd:inbox:${userId}`, cursor, cursor + limit - 1);
+    const items = rawItems.map(raw => { try { return JSON.parse(raw); } catch { return null; } }).filter(Boolean);
+    const totalLen = await redis.llen(`sd:inbox:${userId}`);
+    const nextCursor = cursor + limit < totalLen ? String(cursor + limit) : null;
+
+    return res.json({ items, nextCursor });
+  } catch (error) {
+    console.error('GET /api/pvp-online/inbox error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/pvp-online/inbox/:inboxId/read', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+    const { inboxId } = req.params;
+    const key = `sd:inbox:${userId}`;
+    const readAt = Date.now();
+    const len = await redis.llen(key);
+    for (let i = 0; i < len; i++) {
+      const raw = await redis.lindex(key, i);
+      if (!raw) continue;
+      try {
+        const item = JSON.parse(raw);
+        if (item.inboxId === inboxId && item.readAt === null) {
+          item.readAt = readAt;
+          await redis.lset(key, i, JSON.stringify(item));
+          const current = parseInt(await redis.get(`sd:inbox:unread:${userId}`) || '0', 10);
+          if (current > 0) await redis.decr(`sd:inbox:unread:${userId}`);
+          return res.json({ ok: true, inboxId, readAt });
+        }
+      } catch { continue; }
+    }
+    return res.json({ ok: false, inboxId, readAt });
+  } catch (error) {
+    console.error('POST /api/pvp-online/inbox/:id/read error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/pvp-online/inbox/read-all', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+    const key = `sd:inbox:${userId}`;
+    const readAt = Date.now();
+    const len = await redis.llen(key);
+    for (let i = 0; i < len; i++) {
+      const raw = await redis.lindex(key, i);
+      if (!raw) continue;
+      try {
+        const item = JSON.parse(raw);
+        if (item.readAt === null) {
+          item.readAt = readAt;
+          await redis.lset(key, i, JSON.stringify(item));
+        }
+      } catch { continue; }
+    }
+    await redis.set(`sd:inbox:unread:${userId}`, '0');
+    return res.json({ ok: true, readAt });
+  } catch (error) {
+    console.error('POST /api/pvp-online/inbox/read-all error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/pvp-online/lobby/enter', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+    const userRaw = await redis.get(`${KEY_PREFIX}user:${userId}`);
+    if (!userRaw) return res.status(401).json({ error: 'User not found' });
+    const user = JSON.parse(userRaw);
+
+    const now = Date.now();
+    const presence = JSON.stringify({
+      userId: user.userId, loginId: user.loginId,
+      status: 'IN_PVP_LOBBY', roomId: null, matchId: null,
+      enteredLobbyAt: now, lastSeenAt: now,
+    });
+    await redis.set(`sd:pvp:presence:${user.userId}`, presence, 'EX', 30);
+    await redis.sadd('sd:pvp:lobby:online', user.userId);
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('POST /api/pvp-online/lobby/enter error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/pvp-online/lobby/leave', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+    await redis.del(`sd:pvp:presence:${userId}`);
+    await redis.srem('sd:pvp:lobby:online', userId);
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('POST /api/pvp-online/lobby/leave error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/pvp-online/lobby', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+    const userIds = await redis.smembers('sd:pvp:lobby:online');
+    const users = [];
+    for (const uid of (userIds || [])) {
+      const activeRoomId = await getActivePvpRoomMembership(uid);
+      if (activeRoomId) {
+        await redis.srem('sd:pvp:lobby:online', uid);
+        continue;
+      }
+      const raw = await redis.get(`sd:pvp:presence:${uid}`);
+      if (raw) { try { users.push(JSON.parse(raw)); } catch {} }
+    }
+    return res.json({ users, asOf: Date.now() });
+  } catch (error) {
+    console.error('GET /api/pvp-online/lobby error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/pvp-online/lobby/rooms', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+    const rooms = await listJoinableRooms();
+    return res.json({ rooms, asOf: Date.now() });
+  } catch (error) {
+    console.error('GET /api/pvp-online/lobby/rooms error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/pvp-online/rooms/:roomId', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+    const raw = await redis.get(`sd:pvp:room:${req.params.roomId}`);
+    if (!raw) return res.status(404).json({ error: 'Room not found' });
+    return res.json({ room: JSON.parse(raw) });
+  } catch (error) {
+    console.error('GET /api/pvp-online/rooms/:roomId error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/pvp-online/rooms/list', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+    const rooms = await listJoinableRooms();
+    return res.json({ rooms, asOf: Date.now() });
+  } catch (error) {
+    console.error('GET /api/pvp-online/rooms/list error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/pvp-online/matches/:matchId', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+    const raw = await redis.get(`sd:pvp:match:${req.params.matchId}`);
+    if (!raw) return res.status(404).json({ error: 'Match not found' });
+    return res.json({ match: JSON.parse(raw) });
+  } catch (error) {
+    console.error('GET /api/pvp-online/matches/:matchId error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/pvp-online/matches/:matchId/input', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+    const raw = await redis.get(`sd:pvp:match:${req.params.matchId}`);
+    if (!raw) return res.status(404).json({ error: 'MATCH_NOT_FOUND' });
+
+    const match = JSON.parse(raw);
+    const { seq, action } = req.body || {};
+    if (typeof seq !== 'number') return res.status(400).json({ error: 'seq required' });
+    if (action !== 'down' && action !== 'up') return res.status(400).json({ error: 'INVALID_ACTION' });
+
+    const role = match.players?.host?.userId === userId
+      ? 'host'
+      : match.players?.guest?.userId === userId
+        ? 'guest'
+        : null;
+    if (!role) return res.status(403).json({ error: 'NOT_MATCH_PARTICIPANT' });
+
+    match.inputs = match.inputs || { host: [], guest: [] };
+    const inputList = role === 'host' ? match.inputs.host : match.inputs.guest;
+    const lastSeq = inputList.length > 0 ? inputList[inputList.length - 1].seq : -1;
+    if (seq > lastSeq) {
+      inputList.push({ seq, action, at: Date.now() });
+      if (inputList.length > 120) {
+        inputList.splice(0, inputList.length - 120);
+      }
+    }
+
+    match.updatedAt = Date.now();
+    await redis.set(`sd:pvp:match:${req.params.matchId}`, JSON.stringify(match));
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('POST /api/pvp-online/matches/:matchId/input error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/pvp-online/matches/:matchId/state', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+    const raw = await redis.get(`sd:pvp:match:${req.params.matchId}`);
+    if (!raw) return res.status(404).json({ error: 'MATCH_NOT_FOUND' });
+    const match = JSON.parse(raw);
+    if (match.players?.host?.userId !== userId) {
+      return res.status(403).json({ error: 'ONLY_HOST_CAN_UPDATE_MATCH' });
+    }
+
+    const { phase, snapshot, series, winnerSlot = null } = req.body || {};
+    if (phase) match.phase = phase;
+    if (snapshot !== undefined) match.snapshot = snapshot;
+    if (series) match.series = series;
+    if (winnerSlot === 1 || winnerSlot === 2 || winnerSlot === null) {
+      match.winnerSlot = winnerSlot;
+    }
+    match.updatedAt = Date.now();
+
+    if (phase === 'MATCH_RESULT') {
+      match.completedAt = Date.now();
+      const roomRaw = await redis.get(`sd:pvp:room:${match.roomId}`);
+      if (roomRaw) {
+        const room = JSON.parse(roomRaw);
+        room.phase = room.slots?.guest ? 'READY_CHECK' : 'OPEN';
+        room.matchId = null;
+        room.slots.host.ready = false;
+        if (room.slots.guest) {
+          room.slots.guest.ready = false;
+        }
+        room.updatedAt = Date.now();
+        room.version += 1;
+        await redis.set(`sd:pvp:room:${match.roomId}`, JSON.stringify(room));
+      }
+    }
+
+    await redis.set(`sd:pvp:match:${req.params.matchId}`, JSON.stringify(match));
+    return res.json({ match });
+  } catch (error) {
+    console.error('POST /api/pvp-online/matches/:matchId/state error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Room endpoints
+app.post('/api/pvp-online/rooms/create', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+    const userRaw = await redis.get(`${KEY_PREFIX}user:${userId}`);
+    if (!userRaw) return res.status(401).json({ error: 'User not found' });
+    const user = JSON.parse(userRaw);
+    const { skinId = 'default', config } = req.body || {};
+
+    const existing = await getActivePvpRoomMembership(userId);
+    if (existing) return res.status(409).json({ error: 'ALREADY_IN_ROOM' });
+
+    const roomId = 'room_' + crypto.randomBytes(8).toString('hex');
+    const now = Date.now();
+    const room = {
+      roomId, ownerUserId: userId, phase: 'OPEN', version: 1,
+      config: normalizeOnlineRoomConfig(config),
+      slots: { host: { userId, loginId: user.loginId, connected: true, ready: false, skinId }, guest: null },
+      pendingInviteId: null, matchId: null, escrow: { status: 'NONE' },
+      createdAt: now, updatedAt: now,
+    };
+    await redis.set(`sd:pvp:room:${roomId}`, JSON.stringify(room));
+    await redis.set(`sd:pvp:room-membership:${userId}`, roomId);
+    await redis.sadd('sd:pvp:rooms:all', roomId);
+    await redis.srem('sd:pvp:lobby:online', userId);
+    await redis.del(`sd:pvp:presence:${userId}`);
+    return res.json({ room });
+  } catch (error) {
+    console.error('POST /api/pvp-online/rooms/create error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/pvp-online/rooms/join', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+    const userRaw = await redis.get(`${KEY_PREFIX}user:${userId}`);
+    if (!userRaw) return res.status(401).json({ error: 'User not found' });
+    const user = JSON.parse(userRaw);
+    const { roomId, skinId = 'default' } = req.body || {};
+    if (!roomId) return res.status(400).json({ error: 'roomId required' });
+    const existing = await getActivePvpRoomMembership(userId);
+    if (existing) return res.status(409).json({ error: 'ALREADY_IN_ROOM' });
+    const raw = await redis.get(`sd:pvp:room:${roomId}`);
+    if (!raw) return res.status(404).json({ error: 'ROOM_NOT_FOUND' });
+    const room = JSON.parse(raw);
+    if (room.phase !== 'OPEN') return res.status(409).json({ error: 'INVALID_PHASE' });
+    if (room.slots.guest !== null) return res.status(409).json({ error: 'ROOM_FULL' });
+    if (room.ownerUserId === userId) return res.status(409).json({ error: 'ALREADY_HOST' });
+    room.slots.guest = { userId, loginId: user.loginId, connected: true, ready: false, skinId };
+    room.phase = 'READY_CHECK';
+    room.pendingInviteId = null;
+    room.updatedAt = Date.now();
+    room.version += 1;
+    await redis.set(`sd:pvp:room:${roomId}`, JSON.stringify(room));
+    await redis.set(`sd:pvp:room-membership:${userId}`, roomId);
+    await redis.srem('sd:pvp:lobby:online', userId);
+    await redis.del(`sd:pvp:presence:${userId}`);
+    return res.json({ room });
+  } catch (error) {
+    console.error('POST /api/pvp-online/rooms/join error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/pvp-online/rooms/config', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+    const { roomVersion, config } = req.body || {};
+    if (typeof roomVersion !== 'number') return res.status(400).json({ error: 'roomVersion required' });
+    const roomId = await getActivePvpRoomMembership(userId);
+    if (!roomId) return res.status(404).json({ error: 'NOT_IN_ROOM' });
+    const raw = await redis.get(`sd:pvp:room:${roomId}`);
+    if (!raw) return res.status(404).json({ error: 'ROOM_NOT_FOUND' });
+    const room = JSON.parse(raw);
+    if (room.version !== roomVersion) return res.status(409).json({ error: 'ROOM_VERSION_CONFLICT' });
+    if (room.ownerUserId !== userId) return res.status(403).json({ error: 'NOT_HOST' });
+    if (!['OPEN', 'READY_CHECK', 'WAITING_FOR_INVITEE'].includes(room.phase)) {
+      return res.status(400).json({ error: 'INVALID_PHASE' });
+    }
+    room.config = normalizeOnlineRoomConfig(config);
+    room.slots.host.ready = false;
+    if (room.slots.guest) room.slots.guest.ready = false;
+    room.updatedAt = Date.now();
+    room.version += 1;
+    await redis.set(`sd:pvp:room:${roomId}`, JSON.stringify(room));
+    return res.json({ room });
+  } catch (error) {
+    console.error('POST /api/pvp-online/rooms/config error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/pvp-online/rooms/leave', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+    const roomId = await getActivePvpRoomMembership(userId);
+    if (!roomId) return res.status(404).json({ error: 'NOT_IN_ROOM' });
+    const raw = await redis.get(`sd:pvp:room:${roomId}`);
+    if (!raw) return res.status(404).json({ error: 'ROOM_NOT_FOUND' });
+    const room = JSON.parse(raw);
+    const now = Date.now();
+    room.phase = 'CANCELED'; room.updatedAt = now; room.version += 1;
+    await redis.set(`sd:pvp:room:${roomId}`, JSON.stringify(room));
+    await redis.del(`sd:pvp:room-membership:${room.slots.host.userId}`);
+    if (room.slots.guest) await redis.del(`sd:pvp:room-membership:${room.slots.guest.userId}`);
+    await redis.srem('sd:pvp:rooms:all', roomId);
+    return res.json({ ok: true, room });
+  } catch (error) {
+    console.error('POST /api/pvp-online/rooms/leave error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/pvp-online/rooms/ready', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+    const { ready = true, roomVersion } = req.body || {};
+    if (typeof roomVersion !== 'number') return res.status(400).json({ error: 'roomVersion required' });
+    const roomId = await getActivePvpRoomMembership(userId);
+    if (!roomId) return res.status(404).json({ error: 'NOT_IN_ROOM' });
+    const raw = await redis.get(`sd:pvp:room:${roomId}`);
+    if (!raw) return res.status(404).json({ error: 'ROOM_NOT_FOUND' });
+    const room = JSON.parse(raw);
+    if (room.version !== roomVersion) return res.status(409).json({ error: 'ROOM_VERSION_CONFLICT' });
+    if (room.phase !== 'READY_CHECK') return res.status(400).json({ error: 'INVALID_PHASE' });
+    if (room.slots.host.userId === userId) room.slots.host.ready = ready;
+    else if (room.slots.guest?.userId === userId) room.slots.guest.ready = ready;
+    else return res.status(400).json({ error: 'NOT_IN_ROOM' });
+    if (room.slots.host.ready && room.slots.guest?.ready) {
+      room.phase = 'IN_MATCH';
+      room.matchId = room.matchId || `match_${crypto.randomBytes(8).toString('hex')}`;
+      await redis.set(`sd:pvp:match:${room.matchId}`, JSON.stringify({
+        matchId: room.matchId,
+        roomId,
+        phase: 'COUNTDOWN',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        seed: Math.floor(Math.random() * 2147483647),
+        countdownStartedAt: Date.now(),
+        config: room.config,
+        players: {
+          host: room.slots.host,
+          guest: room.slots.guest,
+        },
+        inputs: { host: [], guest: [] },
+        snapshot: null,
+        winnerSlot: null,
+        completedAt: null,
+        series: {
+          roundsPlayed: 0,
+          p1Wins: 0,
+          p2Wins: 0,
+          roundsNeeded: room.config.format === 'bo5' ? 3 : room.config.format === 'bo3' ? 2 : 1,
+          currentRound: 1,
+          roundResults: [],
+        },
+      }));
+    }
+    room.updatedAt = Date.now(); room.version += 1;
+    await redis.set(`sd:pvp:room:${roomId}`, JSON.stringify(room));
+    return res.json({ room });
+  } catch (error) {
+    console.error('POST /api/pvp-online/rooms/ready error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/pvp-online/rooms/cancel', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+    const { roomVersion } = req.body || {};
+    if (typeof roomVersion !== 'number') return res.status(400).json({ error: 'roomVersion required' });
+    const roomId = await getActivePvpRoomMembership(userId);
+    if (!roomId) return res.status(404).json({ error: 'NOT_IN_ROOM' });
+    const raw = await redis.get(`sd:pvp:room:${roomId}`);
+    if (!raw) return res.status(404).json({ error: 'ROOM_NOT_FOUND' });
+    const room = JSON.parse(raw);
+    if (room.version !== roomVersion) return res.status(409).json({ error: 'ROOM_VERSION_CONFLICT' });
+    if (room.ownerUserId !== userId) return res.status(403).json({ error: 'NOT_HOST' });
+    room.phase = 'CANCELED'; room.updatedAt = Date.now(); room.version += 1;
+    await redis.set(`sd:pvp:room:${roomId}`, JSON.stringify(room));
+    await redis.del(`sd:pvp:room-membership:${userId}`);
+    if (room.slots.guest) await redis.del(`sd:pvp:room-membership:${room.slots.guest.userId}`);
+    await redis.srem('sd:pvp:rooms:all', roomId);
+    return res.json({ ok: true, room });
+  } catch (error) {
+    console.error('POST /api/pvp-online/rooms/cancel error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Invite endpoints
+app.post('/api/pvp-online/invites/send', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+    const userRaw = await redis.get(`${KEY_PREFIX}user:${userId}`);
+    if (!userRaw) return res.status(401).json({ error: 'User not found' });
+    const user = JSON.parse(userRaw);
+    const { targetUserId, targetLoginId, roomVersion } = req.body || {};
+    if ((!targetUserId && !targetLoginId) || typeof roomVersion !== 'number')
+      return res.status(400).json({ error: 'targetUserId or targetLoginId, and roomVersion required' });
+    const roomId = await getActivePvpRoomMembership(userId);
+    if (!roomId) return res.status(404).json({ error: 'NOT_IN_ROOM' });
+    let toUserId = typeof targetUserId === 'string' && targetUserId.trim() ? targetUserId.trim() : null;
+    if (!toUserId && typeof targetLoginId === 'string' && targetLoginId.trim()) {
+      toUserId = await redis.get(`${KEY_PREFIX}loginId:${targetLoginId.trim().toLowerCase()}`);
+    }
+    if (!toUserId) return res.status(400).json({ error: 'INVITE_TARGET_NOT_FOUND' });
+    const targetUserRaw = await redis.get(`${KEY_PREFIX}user:${toUserId}`);
+    if (!targetUserRaw) return res.status(400).json({ error: 'INVITE_TARGET_NOT_FOUND' });
+    const targetUser = JSON.parse(targetUserRaw);
+    const raw = await redis.get(`sd:pvp:room:${roomId}`);
+    if (!raw) return res.status(404).json({ error: 'ROOM_NOT_FOUND' });
+    const room = JSON.parse(raw);
+    if (room.version !== roomVersion) return res.status(409).json({ error: 'ROOM_VERSION_CONFLICT' });
+    if (room.ownerUserId !== userId) return res.status(403).json({ error: 'NOT_HOST' });
+    if (room.phase !== 'OPEN') return res.status(400).json({ error: 'INVALID_PHASE_TRANSITION' });
+    if (room.slots.guest !== null) return res.status(400).json({ error: 'ROOM_FULL' });
+    const now = Date.now();
+    const inviteId = 'inv_' + crypto.randomBytes(8).toString('hex');
+    const invite = {
+      inviteId, roomId, fromUserId: userId, fromLoginId: user.loginId,
+      toUserId, toLoginId: targetUser.loginId, status: 'PENDING',
+      createdAt: now, expiresAt: now + 60000, resolvedAt: null,
+    };
+    room.pendingInviteId = inviteId; room.phase = 'WAITING_FOR_INVITEE';
+    room.updatedAt = now; room.version += 1;
+    await redis.set(`sd:pvp:invite:${inviteId}`, JSON.stringify(invite));
+    await redis.sadd(`sd:pvp:user-invites:${toUserId}`, inviteId);
+    await redis.set(`sd:pvp:room:${roomId}`, JSON.stringify(room));
+    return res.json({ invite });
+  } catch (error) {
+    console.error('POST /api/pvp-online/invites/send error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/pvp-online/invites/accept', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+    const userRaw = await redis.get(`${KEY_PREFIX}user:${userId}`);
+    if (!userRaw) return res.status(401).json({ error: 'User not found' });
+    const user = JSON.parse(userRaw);
+    const { inviteId, skinId = 'default' } = req.body || {};
+    if (!inviteId) return res.status(400).json({ error: 'inviteId required' });
+    const inviteRaw = await redis.get(`sd:pvp:invite:${inviteId}`);
+    if (!inviteRaw) return res.status(404).json({ error: 'INVITE_NOT_FOUND' });
+    const invite = JSON.parse(inviteRaw);
+    if (invite.status !== 'PENDING') return res.status(400).json({ error: 'INVITE_NOT_PENDING' });
+    if (invite.toUserId !== userId) return res.status(403).json({ error: 'NOT_INVITE_TARGET' });
+    const now = Date.now();
+    if (invite.expiresAt <= now) return res.status(400).json({ error: 'INVITE_EXPIRED' });
+    const roomRaw = await redis.get(`sd:pvp:room:${invite.roomId}`);
+    if (!roomRaw) return res.status(404).json({ error: 'ROOM_NOT_FOUND' });
+    const room = JSON.parse(roomRaw);
+    if (room.slots.guest !== null) return res.status(400).json({ error: 'ROOM_FULL' });
+    if (room.phase !== 'WAITING_FOR_INVITEE') return res.status(400).json({ error: 'INVALID_PHASE_TRANSITION' });
+    invite.status = 'ACCEPTED'; invite.resolvedAt = now;
+    room.slots.guest = { userId, loginId: user.loginId, connected: true, ready: false, skinId };
+    room.phase = 'READY_CHECK'; room.pendingInviteId = null; room.updatedAt = now; room.version += 1;
+    await redis.set(`sd:pvp:invite:${inviteId}`, JSON.stringify(invite));
+    await redis.set(`sd:pvp:room:${invite.roomId}`, JSON.stringify(room));
+    await redis.set(`sd:pvp:room-membership:${userId}`, invite.roomId);
+    await redis.srem(`sd:pvp:user-invites:${userId}`, inviteId);
+    await redis.srem('sd:pvp:lobby:online', userId);
+    await redis.del(`sd:pvp:presence:${userId}`);
+    return res.json({ room, invite });
+  } catch (error) {
+    console.error('POST /api/pvp-online/invites/accept error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/pvp-online/invites/decline', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+    const { inviteId } = req.body || {};
+    if (!inviteId) return res.status(400).json({ error: 'inviteId required' });
+    const inviteRaw = await redis.get(`sd:pvp:invite:${inviteId}`);
+    if (!inviteRaw) return res.status(404).json({ error: 'INVITE_NOT_FOUND' });
+    const invite = JSON.parse(inviteRaw);
+    if (invite.status !== 'PENDING') return res.status(400).json({ error: 'INVITE_NOT_PENDING' });
+    if (invite.toUserId !== userId) return res.status(403).json({ error: 'NOT_INVITE_TARGET' });
+    const now = Date.now();
+    invite.status = 'DECLINED'; invite.resolvedAt = now;
+    const roomRaw = await redis.get(`sd:pvp:room:${invite.roomId}`);
+    if (roomRaw) {
+      const room = JSON.parse(roomRaw);
+      if (room.phase === 'WAITING_FOR_INVITEE') {
+        room.phase = 'OPEN'; room.pendingInviteId = null; room.updatedAt = now; room.version += 1;
+        await redis.set(`sd:pvp:room:${invite.roomId}`, JSON.stringify(room));
+      }
+    }
+    await redis.set(`sd:pvp:invite:${inviteId}`, JSON.stringify(invite));
+    await redis.srem(`sd:pvp:user-invites:${userId}`, inviteId);
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('POST /api/pvp-online/invites/decline error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/pvp-online/invites/cancel', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+    const { inviteId } = req.body || {};
+    if (!inviteId) return res.status(400).json({ error: 'inviteId required' });
+    const inviteRaw = await redis.get(`sd:pvp:invite:${inviteId}`);
+    if (!inviteRaw) return res.status(404).json({ error: 'INVITE_NOT_FOUND' });
+    const invite = JSON.parse(inviteRaw);
+    if (invite.status !== 'PENDING') return res.status(400).json({ error: 'INVITE_NOT_PENDING' });
+    if (invite.fromUserId !== userId) return res.status(403).json({ error: 'NOT_INVITE_SENDER' });
+    const now = Date.now();
+    invite.status = 'CANCELED'; invite.resolvedAt = now;
+    const roomRaw = await redis.get(`sd:pvp:room:${invite.roomId}`);
+    if (roomRaw) {
+      const room = JSON.parse(roomRaw);
+      if (room.phase === 'WAITING_FOR_INVITEE') {
+        room.phase = 'OPEN'; room.pendingInviteId = null; room.updatedAt = now; room.version += 1;
+        await redis.set(`sd:pvp:room:${invite.roomId}`, JSON.stringify(room));
+      }
+    }
+    await redis.set(`sd:pvp:invite:${inviteId}`, JSON.stringify(invite));
+    await redis.srem(`sd:pvp:user-invites:${invite.toUserId}`, inviteId);
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('POST /api/pvp-online/invites/cancel error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/pvp-online/invites/pending', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+    const inviteIds = await redis.smembers(`sd:pvp:user-invites:${userId}`);
+    const now = Date.now();
+    const invites = [];
+    const stale = [];
+    for (const id of (inviteIds || [])) {
+      const raw = await redis.get(`sd:pvp:invite:${id}`);
+      if (!raw) { stale.push(id); continue; }
+      const invite = JSON.parse(raw);
+      if (invite.status === 'PENDING' && invite.expiresAt > now) invites.push(invite);
+      else stale.push(id);
+    }
+    for (const id of stale) await redis.srem(`sd:pvp:user-invites:${userId}`, id);
+    return res.json({ invites });
+  } catch (error) {
+    console.error('GET /api/pvp-online/invites/pending error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 

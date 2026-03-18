@@ -1,6 +1,8 @@
 # Deep Dive Dash — Task Tracker
 
-> **Last updated**: 2026-02-22
+> **Last updated**: 2026-03-18
+
+Status legend: `✅ done`, `◐ in progress`, `☐ todo`
 
 ---
 
@@ -74,6 +76,12 @@
 | 5.1 | Ghost run recording system | ☐ | Record + replay input sequences |
 | 5.2 | PvP Ghost Race — matchmaking | ☐ | Async race, coin wager |
 | 5.3 | PvP Ghost Race — UI | ☐ | Split/overlay view, result screen |
+| 5.4 | Online PvP — deterministic `pvp-core` extraction | ◐ | Shared fixed-tick sim, replay harness, checksum scaffold exists; local PvP parity still pending |
+| 5.5 | Online PvP — bootstrap + inbox APIs | ◐ | `ws-ticket`, bootstrap, inbox unread/read APIs implemented; runtime QA/hardening still needed |
+| 5.6 | Online PvP — realtime lobby / invite / room lifecycle | ◐ | Polling-based alpha exists; explicit `lobby/room/match` URL states, public room join, and room-exit unification are wired; gateway push still pending |
+| 5.7 | Online PvP — authoritative live match runner | ◐ | Polling-based host-authoritative alpha is wired with split-screen play/result/return loop; real transport, reconnect, and hardening still pending |
+| 5.8 | Online PvP — escrow betting + inventory snapshot | ☐ | Replace post-match transfer with hold/finalize/refund escrow |
+| 5.9 | Online PvP — hardening / observability / rollout flags | ☐ | Logs, metrics, QA matrix, staged rollout |
 
 ---
 
