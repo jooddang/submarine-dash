@@ -385,6 +385,49 @@ export async function setReadyState(
   return { ok: true, room };
 }
 
+export async function updateRoomSkin(
+  userId: string,
+  roomId: string,
+  skinId: string,
+  expectedVersion: number
+): Promise<RoomMutationResult> {
+  const redis = getUpstashRedisClient(false);
+
+  const raw = await redis.get<string>(roomKey(roomId));
+  if (!raw) return { ok: false, error: 'ROOM_NOT_FOUND' };
+
+  let room: OnlineRoom;
+  try {
+    room = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch {
+    return { ok: false, error: 'ROOM_PARSE_ERROR' };
+  }
+
+  if (room.version !== expectedVersion) {
+    return { ok: false, error: 'ROOM_VERSION_CONFLICT' };
+  }
+
+  if (room.phase !== 'OPEN' && room.phase !== 'READY_CHECK' && room.phase !== 'WAITING_FOR_INVITEE') {
+    return { ok: false, error: 'INVALID_PHASE' };
+  }
+
+  const isHost = room.slots.host.userId === userId;
+  const isGuest = room.slots.guest?.userId === userId;
+  if (!isHost && !isGuest) return { ok: false, error: 'NOT_IN_ROOM' };
+
+  if (isHost) {
+    room.slots.host.skinId = skinId;
+  } else if (isGuest && room.slots.guest) {
+    room.slots.guest.skinId = skinId;
+  }
+
+  room.updatedAt = Date.now();
+  room.version += 1;
+
+  await redis.set(roomKey(roomId), JSON.stringify(room));
+  return { ok: true, room };
+}
+
 export async function cancelRoom(
   userId: string,
   roomId: string,

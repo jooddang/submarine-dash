@@ -73,20 +73,36 @@ function getSeriesWinnerSlot(series: NonNullable<OnlineMatch['series']>): 1 | 2 
 function shouldAcceptIncomingMatch(current: OnlineMatch | null, incoming: OnlineMatch): boolean {
   if (!current) return true;
 
+  // Hard guards: never regress data completeness regardless of timestamps.
+  const currentRounds = current.series?.roundResults?.length || 0;
+  const incomingRounds = incoming.series?.roundResults?.length || 0;
+  if (incomingRounds < currentRounds) return false;
+
+  // Never regress from MATCH_RESULT to an earlier phase.
+  const currentPhaseRank = MATCH_PHASE_ORDER[(current.phase as PvpMatchPhase) || 'COUNTDOWN'] ?? -1;
+  const incomingPhaseRank = MATCH_PHASE_ORDER[(incoming.phase as PvpMatchPhase) || 'COUNTDOWN'] ?? -1;
+  if (currentPhaseRank === MATCH_PHASE_ORDER.MATCH_RESULT && incomingPhaseRank < currentPhaseRank) return false;
+
+  // Never clear a decided winnerSlot.
+  if (current.winnerSlot != null && incoming.winnerSlot == null) return false;
+
+  // Accept if incoming has more round results.
+  if (incomingRounds > currentRounds) return true;
+
+  // Accept new round starting (ROUND_RESULT → COUNTDOWN is legitimate when currentRound advances).
+  const currentRound = current.series?.currentRound || 1;
+  const incomingRound = incoming.series?.currentRound || 1;
+  if (incomingRound > currentRound) return true;
+
+  // Accept if phase advances.
+  if (incomingPhaseRank > currentPhaseRank) return true;
+  if (incomingPhaseRank < currentPhaseRank) return false;
+
+  // Fall back to timestamp comparison.
   const currentUpdatedAt = current.updatedAt || current.createdAt || 0;
   const incomingUpdatedAt = incoming.updatedAt || incoming.createdAt || 0;
   if (incomingUpdatedAt > currentUpdatedAt) return true;
   if (incomingUpdatedAt < currentUpdatedAt) return false;
-
-  const currentPhaseRank = MATCH_PHASE_ORDER[(current.phase as PvpMatchPhase) || 'COUNTDOWN'] ?? -1;
-  const incomingPhaseRank = MATCH_PHASE_ORDER[(incoming.phase as PvpMatchPhase) || 'COUNTDOWN'] ?? -1;
-  if (incomingPhaseRank > currentPhaseRank) return true;
-  if (incomingPhaseRank < currentPhaseRank) return false;
-
-  const currentRounds = current.series?.roundResults?.length || 0;
-  const incomingRounds = incoming.series?.roundResults?.length || 0;
-  if (incomingRounds > currentRounds) return true;
-  if (incomingRounds < currentRounds) return false;
 
   return true;
 }
@@ -250,17 +266,19 @@ export const OnlinePvpMatch: React.FC<Props> = ({ roomId, matchId, onBackToLobby
         currentRound: 1,
         roundResults: [],
       };
-      const res = await onlinePvpAPI.updateMatchState(activeMatch.matchId, {
+      await onlinePvpAPI.updateMatchState(activeMatch.matchId, {
         phase,
         snapshot,
         series: nextSeries,
         winnerSlot,
-      }) as { match: OnlineMatch };
-      syncMatchState(res.match);
+      });
+      // Host is authoritative — do NOT syncMatchState from the response.
+      // Stale responses (due to network latency) can regress local state,
+      // causing wrong winner display and lost round results.
     } catch {
       // best effort for alpha polling sync
     }
-  }, [syncMatchState]);
+  }, []);
 
   const finishMatchIfNeeded = useCallback(async (
     activeMatch: OnlineMatch,
@@ -544,7 +562,14 @@ export const OnlinePvpMatch: React.FC<Props> = ({ roomId, matchId, onBackToLobby
   useEffect(() => {
     if (loading || error || !match) return;
 
-    currentRoundResultRef.current = match.snapshot?.roundResult || match.series?.roundResults?.at(-1) || null;
+    const hostSimActive = isHost && hostStateRef.current && guestStateRef.current;
+
+    // Only update round result ref from match state for the GUEST,
+    // or for the host before simulation starts.
+    // The host manages this ref directly via computeWinner/initialiseRound.
+    if (!hostSimActive) {
+      currentRoundResultRef.current = match.snapshot?.roundResult || match.series?.roundResults?.at(-1) || null;
+    }
 
     if (match.phase === 'MATCH_RESULT') {
       setCelebrationSeed((value) => (value === 0 ? 1 : value));
@@ -552,7 +577,10 @@ export const OnlinePvpMatch: React.FC<Props> = ({ roomId, matchId, onBackToLobby
 
     if (!canvasRef.current) return;
 
-    if (match.snapshot) {
+    // Only update renderSnapshot from match.snapshot for the GUEST,
+    // or for the host before simulation starts.
+    // The host creates its own renderSnapshot in the simulation loop.
+    if (!hostSimActive && match.snapshot) {
       setRenderSnapshot({
         ...match.snapshot,
         p1: cloneSnapshotPlayer(match.snapshot.p1),
@@ -591,9 +619,22 @@ export const OnlinePvpMatch: React.FC<Props> = ({ roomId, matchId, onBackToLobby
     const interval = setInterval(async () => {
       try {
         const matchRes = await onlinePvpAPI.getMatch(matchId) as { match: OnlineMatch };
-        syncMatchState(matchRes.match);
-        currentRoundResultRef.current = matchRes.match.snapshot?.roundResult || matchRes.match.series?.roundResults?.at(-1) || null;
-        if (!isHost && matchRes.match.snapshot) {
+        const accepted = shouldAcceptIncomingMatch(latestMatchRef.current, matchRes.match);
+        if (accepted) {
+          syncMatchState(matchRes.match);
+        }
+
+        // Only update round result ref from polling for the GUEST.
+        // The host manages this ref directly via its simulation loop.
+        if (!isHost) {
+          const incomingRounds = matchRes.match.series?.roundResults?.length || 0;
+          const currentRounds = latestMatchRef.current?.series?.roundResults?.length || 0;
+          if (accepted && incomingRounds >= currentRounds) {
+            currentRoundResultRef.current = matchRes.match.snapshot?.roundResult || matchRes.match.series?.roundResults?.at(-1) || null;
+          }
+        }
+
+        if (!isHost && accepted && matchRes.match.snapshot) {
           setRenderSnapshot({
             ...matchRes.match.snapshot,
             p1: cloneSnapshotPlayer(matchRes.match.snapshot.p1),

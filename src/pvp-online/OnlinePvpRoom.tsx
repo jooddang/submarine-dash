@@ -1,6 +1,7 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import type { OnlineRoom, RoomConfig } from './onlinePvpTypes';
 import { onlinePvpAPI } from '../api';
+import { SKIN_CATALOG, getSkinDef, getSkinImage, preloadSkinImages, RARITY_COLORS, type SkinDef } from '../skins';
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -19,6 +20,112 @@ const DEFAULT_CONFIG: RoomConfig = {
   p2Bet: { coins: 0, dolphins: 0, tubePieces: 0 },
 };
 
+const SkinCard: React.FC<{ skin: SkinDef; selected: boolean; onClick: () => void }> = ({ skin, selected, onClick }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const size = 64;
+    canvas.width = size;
+    canvas.height = size;
+
+    const draw = () => {
+      ctx.clearRect(0, 0, size, size);
+
+      // Background
+      ctx.fillStyle = selected ? 'rgba(0, 150, 255, 0.15)' : 'rgba(0, 30, 60, 0.4)';
+      ctx.beginPath();
+      ctx.roundRect(0, 0, size, size, 8);
+      ctx.fill();
+
+      const img = getSkinImage(skin);
+      if (!img || !img.complete || img.naturalWidth === 0) {
+        // Retry after image loads
+        img?.addEventListener('load', draw, { once: true });
+        // Fallback: colored circle
+        ctx.fillStyle = skin.tint ?? '#888';
+        ctx.beginPath();
+        ctx.arc(size / 2, size / 2, 16, 0, Math.PI * 2);
+        ctx.fill();
+        return;
+      }
+
+      // Draw tinted or raw sprite
+      const drawW = 44;
+      const drawH = 44;
+      const dx = (size - drawW) / 2;
+      const dy = (size - drawH) / 2;
+
+      // Glow effect
+      if (skin.glowColor) {
+        ctx.shadowColor = skin.glowColor;
+        ctx.shadowBlur = 10;
+      }
+
+      if (skin.tint) {
+        // Create tinted version inline
+        const offscreen = document.createElement('canvas');
+        offscreen.width = img.naturalWidth;
+        offscreen.height = img.naturalHeight;
+        const octx = offscreen.getContext('2d')!;
+        octx.drawImage(img, 0, 0);
+        octx.globalCompositeOperation = 'color';
+        octx.fillStyle = skin.tint;
+        octx.fillRect(0, 0, offscreen.width, offscreen.height);
+        octx.globalCompositeOperation = 'destination-in';
+        octx.drawImage(img, 0, 0);
+        ctx.drawImage(offscreen, dx, dy, drawW, drawH);
+      } else {
+        ctx.drawImage(img, dx, dy, drawW, drawH);
+      }
+
+      ctx.shadowBlur = 0;
+    };
+
+    draw();
+  }, [skin, selected]);
+
+  const rarityColor = RARITY_COLORS[skin.rarity];
+
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        position: 'relative',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 2,
+        padding: 4,
+        background: 'none',
+        border: selected ? `2px solid ${rarityColor}` : '2px solid rgba(255,255,255,0.08)',
+        borderRadius: 10,
+        cursor: 'pointer',
+        transition: 'border-color 0.15s',
+      }}
+      data-ui-interactive="true"
+    >
+      <canvas ref={canvasRef} style={{ width: 64, height: 64, borderRadius: 6 }} />
+      <span style={{
+        fontSize: '0.6rem',
+        color: selected ? rarityColor : '#888',
+        fontFamily: 'monospace',
+        fontWeight: selected ? 700 : 400,
+        maxWidth: 68,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+      }}>
+        {skin.name}
+      </span>
+    </button>
+  );
+};
+
 export const OnlinePvpRoom: React.FC<Props> = ({ roomId, onBackToLobby, onRoomResolved, onMatchStart }) => {
   const [room, setRoom] = useState<OnlineRoom | null>(null);
   const [loading, setLoading] = useState(true);
@@ -26,6 +133,7 @@ export const OnlinePvpRoom: React.FC<Props> = ({ roomId, onBackToLobby, onRoomRe
   const [myUserId, setMyUserId] = useState<string | null>(null);
   const [inviteTarget, setInviteTarget] = useState('');
   const [inviteStatus, setInviteStatus] = useState<string | null>(null);
+  const [ownedSkins, setOwnedSkins] = useState<string[]>(['default']);
   const currentRoomIdRef = useRef<string | null>(roomId);
   const latestRoomRef = useRef<OnlineRoom | null>(null);
   const skipLeaveOnUnmountRef = useRef(false);
@@ -53,6 +161,8 @@ export const OnlinePvpRoom: React.FC<Props> = ({ roomId, onBackToLobby, onRoomRe
         const bootstrap = await onlinePvpAPI.bootstrap();
         if (cancelled) return;
         setMyUserId(bootstrap.user.userId);
+        setOwnedSkins(bootstrap.inventory.skins.owned);
+        preloadSkinImages();
 
         let fetchedRoom: OnlineRoom;
         if (roomId === null) {
@@ -188,6 +298,29 @@ export const OnlinePvpRoom: React.FC<Props> = ({ roomId, onBackToLobby, onRoomRe
       setInviteStatus(err instanceof Error ? err.message : 'Failed to send invite');
     }
   }, [room, inviteTarget, syncRoom]);
+
+  const handleChangeSkin = useCallback(async (skinId: string) => {
+    if (!room) return;
+    try {
+      const res = await onlinePvpAPI.changeRoomSkin(room.roomId, room.version, skinId);
+      syncRoom(res.room);
+    } catch (err) {
+      try {
+        const latest = await onlinePvpAPI.getRoom(room.roomId) as { room: OnlineRoom };
+        syncRoom(latest.room);
+      } catch {
+        // ignore refresh failure
+      }
+    }
+  }, [room, syncRoom]);
+
+  const mySkinId = room ? (room.ownerUserId === myUserId ? room.slots.host.skinId : room.slots.guest?.skinId) : 'default';
+  const canChangeSkin = room ? (room.phase === 'OPEN' || room.phase === 'READY_CHECK' || room.phase === 'WAITING_FOR_INVITEE') : false;
+
+  const availableSkins = useMemo(() => {
+    // Always include default, then owned skins, preserving catalog order
+    return SKIN_CATALOG.filter(s => s.id === 'default' || ownedSkins.includes(s.id));
+  }, [ownedSkins]);
 
   // Styles
   const containerStyle: React.CSSProperties = {
@@ -341,6 +474,9 @@ export const OnlinePvpRoom: React.FC<Props> = ({ roomId, onBackToLobby, onRoomRe
             <div>
               <span style={{ fontSize: '0.7rem', color: '#4facfe', marginRight: 8 }}>HOST</span>
               <span style={{ fontSize: '0.9rem' }}>{room.slots.host.loginId}</span>
+              <span style={{ fontSize: '0.7rem', color: RARITY_COLORS[getSkinDef(room.slots.host.skinId).rarity], marginLeft: 8 }}>
+                {getSkinDef(room.slots.host.skinId).name}
+              </span>
             </div>
             <span style={{ fontSize: '0.8rem', color: room.slots.host.ready ? '#44ff88' : '#888' }}>
               {room.slots.host.ready ? 'READY' : 'NOT READY'}
@@ -357,6 +493,9 @@ export const OnlinePvpRoom: React.FC<Props> = ({ roomId, onBackToLobby, onRoomRe
                 <div>
                   <span style={{ fontSize: '0.7rem', color: '#aaa', marginRight: 8 }}>GUEST</span>
                   <span style={{ fontSize: '0.9rem' }}>{room.slots.guest.loginId}</span>
+                  <span style={{ fontSize: '0.7rem', color: RARITY_COLORS[getSkinDef(room.slots.guest.skinId).rarity], marginLeft: 8 }}>
+                    {getSkinDef(room.slots.guest.skinId).name}
+                  </span>
                 </div>
                 <span style={{ fontSize: '0.8rem', color: room.slots.guest.ready ? '#44ff88' : '#888' }}>
                   {room.slots.guest.ready ? 'READY' : 'NOT READY'}
@@ -370,6 +509,32 @@ export const OnlinePvpRoom: React.FC<Props> = ({ roomId, onBackToLobby, onRoomRe
           </div>
         </div>
       </div>
+
+      {/* Skin selector */}
+      {canChangeSkin && (
+        <div style={cardStyle}>
+          <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#4facfe', marginBottom: 12 }}>
+            SELECT SKIN
+          </div>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(72px, 1fr))',
+            gap: 8,
+          }}>
+            {availableSkins.map((skin) => {
+              const selected = skin.id === mySkinId;
+              return (
+                <SkinCard
+                  key={skin.id}
+                  skin={skin}
+                  selected={selected}
+                  onClick={() => { if (!selected) handleChangeSkin(skin.id); }}
+                />
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Invite section (host only, when room is open) */}
       {canInvite && (

@@ -555,6 +555,20 @@ export const onlinePvpAPI = {
     return res.json();
   },
 
+  async changeRoomSkin(roomId: string, roomVersion: number, skinId: string): Promise<{ room: import('./pvp-online/onlinePvpTypes').OnlineRoom }> {
+    const res = await fetch(`${API_BASE_URL}/api/pvp-online/rooms/skin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ roomVersion, skinId }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Change skin failed (${res.status}) ${text}`);
+    }
+    return res.json();
+  },
+
   async setReady(roomId: string, roomVersion: number, ready: boolean): Promise<{ room: import('./pvp-online/onlinePvpTypes').OnlineRoom }> {
     const res = await fetch(`${API_BASE_URL}/api/pvp-online/rooms/ready`, {
       method: 'POST',

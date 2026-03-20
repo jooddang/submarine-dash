@@ -28,12 +28,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const { phase, snapshot, series, winnerSlot = null } = req.body || {};
+
+  // Anti-regression: never move backwards from MATCH_RESULT.
+  const isAlreadyCompleted = match.phase === 'MATCH_RESULT';
+  if (isAlreadyCompleted && phase && phase !== 'MATCH_RESULT') {
+    return res.status(200).json({ match }); // silently ignore stale pushes
+  }
+
   if (phase) match.phase = phase;
   if (snapshot !== undefined) match.snapshot = snapshot;
-  if (series) match.series = series;
-  if (winnerSlot === 1 || winnerSlot === 2 || winnerSlot === null) {
-    match.winnerSlot = winnerSlot;
+
+  // Anti-regression: only accept series with >= roundResults than existing.
+  if (series) {
+    const existingRounds = match.series?.roundResults?.length || 0;
+    const incomingRounds = series.roundResults?.length || 0;
+    if (incomingRounds >= existingRounds) {
+      match.series = series;
+    }
   }
+
+  // Anti-regression: never clear a decided winnerSlot.
+  if (winnerSlot === 1 || winnerSlot === 2) {
+    match.winnerSlot = winnerSlot;
+  } else if (match.winnerSlot == null && winnerSlot === null) {
+    match.winnerSlot = null;
+  }
+  // If match.winnerSlot is already 1 or 2, do not overwrite with null.
+
   match.updatedAt = Date.now();
 
   if (phase === 'MATCH_RESULT') {
