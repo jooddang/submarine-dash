@@ -32,6 +32,11 @@ export function drawPlayerWorld(
   const vw = viewport.width;
   const vh = viewport.height;
 
+  // Camera Y offset: anchor view to bottom-left so submarine & platforms are always visible on small screens.
+  // The world was created with a specific height (platforms at worldBottom), but the viewport may be smaller now.
+  const worldBottom = s.platforms.length > 0 ? s.platforms[0].y + s.platforms[0].height : vh;
+  const cameraY = Math.min(0, vh - worldBottom);
+
   // 1. Background gradient
   const maxDepthScore = 5000;
   const depthProgress = Math.min(s.score / maxDepthScore, 1);
@@ -61,6 +66,9 @@ export function drawPlayerWorld(
     ctx.fill();
   }
   ctx.restore();
+
+  // Apply camera Y offset for world elements (keeps bottom of world visible)
+  ctx.translate(0, cameraY);
 
   // 3. Background entities
   drawBackgroundEntities(ctx, s.bgEntities, s.gameTime);
@@ -190,10 +198,13 @@ export function drawPlayerWorld(
     ctx.restore();
   }
 
-  // 11. Death overlay
+  // 11. Death overlay (in viewport coords, undo camera offset)
   if (!s.alive) {
+    ctx.save();
+    ctx.translate(0, -cameraY);
     ctx.fillStyle = "rgba(255, 0, 0, 0.15)";
     ctx.fillRect(0, 0, vw, vh);
+    ctx.restore();
   }
 
   // 12. Score popups (for score_attack mode)
