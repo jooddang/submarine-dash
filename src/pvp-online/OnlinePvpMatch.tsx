@@ -89,15 +89,12 @@ function shouldAcceptIncomingMatch(current: OnlineMatch | null, incoming: Online
   // Accept if incoming has more round results.
   if (incomingRounds > currentRounds) return true;
 
-  // Compare using (currentRound, phaseRank) composite ordering.
-  // COUNTDOWN of round N+1 is more advanced than ROUND_RESULT of round N,
-  // even though COUNTDOWN has a lower phase rank number.
+  // Accept new round starting (ROUND_RESULT → COUNTDOWN is legitimate when currentRound advances).
   const currentRound = current.series?.currentRound || 1;
   const incomingRound = incoming.series?.currentRound || 1;
   if (incomingRound > currentRound) return true;
-  if (incomingRound < currentRound) return false;
 
-  // Same round: accept if phase advances, reject if phase regresses.
+  // Accept if phase advances.
   if (incomingPhaseRank > currentPhaseRank) return true;
   if (incomingPhaseRank < currentPhaseRank) return false;
 
@@ -622,32 +619,27 @@ export const OnlinePvpMatch: React.FC<Props> = ({ roomId, matchId, onBackToLobby
     const interval = setInterval(async () => {
       try {
         const matchRes = await onlinePvpAPI.getMatch(matchId) as { match: OnlineMatch };
+        const accepted = shouldAcceptIncomingMatch(latestMatchRef.current, matchRes.match);
+        if (accepted) {
+          syncMatchState(matchRes.match);
+        }
 
-        if (isHost) {
-          // Host is authoritative — never sync match state from server polling.
-          // Stale server responses can regress latestMatchRef.current, causing
-          // the host to re-push old round/phase data and the guest to miss
-          // ROUND_RESULT and COUNTDOWN screens between rounds.
-        } else {
-          const accepted = shouldAcceptIncomingMatch(latestMatchRef.current, matchRes.match);
-          if (accepted) {
-            syncMatchState(matchRes.match);
-          }
-
-          // Update round result ref from polling for the guest.
+        // Only update round result ref from polling for the GUEST.
+        // The host manages this ref directly via its simulation loop.
+        if (!isHost) {
           const incomingRounds = matchRes.match.series?.roundResults?.length || 0;
           const currentRounds = latestMatchRef.current?.series?.roundResults?.length || 0;
           if (accepted && incomingRounds >= currentRounds) {
             currentRoundResultRef.current = matchRes.match.snapshot?.roundResult || matchRes.match.series?.roundResults?.at(-1) || null;
           }
+        }
 
-          if (accepted && matchRes.match.snapshot) {
-            setRenderSnapshot({
-              ...matchRes.match.snapshot,
-              p1: cloneSnapshotPlayer(matchRes.match.snapshot.p1),
-              p2: cloneSnapshotPlayer(matchRes.match.snapshot.p2),
-            });
-          }
+        if (!isHost && accepted && matchRes.match.snapshot) {
+          setRenderSnapshot({
+            ...matchRes.match.snapshot,
+            p1: cloneSnapshotPlayer(matchRes.match.snapshot.p1),
+            p2: cloneSnapshotPlayer(matchRes.match.snapshot.p2),
+          });
         }
 
         if (isHost) {

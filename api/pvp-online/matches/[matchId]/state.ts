@@ -35,41 +35,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({ match }); // silently ignore stale pushes
   }
 
-  // Capture existing round info BEFORE series update for phase regression check.
-  const PHASE_ORDER: Record<string, number> = {
-    LOBBY: 0, INSTRUCTIONS: 1, COUNTDOWN: 2, PLAYING: 3, ROUND_RESULT: 4, MATCH_RESULT: 5,
-  };
-  const existingRound = match.series?.currentRound || 1;
-  const existingPhaseRank = PHASE_ORDER[match.phase] ?? -1;
+  if (phase) match.phase = phase;
+  if (snapshot !== undefined) match.snapshot = snapshot;
 
-  // Anti-regression for series: check roundResults count AND currentRound.
+  // Anti-regression: only accept series with >= roundResults than existing.
   if (series) {
     const existingRounds = match.series?.roundResults?.length || 0;
     const incomingRounds = series.roundResults?.length || 0;
-    const existingCurrentRound = match.series?.currentRound || 1;
-    const incomingCurrentRound = series.currentRound || 1;
-    if (incomingRounds >= existingRounds && incomingCurrentRound >= existingCurrentRound) {
+    if (incomingRounds >= existingRounds) {
       match.series = series;
     }
-  }
-
-  // Anti-regression for phase/snapshot: use (currentRound, phaseRank) composite.
-  // A stale PLAYING/ROUND_RESULT push from a previous round must not overwrite
-  // a newer COUNTDOWN push for the next round.
-  if (phase) {
-    const incomingRound = match.series?.currentRound || 1;
-    const incomingPhaseRank = PHASE_ORDER[phase] ?? -1;
-
-    // Accept if round advanced, or same round with phase advance or equal, or no prior phase.
-    const roundAdvanced = incomingRound > existingRound;
-    const sameRoundPhaseOk = incomingRound === existingRound && incomingPhaseRank >= existingPhaseRank;
-    if (roundAdvanced || sameRoundPhaseOk || existingPhaseRank < 0) {
-      match.phase = phase;
-      if (snapshot !== undefined) match.snapshot = snapshot;
-    }
-    // else: stale push — silently ignore phase and snapshot
-  } else if (snapshot !== undefined) {
-    match.snapshot = snapshot;
   }
 
   // Anti-regression: never clear a decided winnerSlot.
