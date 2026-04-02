@@ -34,3 +34,11 @@ dist-ssr
 .npm-cache
 
 .omc
+
+# Python
+__pycache__/
+*.pyc
+
+# AI training artifacts
+ai/models/
+ai/logs/
