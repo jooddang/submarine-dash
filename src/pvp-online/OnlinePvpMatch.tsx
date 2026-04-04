@@ -9,7 +9,7 @@ import * as Constants from '../constants';
 import turtleRescueImgSrc from '../../turtle.png';
 import turtleShellItemImgSrc from '../../turtle-shell-item.png';
 import tubeImgSrc from '../../tube.png';
-import { onlinePvpAPI, pvpAPI } from '../api';
+import { missionsAPI, onlinePvpAPI, pvpAPI } from '../api';
 import type { OnlineMatch, OnlineRoom } from './onlinePvpTypes';
 
 const FIXED_DT = 1 / 60;
@@ -159,6 +159,7 @@ export const OnlinePvpMatch: React.FC<Props> = ({ roomId, matchId, onBackToLobby
   const currentRoundResultRef = useRef<PvpRoundResult | null>(null);
   const currentSeedRef = useRef(1);
   const settledBetRef = useRef(false);
+  const sentPvpResultRef = useRef(false);
   const finishWindowRef = useRef<FinishWindowState>({ active: false, survivor: null, ticksRemaining: 0 });
 
   const [loading, setLoading] = useState(true);
@@ -432,6 +433,12 @@ export const OnlinePvpMatch: React.FC<Props> = ({ roomId, matchId, onBackToLobby
           setRenderSnapshot(finalSnapshot);
           setCelebrationSeed((value) => value + 1);
           await finishMatchIfNeeded(activeMatch, result, nextSeries, finalSnapshot);
+          // Send PvP result for achievement tracking (host)
+          if (!sentPvpResultRef.current && matchWinnerSlot != null) {
+            sentPvpResultRef.current = true;
+            const won = matchWinnerSlot === 1; // host is always slot 1
+            missionsAPI.postEvent({ type: 'pvp_result', won }).catch(() => undefined);
+          }
         }
       }
     } else if (phaseRef.current === 'ROUND_RESULT') {
@@ -531,6 +538,7 @@ export const OnlinePvpMatch: React.FC<Props> = ({ roomId, matchId, onBackToLobby
         syncMatchState(matchRes.match);
         syncRoomState(roomRes.room);
         settledBetRef.current = Boolean(matchRes.match.completedAt);
+        sentPvpResultRef.current = Boolean(matchRes.match.completedAt);
 
         currentRoundResultRef.current = matchRes.match.snapshot?.roundResult || matchRes.match.series?.roundResults?.at(-1) || null;
 
@@ -573,6 +581,12 @@ export const OnlinePvpMatch: React.FC<Props> = ({ roomId, matchId, onBackToLobby
 
     if (match.phase === 'MATCH_RESULT') {
       setCelebrationSeed((value) => (value === 0 ? 1 : value));
+      // Send PvP result for achievement tracking (guest side, or host if missed above)
+      if (!sentPvpResultRef.current && match.winnerSlot != null) {
+        sentPvpResultRef.current = true;
+        const won = isHost ? match.winnerSlot === 1 : match.winnerSlot === 2;
+        missionsAPI.postEvent({ type: 'pvp_result', won }).catch(() => undefined);
+      }
     }
 
     if (!canvasRef.current) return;

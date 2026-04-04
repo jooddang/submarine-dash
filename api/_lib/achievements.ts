@@ -32,6 +32,10 @@ export type AchievementProgress = {
   highScoreBeatenStreak: number;
   deathStreakUrchin: number;
   deathStreakQuicksand: number;
+  deathStreakOxygen: number;
+  swordfishCollectedStreak: number;
+  swordfishDodgeStreak: number;
+  pvpWinStreak: number;
   dailyGrinder: DailyGrinderProgress;
 };
 
@@ -60,6 +64,10 @@ function defaultState(): AchievementState {
       highScoreBeatenStreak: 0,
       deathStreakUrchin: 0,
       deathStreakQuicksand: 0,
+      deathStreakOxygen: 0,
+      swordfishCollectedStreak: 0,
+      swordfishDodgeStreak: 0,
+      pvpWinStreak: 0,
       dailyGrinder: { lastDate: null, consecutiveDays: 0 },
     },
   };
@@ -90,6 +98,9 @@ type RunEndData = {
   deathCause: string | null;
   perfectPlatformer: boolean;
   allOxygenCollected: boolean;
+  urchinDodges: number;
+  swordfishCollected: boolean;
+  swordfishDodged: boolean;
 };
 
 export function evaluateRunEndAchievements(
@@ -158,15 +169,47 @@ export function evaluateRunEndAchievements(
   if (run.deathCause === 'urchin') {
     p.deathStreakUrchin += 1;
     p.deathStreakQuicksand = 0;
+    p.deathStreakOxygen = 0;
   } else if (run.deathCause === 'quicksand') {
     p.deathStreakQuicksand += 1;
     p.deathStreakUrchin = 0;
+    p.deathStreakOxygen = 0;
+  } else if (run.deathCause === 'oxygen') {
+    p.deathStreakOxygen += 1;
+    p.deathStreakUrchin = 0;
+    p.deathStreakQuicksand = 0;
   } else {
     p.deathStreakUrchin = 0;
     p.deathStreakQuicksand = 0;
+    p.deathStreakOxygen = 0;
   }
   if (p.deathStreakUrchin >= 3) unlock('urchin_magnet');
   if (p.deathStreakQuicksand >= 3) unlock('quicksand_victim');
+  if (p.deathStreakOxygen >= 3) unlock('oxygen_choker');
+
+  // ── Urchin dodge (per-run) ──
+  if (run.urchinDodges >= 2) unlock('urchin_dodger');
+  if (run.urchinDodges >= 3) unlock('urchin_acrobat');
+
+  // ── No-swordfish score ──
+  if (!run.swordfishCollected && run.score >= 3000) unlock('purist_3000');
+  if (!run.swordfishCollected && run.score >= 5000) unlock('purist_5000');
+
+  // ── Swordfish collection streak (cross-game) ──
+  if (run.swordfishCollected) {
+    p.swordfishCollectedStreak += 1;
+  } else {
+    p.swordfishCollectedStreak = 0;
+  }
+  if (p.swordfishCollectedStreak >= 3) unlock('swordfish_collector');
+
+  // ── Swordfish dodge streak (cross-game) ──
+  if (run.swordfishDodged) {
+    p.swordfishDodgeStreak += 1;
+  } else {
+    p.swordfishDodgeStreak = 0;
+  }
+  if (p.swordfishDodgeStreak >= 2) unlock('swordfish_dodger');
 
   // ── Daily grinder ──
   if (dailyRunCount >= 25) {
@@ -186,7 +229,35 @@ export function evaluateRunEndAchievements(
     if (dg.consecutiveDays >= 1) unlock('daily_grinder_1');
     if (dg.consecutiveDays >= 2) unlock('daily_grinder_2');
     if (dg.consecutiveDays >= 3) unlock('daily_grinder_3');
+    if (dg.consecutiveDays >= 4) unlock('daily_grinder_4');
+    if (dg.consecutiveDays >= 5) unlock('daily_grinder_5');
   }
+
+  return { state, newlyUnlocked };
+}
+
+// ── Pure evaluation: pvp result ──
+
+export function evaluatePvpResultAchievements(
+  state: AchievementState,
+  won: boolean,
+): { state: AchievementState; newlyUnlocked: string[] } {
+  const newlyUnlocked: string[] = [];
+  const p = state.progress;
+
+  function unlock(id: string) {
+    if (!state.unlocked[id]) {
+      state.unlocked[id] = Date.now();
+      newlyUnlocked.push(id);
+    }
+  }
+
+  if (won) {
+    p.pvpWinStreak += 1;
+  } else {
+    p.pvpWinStreak = 0;
+  }
+  if (p.pvpWinStreak >= 3) unlock('pvp_win_streak_3');
 
   return { state, newlyUnlocked };
 }

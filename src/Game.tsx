@@ -180,6 +180,9 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
   const deathCauseRef = useRef<string | null>(null);
   const perfectPlatformerRef = useRef<boolean>(true);
   const allOxygenCollectedRef = useRef<boolean>(true);
+  const urchinDodgesRef = useRef<number>(0);
+  const swordfishCollectedRef = useRef<boolean>(false);
+  const swordfishDodgedRef = useRef<boolean>(false);
 
   // Coin balance (server-authoritative, client is display cache)
   const [coinBalance, setCoinBalance] = useState(0);
@@ -798,6 +801,9 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
     deathCauseRef.current = null;
     perfectPlatformerRef.current = true;
     allOxygenCollectedRef.current = true;
+    urchinDodgesRef.current = 0;
+    swordfishCollectedRef.current = false;
+    swordfishDodgedRef.current = false;
 
     // Reset per-run tube partial progress (pieces collected this run).
     // Rescue charges persist across runs — they are earned rewards.
@@ -1249,6 +1255,9 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
           deathCause: deathCauseRef.current,
           perfectPlatformer: perfectPlatformerRef.current,
           allOxygenCollected: allOxygenCollectedRef.current,
+          urchinDodges: urchinDodgesRef.current,
+          swordfishCollected: swordfishCollectedRef.current,
+          swordfishDodged: swordfishDodgedRef.current,
         })
         .then((out) => {
           if (out?.inventory && typeof out.inventory.dolphinSaved === "number") {
@@ -1864,6 +1873,12 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
         if (item.type === "OXYGEN" && scoreRef.current <= 1000) {
           allOxygenCollectedRef.current = false;
         }
+        if (item.type === "URCHIN" && !item.isDead) {
+          urchinDodgesRef.current += 1;
+        }
+        if (item.type === "SWORDFISH") {
+          swordfishDodgedRef.current = true;
+        }
         return false;
       }
 
@@ -1885,6 +1900,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
         } else if (item.type === "SWORDFISH") {
           isSwordfishActiveRef.current = true;
           swordfishTimerRef.current = Constants.SWORDFISH_DURATION;
+          swordfishCollectedRef.current = true;
           playSound('swordfish');
           return false;
         } else if (item.type === "TURTLE_SHELL") {

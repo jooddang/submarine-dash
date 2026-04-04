@@ -111,6 +111,68 @@ const ACHIEVEMENT_CATALOG = [
     category: 'death',
     reward: { type: 'coins', amount: 10 },
   },
+  // ── Death (oxygen) ──
+  {
+    id: 'oxygen_choker',
+    name: 'Oxygen Choker',
+    description: 'Die from oxygen shortage 3 times in a row',
+    category: 'death',
+    reward: { type: 'coins', amount: 10 },
+  },
+  // ── Skill (urchin dodge) ──
+  {
+    id: 'urchin_dodger',
+    name: 'Urchin Dodger',
+    description: 'Jump over urchins twice in a single game',
+    category: 'skill',
+    reward: { type: 'coins', amount: 40 },
+  },
+  {
+    id: 'urchin_acrobat',
+    name: 'Urchin Acrobat',
+    description: 'Jump over urchins three times in a single game',
+    category: 'skill',
+    reward: { type: 'coins', amount: 80 },
+  },
+  // ── Skill (swordfish dodge) ──
+  {
+    id: 'swordfish_dodger',
+    name: 'Swordfish Dodger',
+    description: 'Jump over a swordfish in 2 games in a row',
+    category: 'skill',
+    reward: { type: 'coins', amount: 50 },
+  },
+  // ── Skill (no-swordfish score) ──
+  {
+    id: 'purist_3000',
+    name: 'Purist Diver',
+    description: 'Reach score 3000 without using swordfish',
+    category: 'skill',
+    reward: { type: 'coins', amount: 100 },
+  },
+  {
+    id: 'purist_5000',
+    name: 'True Purist',
+    description: 'Reach score 5000 without using swordfish',
+    category: 'skill',
+    reward: { type: 'coins', amount: 200 },
+  },
+  // ── Streak (swordfish collection) ──
+  {
+    id: 'swordfish_collector',
+    name: 'Swordfish Collector',
+    description: 'Collect at least one swordfish in 3 games in a row',
+    category: 'skill',
+    reward: { type: 'coins', amount: 60 },
+  },
+  // ── PvP ──
+  {
+    id: 'pvp_win_streak_3',
+    name: 'PvP Champion',
+    description: 'Win PvP 3 times in a row',
+    category: 'skill',
+    reward: { type: 'coins', amount: 150 },
+  },
   // ── Daily grinder ──
   {
     id: 'daily_grinder_1',
@@ -132,6 +194,20 @@ const ACHIEVEMENT_CATALOG = [
     description: 'Play 25 games/day for 3 days in a row',
     category: 'daily',
     reward: { type: 'coins', amount: 550 },
+  },
+  {
+    id: 'daily_grinder_4',
+    name: 'Iron Will',
+    description: 'Play 25 games/day for 4 days in a row',
+    category: 'daily',
+    reward: { type: 'coins', amount: 650 },
+  },
+  {
+    id: 'daily_grinder_5',
+    name: 'Unstoppable',
+    description: 'Play 25 games/day for 5 days in a row',
+    category: 'daily',
+    reward: { type: 'coins', amount: 800 },
   },
 ];
 

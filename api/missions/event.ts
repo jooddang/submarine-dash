@@ -22,6 +22,7 @@ import {
   getAchievementState,
   saveAchievementState,
   evaluateRunEndAchievements,
+  evaluatePvpResultAchievements,
   getAchievementRewardCoins,
 } from '../_lib/achievements.js';
 import {
@@ -238,6 +239,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } else if (body.type === 'oxygen_collected') {
       const count = typeof body.count === 'number' && body.count > 0 ? Math.floor(body.count) : 1;
       progress.oxygenCollected += count;
+    } else if (body.type === 'pvp_result') {
+      // PvP result: only evaluate achievements, no daily progress update needed
+      const won = body.won === true;
+      let pvpAchievements: string[] = [];
+      try {
+        const achState = await getAchievementState(redisRO, userId);
+        const result = evaluatePvpResultAchievements(achState, won);
+        pvpAchievements = result.newlyUnlocked;
+        await saveAchievementState(redisRW, userId, result.state);
+        if (pvpAchievements.length > 0) {
+          const achCoins = getAchievementRewardCoins(pvpAchievements);
+          if (achCoins > 0) {
+            try {
+              await addCoins(redisRW, userId, achCoins, { type: 'achievement', meta: { achievements: pvpAchievements } });
+            } catch {
+              // best-effort
+            }
+          }
+        }
+      } catch {
+        // best-effort
+      }
+      let inventory: { dolphinSaved: number; coins: number } | undefined;
+      try {
+        const saved = await getSavedDolphins(redisRW, userId);
+        const coins = await getCoinBalance(redisRW, userId);
+        inventory = { dolphinSaved: saved, coins };
+      } catch {
+        // best-effort
+      }
+      return res.status(200).json({ newAchievements: pvpAchievements, inventory });
     } else {
       return res.status(400).json({ error: 'Invalid event' });
     }
@@ -309,6 +341,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             deathCause: typeof body.deathCause === 'string' ? body.deathCause : null,
             perfectPlatformer: body.perfectPlatformer === true,
             allOxygenCollected: body.allOxygenCollected === true,
+            urchinDodges: typeof body.urchinDodges === 'number' ? body.urchinDodges : 0,
+            swordfishCollected: body.swordfishCollected === true,
+            swordfishDodged: body.swordfishDodged === true,
           },
           skinState.equipped,
           progress.runs,

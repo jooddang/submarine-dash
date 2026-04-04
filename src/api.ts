@@ -218,8 +218,9 @@ export const missionsAPI = {
 
   async postEvent(
     event:
-      | { type: 'run_end'; score: number; tubePieces?: number; tubeCharges?: number; deathCause?: string | null; perfectPlatformer?: boolean; allOxygenCollected?: boolean }
+      | { type: 'run_end'; score: number; tubePieces?: number; tubeCharges?: number; deathCause?: string | null; perfectPlatformer?: boolean; allOxygenCollected?: boolean; urchinDodges?: number; swordfishCollected?: boolean; swordfishDodged?: boolean }
       | { type: 'oxygen_collected'; count?: number }
+      | { type: 'pvp_result'; won: boolean }
   ): Promise<
     | {
         date: string;
