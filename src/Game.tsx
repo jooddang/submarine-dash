@@ -131,6 +131,10 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
   const [weeklyDolphinRewardWeekId, setWeeklyDolphinRewardWeekId] = useState<string | null>(null);
   const pendingWeeklyDolphinRewardRef = useRef<boolean>(false);
 
+  // Beginner mode: easier gameplay, no high-score eligibility
+  const [beginnerMode, setBeginnerMode] = useState(false);
+  const beginnerModeRef = useRef(false);
+
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const leaderboardRef = useRef<LeaderboardEntry[]>([]);
   const [lastSubmittedId, setLastSubmittedId] = useState<number | null>(null);
@@ -791,7 +795,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
     setLevel(1);
     oxygenRef.current = Constants.OXYGEN_MAX;
     setOxygen(Constants.OXYGEN_MAX);
-    speedRef.current = Constants.GAME_SPEED_START;
+    speedRef.current = beginnerModeRef.current ? Constants.BEGINNER_GAME_SPEED_START : Constants.GAME_SPEED_START;
     distanceRef.current = 0;
     quickSandTimerRef.current = null;
     wasTrappedInQuickSandRef.current = false;
@@ -1304,7 +1308,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
     }
 
     const lb = leaderboardRef.current;
-    const isQualified = finalScore > 0 && (lb.length < 5 || finalScore > lb[lb.length - 1].score);
+    const isQualified = !beginnerModeRef.current && finalScore > 0 && (lb.length < 5 || finalScore > lb[lb.length - 1].score);
 
     if (isQualified) {
       gameStateRef.current = "INPUT_NAME";
@@ -1489,7 +1493,8 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
       effectiveSpeed *= Constants.SWORDFISH_SPEED_MULT;
     }
 
-    speedRef.current = Math.min(Constants.MAX_SPEED, speedRef.current + 0.1 * dt);
+    const maxSpeed = beginnerModeRef.current ? Constants.BEGINNER_MAX_SPEED : Constants.MAX_SPEED;
+    speedRef.current = Math.min(maxSpeed, speedRef.current + 0.1 * dt);
 
     distanceRef.current += effectiveSpeed;
     const newScore = Math.floor(distanceRef.current / 10);
@@ -1726,6 +1731,12 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
       if (currentLevel >= 4) { holeChance = 0.45; maxGapTiles = 5; minPlatTiles = 2; maxPlatTiles = 4; }
       if (currentLevel >= 5) { holeChance = 0.5; minPlatTiles = 2; maxPlatTiles = 3; }
 
+      // Beginner mode: longer platforms
+      if (beginnerModeRef.current) {
+        minPlatTiles += Constants.BEGINNER_PLATFORM_BONUS_TILES;
+        maxPlatTiles += Constants.BEGINNER_PLATFORM_BONUS_TILES;
+      }
+
       const maxJumpPx = (speedRef.current * 40) - 60;
       const safeMaxGapTiles = Math.floor(maxJumpPx / Constants.TILE_SIZE);
 
@@ -1743,7 +1754,8 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
       }
 
       const platTiles = Math.floor(Math.random() * (maxPlatTiles - minPlatTiles + 1)) + minPlatTiles;
-      let isQuickSand = Math.random() < 0.25;
+      const quickSandChance = beginnerModeRef.current ? Constants.BEGINNER_QUICKSAND_CHANCE : 0.25;
+      let isQuickSand = Math.random() < quickSandChance;
       let effectivePlatTiles = platTiles;
 
       // Dev/testing: after picking up a turtle shell, force a long quicksand once
@@ -1766,8 +1778,10 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
       if (!isGap) {
         // URCHIN SPAWN LOGIC
         let spawnedUrchin = false;
-        if (scoreRef.current > Constants.URCHIN_SCORE_THRESHOLD) {
-          if (Math.random() < Constants.URCHIN_CHANCE) {
+        const urchinThreshold = beginnerModeRef.current ? Constants.BEGINNER_URCHIN_SCORE_THRESHOLD : Constants.URCHIN_SCORE_THRESHOLD;
+        const urchinChance = beginnerModeRef.current ? Constants.BEGINNER_URCHIN_CHANCE : Constants.URCHIN_CHANCE;
+        if (scoreRef.current > urchinThreshold) {
+          if (Math.random() < urchinChance) {
             itemsRef.current.push({
               x: newPlat.x + newPlat.width / 2,
               y: newPlat.y - 140 - (Math.random() * 50), // High enough to avoid short jump
@@ -1809,7 +1823,8 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
 
           if (!spawnedRegularItem) {
             const rand = Math.random();
-            if (rand < Constants.SWORDFISH_CHANCE) {
+            const swordfishChance = beginnerModeRef.current ? Constants.BEGINNER_SWORDFISH_CHANCE : Constants.SWORDFISH_CHANCE;
+            if (rand < swordfishChance) {
               itemsRef.current.push({
                 x: newPlat.x + newPlat.width / 2 - 25,
                 y: newPlat.y - 120 - (Math.random() * 80),
@@ -1819,7 +1834,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
                 type: "SWORDFISH"
               });
             }
-            else if (rand < Constants.SWORDFISH_CHANCE + Constants.TANK_CHANCE) {
+            else if (rand < swordfishChance + Constants.TANK_CHANCE) {
               itemsRef.current.push({
                 x: newPlat.x + newPlat.width / 2 - 15,
                 y: newPlat.y - 60 - (Math.random() * 100),
@@ -2184,6 +2199,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
           onToggleDolphinUse={() => setDolphinUseEnabled((prev) => !prev)}
           tubePieces={tubePieces}
           tubeRescueCharges={tubeRescueCharges}
+          beginnerMode={beginnerMode}
         />
       )}
 
@@ -2291,6 +2307,13 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
           onPvpClick={onPvpClick}
           onOnlinePvpClick={onOnlinePvpClick}
           userAchievements={userAchievements}
+          beginnerMode={beginnerMode}
+          onToggleBeginnerMode={() => {
+            setBeginnerMode(prev => {
+              beginnerModeRef.current = !prev;
+              return !prev;
+            });
+          }}
         />
       )}
 

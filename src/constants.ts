@@ -40,6 +40,15 @@ export const TUBE_PIECES_PER_TUBE = 4;
 // Score bonus granted once per completed tube (implemented by bumping distance so score stays consistent).
 export const TUBE_COMPLETION_BONUS_SCORE = 250;
 
+// Beginner Mode overrides
+export const BEGINNER_GAME_SPEED_START = 4;
+export const BEGINNER_MAX_SPEED = 9;
+export const BEGINNER_URCHIN_CHANCE = 0.02;
+export const BEGINNER_URCHIN_SCORE_THRESHOLD = 2000;
+export const BEGINNER_SWORDFISH_CHANCE = 0.08;
+export const BEGINNER_QUICKSAND_CHANCE = 0.10;
+export const BEGINNER_PLATFORM_BONUS_TILES = 2; // added to min/max platform tile counts
+
 // --- Dev / Testing toggles (turn off before shipping) ---
 export const DEV_FORCE_TURTLE_SHELL_ON_START = false;
 export const DEV_FORCE_DOLPHIN_ON_START = false;

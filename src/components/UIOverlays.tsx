@@ -1335,6 +1335,7 @@ interface HUDProps {
   onToggleDolphinUse?: () => void;
   tubePieces?: number;
   tubeRescueCharges?: number;
+  beginnerMode?: boolean;
 }
 
 export const HUD: React.FC<HUDProps> = ({
@@ -1348,6 +1349,7 @@ export const HUD: React.FC<HUDProps> = ({
   onToggleDolphinUse,
   tubePieces,
   tubeRescueCharges,
+  beginnerMode,
 }) => {
   const dolphinSlotRef = React.useRef<HTMLDivElement | null>(null);
   const dolphinSpendFxRef = React.useRef<HTMLDivElement | null>(null);
@@ -1404,9 +1406,20 @@ export const HUD: React.FC<HUDProps> = ({
     fontSize: "24px",
     textShadow: "2px 2px 0 #000"
   }}>
-    <div style={{ display: "flex", gap: "20px" }}>
+    <div style={{ display: "flex", gap: "20px", alignItems: "center" }}>
       <span>SCORE: {score.toString().padStart(5, '0')}</span>
       <span style={{ color: "#ffd700" }}>LVL {level}</span>
+      {beginnerMode && (
+        <span style={{
+          fontSize: "14px",
+          color: "#00ff88",
+          background: "rgba(0,255,136,0.15)",
+          border: "1px solid rgba(0,255,136,0.4)",
+          borderRadius: "6px",
+          padding: "2px 8px",
+          fontWeight: 700,
+        }}>BEGINNER</span>
+      )}
     </div>
     <div style={{ marginTop: "10px", display: "flex", alignItems: "center", gap: "10px" }}>
       <span>OXYGEN:</span>
@@ -1631,6 +1644,8 @@ interface MenuOverlayProps {
   streakCurrent?: number;
   coinBalance?: number;
   userAchievements?: Record<string, UserAchievementSummary>;
+  beginnerMode?: boolean;
+  onToggleBeginnerMode?: () => void;
 }
 
 export const MenuOverlay: React.FC<MenuOverlayProps> = ({
@@ -1653,6 +1668,8 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
   streakCurrent,
   coinBalance,
   userAchievements,
+  beginnerMode,
+  onToggleBeginnerMode,
 }) => (
   <div style={overlayStyle} data-allow-scroll="1">
     <h1 style={titleStyle}>DEEP DIVE DASH</h1>
@@ -1663,6 +1680,42 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
       Collect <span style={{ color: "#5dade2", fontWeight: "bold" }}>Swordfish</span> for 3x SPEED & INVINCIBILITY!<br />
       Controls: Spacebar (Hold for High Jump) / Arrow Up
     </div>
+
+    {onToggleBeginnerMode && (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onToggleBeginnerMode(); }}
+        style={{
+          marginTop: 12,
+          padding: "10px 28px",
+          fontSize: "1.05rem",
+          background: beginnerMode
+            ? "linear-gradient(135deg, rgba(0,255,136,0.35), rgba(0,200,100,0.25))"
+            : "rgba(0,0,0,0.25)",
+          color: beginnerMode ? "#00ff88" : "rgba(255,255,255,0.75)",
+          border: beginnerMode
+            ? "2px solid rgba(0,255,136,0.6)"
+            : "1px solid rgba(255,255,255,0.25)",
+          borderRadius: "10px",
+          cursor: "pointer",
+          fontWeight: 800,
+          letterSpacing: 1,
+          transition: "all 0.2s",
+        }}
+      >
+        {beginnerMode ? "BEGINNER MODE ✓" : "BEGINNER MODE"}
+      </button>
+    )}
+    {beginnerMode && (
+      <div style={{
+        marginTop: 6,
+        fontSize: "0.85rem",
+        color: "rgba(255,255,255,0.55)",
+        fontStyle: "italic",
+      }}>
+        Easier gameplay — scores will not appear on the leaderboard
+      </div>
+    )}
 
     <div
       style={{
