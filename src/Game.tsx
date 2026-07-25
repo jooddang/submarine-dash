@@ -8,6 +8,7 @@ import { drawSwordfish, drawUrchin, drawBackgroundEntities, drawTurtleShell } fr
 import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, AuthModal, DailyMissionsPanel, DolphinStreakRewardOverlay, DolphinWeeklyWinnerRewardOverlay, InventoryPanel, SkinPanel, AchievementsPanel } from "./components/UIOverlays";
 import { getSkinDef, drawSubmarine, updateTrailParticles, drawTrailParticles, isGoldenTubeEligible, GOLDEN_TUBE_EXTRA_CHARGES, GOLDEN_TUBE_EXTRA_SCORE_BONUS, DEFAULT_SKIN_ID, preloadSkinImages, type TrailParticle, type SkinDef } from "./skins";
 import { authAPI, inventoryAPI, leaderboardAPI, missionsAPI, achievementsAPI, type DailyMissionsResponse, type AuthUser, type UserAchievementSummary } from "./api";
+import { runLeaderboardSubmission } from "./leaderboardSubmission";
 import turtleRescueImg from "../turtle.png";
 import turtleShellItemImg from "../turtle-shell-item.png";
 import tubeImg from "../tube.png";
@@ -138,6 +139,9 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
   const [currentWeekId, setCurrentWeekId] = useState<string | null>(null);
 
   const [playerName, setPlayerName] = useState("");
+  const [scoreSubmitError, setScoreSubmitError] = useState<string | null>(null);
+  const [scoreSubmitBusy, setScoreSubmitBusy] = useState(false);
+  const scoreSubmitLockRef = useRef(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   // Important: the game loop + global event listeners are registered once and can capture stale state.
   // Mirror auth state into a ref so gameplay-side logic always sees the latest auth status.
@@ -291,6 +295,15 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
     } catch (e) {
       console.error("Failed to fetch daily missions:", e);
     }
+  };
+
+  const resetAuthenticatedUserState = () => {
+    setAuthUser(null);
+    authUserRef.current = null;
+    setCoinBalance(0);
+    setOwnedSkins([DEFAULT_SKIN_ID]);
+    setEquippedSkinId(DEFAULT_SKIN_ID);
+    refreshDailyMissions();
   };
 
   const fetchUserAchievements = (entries: LeaderboardEntry[]) => {
@@ -1310,6 +1323,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
       gameStateRef.current = "INPUT_NAME";
       setGameState("INPUT_NAME");
       setPlayerName("");
+      setScoreSubmitError(null);
     } else {
       gameStateRef.current = "GAME_OVER";
       setGameState("GAME_OVER");
@@ -1317,8 +1331,29 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
     }
   };
 
+  const submitLeaderboardScore = async (name: string) => {
+    return runLeaderboardSubmission({
+      lock: scoreSubmitLockRef,
+      submit: () => leaderboardAPI.submitScore(name, scoreRef.current, equippedSkinId),
+      onBusyChange: setScoreSubmitBusy,
+      onError: setScoreSubmitError,
+      onUnauthorized: resetAuthenticatedUserState,
+      onSuccess: (result) => {
+        setLeaderboard(result.leaderboard);
+        leaderboardRef.current = result.leaderboard;
+        setLastSubmittedId(result.entry.id);
+        fetchUserAchievements(result.leaderboard);
+        didSubmitRef.current = true;
+        gameStateRef.current = "GAME_OVER";
+        setGameState("GAME_OVER");
+      },
+    });
+  };
+
   const submitHighScore = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (scoreSubmitBusy) return;
+
     // Logged-in users may choose a different leaderboard name per submission.
     // If blank, server will default it to the user's loginId.
     const name = playerName.trim();
@@ -1330,22 +1365,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
       return;
     }
 
-    try {
-      const result = await leaderboardAPI.submitScore(name, scoreRef.current, equippedSkinId);
-
-      if (result) {
-        setLeaderboard(result.leaderboard);
-        leaderboardRef.current = result.leaderboard;
-        setLastSubmittedId(result.entry.id);
-        fetchUserAchievements(result.leaderboard);
-      }
-    } catch (error) {
-      console.error("Failed to submit high score:", error);
-    }
-
-    didSubmitRef.current = true;
-    gameStateRef.current = "GAME_OVER";
-    setGameState("GAME_OVER");
+    await submitLeaderboardScore(name);
   };
 
   const handleAuthSubmit = async () => {
@@ -1408,16 +1428,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
       if (pendingSubmitRef.current) {
         pendingSubmitRef.current = false;
         // Retry submit (now authenticated). Keep the same score + chosen name.
-        const result = await leaderboardAPI.submitScore(playerName.trim(), scoreRef.current, equippedSkinId);
-        if (result) {
-          setLeaderboard(result.leaderboard);
-          leaderboardRef.current = result.leaderboard;
-          setLastSubmittedId(result.entry.id);
-          fetchUserAchievements(result.leaderboard);
-        }
-        didSubmitRef.current = true;
-        gameStateRef.current = "GAME_OVER";
-        setGameState("GAME_OVER");
+        await submitLeaderboardScore(playerName.trim());
       }
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : "Auth failed");
@@ -2265,12 +2276,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
           loginId={authUser?.loginId ?? null}
           onLogoutClick={async () => {
             await authAPI.logout();
-            setAuthUser(null);
-            authUserRef.current = null;
-            setCoinBalance(0);
-            setOwnedSkins([DEFAULT_SKIN_ID]);
-            setEquippedSkinId(DEFAULT_SKIN_ID);
-            refreshDailyMissions();
+            resetAuthenticatedUserState();
           }}
           onLoginClick={() => {
             setAuthError(null);
@@ -2303,9 +2309,13 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
           loginId={authUser?.loginId ?? null}
           onOpenLogin={() => {
             setAuthError(null);
+            setScoreSubmitError(null);
+            pendingSubmitRef.current = true;
             setAuthMode("login");
             setAuthModalOpen(true);
           }}
+          error={scoreSubmitError}
+          isSubmitting={scoreSubmitBusy}
           onSubmit={submitHighScore}
         />
       )}

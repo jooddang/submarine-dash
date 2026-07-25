@@ -1950,10 +1950,22 @@ interface InputNameOverlayProps {
   isLoggedIn?: boolean;
   loginId?: string | null;
   onOpenLogin?: () => void;
+  error?: string | null;
+  isSubmitting?: boolean;
   onSubmit: (e: React.FormEvent) => void;
 }
 
-export const InputNameOverlay: React.FC<InputNameOverlayProps> = ({ score, playerName, setPlayerName, isLoggedIn, loginId, onOpenLogin, onSubmit }) => (
+export const InputNameOverlay: React.FC<InputNameOverlayProps> = ({
+  score,
+  playerName,
+  setPlayerName,
+  isLoggedIn,
+  loginId,
+  onOpenLogin,
+  error,
+  isSubmitting,
+  onSubmit,
+}) => (
   <div style={{ ...overlayStyle, justifyContent: "center" }}>
     <h1 style={{ ...titleStyle, fontSize: "3rem", color: "#ffd700" }}>NEW HIGH SCORE!</h1>
     <p style={{ fontSize: "1.5rem", marginBottom: "20px" }}>Score: {score}</p>
@@ -1998,8 +2010,17 @@ export const InputNameOverlay: React.FC<InputNameOverlayProps> = ({ score, playe
           LOG IN TO SUBMIT
         </button>
       )}
+      {error && (
+        <div
+          role="alert"
+          style={{ color: "#ffb4b4", fontSize: "14px", maxWidth: "320px", textAlign: "center" }}
+        >
+          {error}
+        </div>
+      )}
       <button
         type="submit"
+        disabled={isSubmitting}
         style={{
           padding: "10px 20px",
           fontSize: "1.2rem",
@@ -2007,12 +2028,13 @@ export const InputNameOverlay: React.FC<InputNameOverlayProps> = ({ score, playe
           color: "#001e36",
           border: "none",
           borderRadius: "5px",
-          cursor: "pointer",
+          cursor: isSubmitting ? "wait" : "pointer",
           fontWeight: "bold",
-          touchAction: "auto"
+          touchAction: "auto",
+          opacity: isSubmitting ? 0.7 : 1,
         }}
       >
-        SUBMIT
+        {isSubmitting ? "SUBMITTING…" : "SUBMIT"}
       </button>
     </form>
   </div>

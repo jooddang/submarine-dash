@@ -20,6 +20,17 @@ const getApiBaseUrl = () => {
 
 const API_BASE_URL = getApiBaseUrl();
 
+export class ApiResponseError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly responseBody: string,
+  ) {
+    super(`${message} (status=${status}) ${responseBody}`);
+    this.name = 'ApiResponseError';
+  }
+}
+
 function getTimezoneOffsetMinutes(): number {
   // JS returns minutes to add to local time to get UTC (e.g., KST => -540)
   return new Date().getTimezoneOffset();
@@ -80,27 +91,22 @@ export const leaderboardAPI = {
     entry: LeaderboardEntry;
     leaderboard: LeaderboardEntry[];
     rank: number;
-  } | null> {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/leaderboard`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({ name, score, skinId }),
-      });
+  }> {
+    const response = await fetch(`${API_BASE_URL}/api/leaderboard`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify({ name, score, skinId }),
+    });
 
-      if (!response.ok) {
-        const text = await response.text().catch(() => '');
-        throw new Error(`Failed to submit score (status=${response.status}) ${text}`);
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Error submitting score:', error);
-      return null;
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new ApiResponseError('Failed to submit score', response.status, text);
     }
+
+    return await response.json();
   },
 
   // Check if API is available
