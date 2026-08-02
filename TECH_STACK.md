@@ -77,3 +77,12 @@
 |----------|-------------|---------|----------|
 | `REDIS_URL` | Redis connection string | `redis://default:pass@host:port` | Yes (backend) |
 | `VITE_API_URL` | Backend API URL for local dev | `http://localhost:3001` | No (defaults to relative path) |
+| `SD_LEGACY_STORAGE_ENABLED` | Keep Redis as active legacy storage | `true` | No (defaults true) |
+| `SD_SUPABASE_SHADOW_VERIFY` | Enable later shadow verification | `false` | No |
+| `SD_MIGRATION_ADMISSION_GATE_ENABLED` | Enforce Redis-backed fenced mutation admission | `false` | No |
+| `SD_CANONICAL_AUTH_TICKETS_ENABLED` | Enable later canonical auth ticket flow | `false` | No |
+| `SD_PROTECTED_ACCOUNT_CANARY_ENABLED` | Restrict later cutover to protected canaries | `false` | No |
+| `SD_MIGRATION_ROLLBACK_MODE` | Route later storage access through rollback mode | `false` | No |
+| `SD_MIGRATION_LEASE_TTL_MS` | Mutation lease TTL; must exceed max invocation plus margin | `930000` | No |
+| `SD_MIGRATION_RUNTIME_PROBE_URLS` | Comma-separated deployed HTTPS health probes required before freeze | `https://game.example/api/health` | Freeze operator only |
+| `SD_MIGRATION_EXPECTED_DEPLOYED_COMMIT` | Exact commit every runtime probe must report | Git SHA | Freeze operator only |

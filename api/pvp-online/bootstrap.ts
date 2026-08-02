@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { withProductionControl } from './../_lib/productionControls.js';
 import { getUserIdForSession, getUser } from '../_lib/auth.js';
 import { getUpstashRedisClient } from '../_lib/redis.js';
 import { getSavedDolphins } from '../_lib/dolphinInventory.js';
@@ -10,7 +11,7 @@ import { getUserRoomMembership, getRoomSnapshot } from '../_lib/pvpOnlineRooms.j
 
 export const config = { runtime: 'nodejs' };
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
@@ -51,3 +52,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     activeRoomSummary,
   });
 }
+
+export default withProductionControl('api/pvp-online/bootstrap.ts', handler);

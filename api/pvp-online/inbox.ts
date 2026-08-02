@@ -1,10 +1,11 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { withProductionControl } from './../_lib/productionControls.js';
 import { getUserIdForSession } from '../_lib/auth.js';
 import { getInboxItems } from '../_lib/pvpOnlineInbox.js';
 
 export const config = { runtime: 'nodejs' };
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
@@ -21,3 +22,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const result = await getInboxItems(userId, cursor, Math.min(limit, 50));
   return res.status(200).json(result);
 }
+
+export default withProductionControl('api/pvp-online/inbox.ts', handler);

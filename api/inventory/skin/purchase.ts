@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { withProductionControl } from './../../_lib/productionControls.js';
 import { getUserIdForSession } from '../../_lib/auth.js';
 import { getUpstashRedisClient } from '../../_lib/redis.js';
 import { getSkinState, addOwnedSkin } from '../../_lib/skinInventory.js';
@@ -24,7 +25,7 @@ const SKIN_COSTS: Record<string, number> = {
   kraken: 20000,
 };
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -81,3 +82,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'Internal server error' });
   }
 }
+
+export default withProductionControl('api/inventory/skin/purchase.ts', handler);

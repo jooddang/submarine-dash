@@ -1,10 +1,11 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { withProductionControl } from './../../_lib/productionControls.js';
 import { getUserIdForSession } from '../../_lib/auth.js';
 import { getUserPendingInvites } from '../../_lib/pvpOnlineInvites.js';
 
 export const config = { runtime: 'nodejs' };
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
@@ -18,3 +19,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const invites = await getUserPendingInvites(userId);
   return res.status(200).json({ invites });
 }
+
+export default withProductionControl('api/pvp-online/invites/pending.ts', handler);

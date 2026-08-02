@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { withProductionControl } from './../_lib/productionControls.js';
 import { KEY_PREFIX } from '../_lib/auth.js';
 import { getUpstashRedisClient } from '../_lib/redis.js';
 import { getAchievementState } from '../_lib/achievements.js';
@@ -10,7 +11,7 @@ const ACHIEVEMENT_NAME_MAP = Object.fromEntries(
   ACHIEVEMENT_CATALOG.map((a: any) => [a.id, { name: a.name, category: a.category }])
 );
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -56,3 +57,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'Internal server error' });
   }
 }
+
+export default withProductionControl('api/achievements/users.ts', handler);

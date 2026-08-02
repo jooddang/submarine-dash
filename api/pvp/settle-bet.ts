@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { withProductionControl } from './../_lib/productionControls.js';
 import { getUpstashRedisClient } from '../_lib/redis.js';
 import { getUserIdForSession, getUser } from '../_lib/auth.js';
 import { getCoinBalance, addCoins } from '../_lib/coinInventory.js';
@@ -7,7 +8,7 @@ import { getTubeState, saveTubeState } from '../_lib/tubeInventory.js';
 
 export const config = { runtime: 'nodejs' };
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -89,3 +90,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'Internal server error' });
   }
 }
+
+export default withProductionControl('api/pvp/settle-bet.ts', handler);

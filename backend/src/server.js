@@ -5,6 +5,19 @@ import dotenv from 'dotenv';
 import { sanitizeLeaderboardName } from '../../shared/profanity.js';
 import { getPstCurrentWeekId, getPrevWeekId, getWeekEndDate } from '../../shared/week.js';
 import { ACHIEVEMENT_CATALOG, getAchievementRewardCoins } from '../../shared/achievements.js';
+import {
+  acquireMutationLease,
+  createControlledRedis,
+  MaintenanceFreezeError,
+  productionControlFlags,
+  redactedMigrationEvent,
+  releaseMutationLease,
+  renewMutationLease,
+  runWithMutationLease,
+  startMutationLeaseRenewal,
+} from '../../shared/productionControls.js';
+import { localRouteClassification, requiresDurableAdmission } from '../../shared/productionRouteInventory.js';
+import { productionRuntimeProbe } from '../../shared/productionRuntimeProbe.js';
 import crypto from 'node:crypto';
 
 // Load environment variables from parent directory
@@ -25,24 +38,30 @@ const SESSION_COOKIE_NAME = 'sd_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
 // Initialize Redis client
+let rawRedis = null;
 let redis = null;
 try {
   const redisUrl = process.env.REDIS_URL;
   if (!redisUrl) {
     console.warn('⚠️  REDIS_URL not set. Leaderboard will not persist.');
   } else {
-    redis = new Redis(redisUrl, {
+    rawRedis = new Redis(redisUrl, {
       maxRetriesPerRequest: 3,
       enableOfflineQueue: false,
     });
 
-    redis.on('connect', () => {
+    rawRedis.on('connect', () => {
       console.log('✅ Connected to Redis');
     });
 
-    redis.on('error', (err) => {
+    rawRedis.on('error', (err) => {
       console.error('❌ Redis error:', err.message);
     });
+
+    const adapter = {
+      eval: (script, keys, args) => rawRedis.eval(script, keys.length, ...keys, ...args.map(String)),
+    };
+    redis = createControlledRedis(rawRedis, adapter, productionControlFlags());
   }
 } catch (error) {
   console.error('❌ Failed to initialize Redis:', error.message);
@@ -60,6 +79,46 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
+
+app.use(async (req, res, next) => {
+  const classification = localRouteClassification(req.path, req.method);
+  const flags = productionControlFlags();
+  if (!flags.admissionGate || !requiresDurableAdmission(classification) || !rawRedis) return next();
+
+  const adapter = {
+    eval: (script, keys, args) => rawRedis.eval(script, keys.length, ...keys, ...args.map(String)),
+  };
+  let lease;
+  try {
+    lease = await acquireMutationLease(adapter, `${req.method}:${req.path}`);
+  } catch (error) {
+    if (!(error instanceof MaintenanceFreezeError)) return next(error);
+    res.setHeader('Retry-After', '30');
+    redactedMigrationEvent({ event: 'mutation_rejected', phase: 0, route: req.path, outcome: 'maintenance' });
+    return res.status(503).json({
+      error: error.code,
+      message: 'Game progress is temporarily paused for maintenance. Please retry shortly.',
+      retryable: true,
+    });
+  }
+
+  const renewal = startMutationLeaseRenewal(lease, {
+    renew: renewMutationLease,
+    onExpired: () => redactedMigrationEvent({ event: 'lease_expired', phase: 0, route: req.path, outcome: 'blocked' }),
+    onError: () => redactedMigrationEvent({ event: 'lease_renewal_failed', phase: 0, route: req.path, outcome: 'blocked' }),
+  });
+
+  let releasePromise = null;
+  const release = () => {
+    if (releasePromise) return;
+    releasePromise = renewal.stop().then(() => releaseMutationLease(lease)).catch(() => {
+      redactedMigrationEvent({ event: 'lease_release_failed', phase: 0, route: req.path, outcome: 'blocked' });
+    });
+  };
+  res.once('finish', release);
+  res.once('close', release);
+  return runWithMutationLease(lease, () => next());
+});
 
 function base64Url(bytes) {
   return bytes
@@ -1910,6 +1969,41 @@ app.post('/api/pvp-online/rooms/config', async (req, res) => {
   }
 });
 
+app.post('/api/pvp-online/rooms/skin', async (req, res) => {
+  try {
+    if (!redis) return res.status(503).json({ error: 'Redis not connected' });
+    const userId = await getUserIdForSession(req);
+    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+    const { roomVersion, skinId } = req.body || {};
+    if (typeof roomVersion !== 'number') return res.status(400).json({ error: 'roomVersion required' });
+    if (typeof skinId !== 'string' || !skinId.trim()) return res.status(400).json({ error: 'skinId required' });
+
+    const roomId = await getActivePvpRoomMembership(userId);
+    if (!roomId) return res.status(404).json({ error: 'NOT_IN_ROOM' });
+    const skins = await getSkinState(userId);
+    if (!skins.owned.includes(skinId)) return res.status(403).json({ error: 'SKIN_NOT_OWNED' });
+
+    const raw = await redis.get(`sd:pvp:room:${roomId}`);
+    if (!raw) return res.status(404).json({ error: 'ROOM_NOT_FOUND' });
+    const room = JSON.parse(raw);
+    if (room.version !== roomVersion) return res.status(409).json({ error: 'ROOM_VERSION_CONFLICT' });
+    if (!['OPEN', 'READY_CHECK', 'WAITING_FOR_INVITEE'].includes(room.phase)) {
+      return res.status(400).json({ error: 'INVALID_PHASE' });
+    }
+    if (room.slots.host.userId === userId) room.slots.host.skinId = skinId;
+    else if (room.slots.guest?.userId === userId) room.slots.guest.skinId = skinId;
+    else return res.status(400).json({ error: 'NOT_IN_ROOM' });
+
+    room.updatedAt = Date.now();
+    room.version += 1;
+    await redis.set(`sd:pvp:room:${roomId}`, JSON.stringify(room));
+    return res.json({ room });
+  } catch (error) {
+    console.error('POST /api/pvp-online/rooms/skin error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.post('/api/pvp-online/rooms/leave', async (req, res) => {
   try {
     if (!redis) return res.status(503).json({ error: 'Redis not connected' });
@@ -2192,7 +2286,8 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     message: 'Submarine Dash API is running',
-    redis: redis ? 'connected' : 'not connected'
+    redis: redis ? 'connected' : 'not connected',
+    migrationControl: productionRuntimeProbe(),
   });
 });
 

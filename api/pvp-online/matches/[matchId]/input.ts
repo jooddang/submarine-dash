@@ -1,10 +1,11 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { withProductionControl } from './../../../_lib/productionControls.js';
 import { getUserIdForSession } from '../../../_lib/auth.js';
 import { getUpstashRedisClient } from '../../../_lib/redis.js';
 
 export const config = { runtime: 'nodejs' };
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
@@ -48,3 +49,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   await redis.set('sd:pvp:match:' + matchId, JSON.stringify(match));
   return res.status(200).json({ ok: true });
 }
+
+export default withProductionControl('api/pvp-online/matches/[matchId]/input.ts', handler);

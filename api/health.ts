@@ -1,8 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { withProductionControl } from './_lib/productionControls.js';
+import { productionRuntimeProbe } from '../shared/productionRuntimeProbe.js';
 
 export const config = { runtime: 'nodejs' };
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
 
@@ -13,6 +15,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   return res.status(200).json({
     status: 'ok',
     message: 'Submarine Dash API is running',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    migrationControl: productionRuntimeProbe(),
   });
 }
+
+export default withProductionControl('api/health.ts', handler);

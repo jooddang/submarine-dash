@@ -1,10 +1,11 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { withProductionControl } from './../_lib/productionControls.js';
 import { getUserIdForSession, getUser } from '../_lib/auth.js';
 import { generateWsTicket } from '../_lib/pvpOnlineAuth.js';
 
 export const config = { runtime: 'nodejs' };
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
@@ -26,3 +27,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     expiresAt,
   });
 }
+
+export default withProductionControl('api/pvp-online/ws-ticket.ts', handler);

@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { withProductionControl } from './_lib/productionControls.js';
 import { sanitizeLeaderboardName } from '../shared/profanity.js';
 import { getUser, getUserIdForSession } from './_lib/auth.js';
 import { getUpstashRedisClient } from './_lib/redis.js';
@@ -17,7 +18,7 @@ export const config = { runtime: 'nodejs' };
 
 const CLEAR_ALLOWED = process.env.ALLOW_LEADERBOARD_CLEAR === 'true';
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function handler(req: VercelRequest, res: VercelResponse) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
@@ -123,3 +124,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 }
+
+export default withProductionControl('api/leaderboard.ts', handler);

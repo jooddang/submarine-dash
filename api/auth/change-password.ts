@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { withProductionControl } from './../_lib/productionControls.js';
 import {
   createSession,
   getUser,
@@ -22,12 +23,13 @@ function bad(res: VercelResponse, status: number, message: string) {
   return res.status(status).json({ error: message });
 }
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return bad(res, 405, 'Method not allowed');
+
 
   try {
     const ip = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() || 'unknown';
@@ -95,5 +97,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-
+export default withProductionControl('api/auth/change-password.ts', handler);
 

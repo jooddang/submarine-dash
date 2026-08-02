@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { withProductionControl } from './../_lib/productionControls.js';
 import { getUserIdForSession, KEY_PREFIX } from '../_lib/auth.js';
 import { getUpstashRedisClient } from '../_lib/redis.js';
 import { migratePendingDolphins, getSavedDolphins } from '../_lib/dolphinInventory.js';
@@ -94,12 +95,13 @@ function computeCompleted(missions: DailyMission[], progress: DailyProgress): st
   return [...out];
 }
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-TZ-Offset-Min');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+
 
   try {
     const tzOffsetMin = tzOffsetFromReq(req);
@@ -161,4 +163,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-
+export default withProductionControl('api/missions/daily.ts', handler);

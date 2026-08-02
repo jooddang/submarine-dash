@@ -171,6 +171,34 @@ npm run backend:install  # Install backend dependencies
 - `DELETE /api/leaderboard` - Clear leaderboard (testing)
 - `GET /api/health` - Health check
 
+### Migration admission controls
+
+The Redis-backed mutation gate is disabled by default. Before a freeze, deploy every participating runtime with `SD_MIGRATION_ADMISSION_GATE_ENABLED=true`, then verify its `/api/health` response. The operator command requires every configured HTTPS probe to report the same route-inventory version/digest and the exact deployed **40-character commit SHA**.
+
+```bash
+SD_MIGRATION_ADMISSION_GATE_ENABLED=true \
+SD_MIGRATION_RUNTIME_PROBE_URLS=https://submarine-dash.example.com/api/health \
+SD_MIGRATION_EXPECTED_DEPLOYED_COMMIT=3065c4defce45314ae166922f64df60136d25c88 \
+SD_MIGRATION_CONTROL_CONFIRM=FREEZE \
+npm run migration:control -- freeze
+```
+
+An expired lease sets a hard blocker and records its first Redis-time occurrence. Closing the gate records a separate Redis-time anchor. `reopen` remains unavailable until reconciliation is recorded. The remediation command atomically requires a closed gate, zero active leases, and a Redis-time quarantine starting at the later trusted anchor. The duration is code-owned: at least 930,000 ms and automatically extended to the largest lease TTL admitted by Redis. Operator-supplied quarantine timestamps or durations are not accepted. Two equal durable manifests must each have an ordered capture timestamp after that trusted quarantine and not in the future relative to Redis TIME. The reconciliation-report SHA, manifest SHA, capture times, batch, and operator are retained in the Redis audit record.
+
+```bash
+SD_MIGRATION_CONTROL_CONFIRM=RECONCILE_EXPIRED \
+SD_MIGRATION_RECONCILIATION_REPORT_SHA256=replace-with-64-lowercase-hex \
+SD_MIGRATION_FIRST_DURABLE_MANIFEST_SHA256=replace-with-64-lowercase-hex \
+SD_MIGRATION_SECOND_DURABLE_MANIFEST_SHA256=replace-with-the-same-64-lowercase-hex \
+SD_MIGRATION_FIRST_MANIFEST_CAPTURED_AT_MS=replace-with-first-capture-unix-ms \
+SD_MIGRATION_SECOND_MANIFEST_CAPTURED_AT_MS=replace-with-second-capture-unix-ms \
+SD_MIGRATION_BATCH_ID=replace-with-batch-id \
+SD_MIGRATION_OPERATOR_ID=replace-with-operator-id \
+npm run migration:control -- reconcile-expired
+```
+
+After reconciliation succeeds, run `npm run migration:control -- reopen` with `SD_MIGRATION_CONTROL_CONFIRM=REOPEN`.
+
 ## 📝 License
 
 MIT License - feel free to use this project for learning or creating your own games!

@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { withProductionControl } from './../_lib/productionControls.js';
 import { sanitizeLeaderboardName } from '../../shared/profanity.js';
 import {
   currentWeekIdPst,
@@ -14,12 +15,13 @@ function sortWeekIdsDesc(a: string, b: string) {
   return a < b ? 1 : a > b ? -1 : 0;
 }
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+
 
   try {
     await ensureWeeklyStoreBootstrapped();
@@ -63,4 +65,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-
+export default withProductionControl('api/leaderboard/weekly.ts', handler);

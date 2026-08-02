@@ -1,7 +1,9 @@
 import { Redis } from '@upstash/redis';
+import { createControlledRedis, productionControlFlags } from '../../shared/productionControls.js';
 
 let redisReadOnly: Redis | null = null;
 let redisReadWrite: Redis | null = null;
+let redisControlledReadWrite: Redis | null = null;
 
 export class RedisConfigError extends Error {
   name = 'RedisConfigError';
@@ -35,7 +37,20 @@ export function getUpstashRedisClient(readOnly: boolean): Redis {
   if (!redisReadWrite) {
     redisReadWrite = new Redis({ url, token });
   }
-  return redisReadWrite;
+  if (!redisControlledReadWrite) {
+    const adapter = {
+      eval: (script: string, keys: string[], args: Array<string | number>) => redisReadWrite!.eval(script, keys, args),
+    };
+    redisControlledReadWrite = createControlledRedis(redisReadWrite, adapter, productionControlFlags()) as Redis;
+  }
+  return redisControlledReadWrite;
 }
 
+export function getRawUpstashRedisClient(): Redis {
+  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) throw new RedisConfigError('Missing writable Redis configuration.');
+  if (!redisReadWrite) redisReadWrite = new Redis({ url, token });
+  return redisReadWrite;
+}
 

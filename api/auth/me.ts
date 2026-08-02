@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { withProductionControl } from './../_lib/productionControls.js';
 import { KEY_PREFIX, getUser, getUserIdForSession } from '../_lib/auth.js';
 import { getUpstashRedisClient, RedisConfigError } from '../_lib/redis.js';
 import { getPrevWeekId } from '../../shared/week.js';
@@ -20,12 +21,13 @@ import {
 
 export const config = { runtime: 'nodejs' };
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+
 
   try {
     const userId = await getUserIdForSession(req);
@@ -121,4 +123,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-
+export default withProductionControl('api/auth/me.ts', handler);

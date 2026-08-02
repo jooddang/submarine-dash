@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { withProductionControl } from './../../_lib/productionControls.js';
 import { getUserIdForSession, getUser, keyLoginId } from '../../_lib/auth.js';
 import { getUpstashRedisClient } from '../../_lib/redis.js';
 import { getUserRoomMembership } from '../../_lib/pvpOnlineRooms.js';
@@ -6,7 +7,7 @@ import { sendInvite } from '../../_lib/pvpOnlineInvites.js';
 
 export const config = { runtime: 'nodejs' };
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
@@ -46,3 +47,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   return res.status(200).json({ invite: result.invite });
 }
+
+export default withProductionControl('api/pvp-online/invites/send.ts', handler);
