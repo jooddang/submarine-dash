@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.roadcrosser.submarine-redis-doctor</string>
+  <key>ProgramArguments</key><array><string>/usr/local/bin/submarine-redis-host</string><string>doctor</string></array>
+  <key>StartInterval</key><integer>60</integer>
+  <key>StandardOutPath</key><string>/Library/Logs/SubmarineDashRedis/doctor.log</string>
+  <key>StandardErrorPath</key><string>/Library/Logs/SubmarineDashRedis/doctor-error.log</string>
+</dict></plist>

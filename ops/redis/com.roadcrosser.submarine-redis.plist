@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.roadcrosser.submarine-redis</string>
+  <key>UserName</key><string>_submarine</string>
+  <key>GroupName</key><string>_submarine</string>
+  <key>ProgramArguments</key><array><string>/usr/local/libexec/submarine-start-redis-guarded</string></array>
+  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>/Library/Application Support/SubmarineDashRedis/log/redis.log</string>
+  <key>StandardErrorPath</key><string>/Library/Application Support/SubmarineDashRedis/log/redis-error.log</string>
+</dict></plist>

@@ -13,6 +13,7 @@
     "build": "vite build",
     "test": "vitest run",
     "test:api-syntax": "tsc -p tsconfig.api-syntax.json",
+    "test:redis-host": "python3 -m unittest discover -s ops/redis/tests -v",
     "typecheck:api-controls": "tsc --noEmit --target ES2022 --module ESNext --moduleResolution Bundler --skipLibCheck --allowJs --checkJs false api/_lib/productionControls.ts api/_lib/redis.ts",
     "migration:control": "node scripts/migration-control.mjs",
     "preview": "vite preview",
