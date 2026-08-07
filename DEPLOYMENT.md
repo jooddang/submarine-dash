@@ -114,6 +114,43 @@ The application uses Redis for persistent leaderboard storage. You can use any R
 
 ## Post-Deployment
 
+### Migration freeze runbook
+
+Use this sequence only after every participating runtime has been deployed with the admission gate enabled. The commands require Redis credentials, the complete comma-separated set of HTTPS health probes, and one exact 40-character deployed commit SHA.
+
+1. Stop admitting new PVP activity through normal operations and wait for rooms and matches to drain.
+2. Run the safety-state reconciliation preflight. It verifies every runtime probe before checking Redis, then requires the gate to be open, no hard-expired lease, and PVP to be drained. The status Lua may sweep expired leases and record hard-failure evidence, so this preflight does not close the gate but is not a strictly read-only Redis operation:
+
+   ```bash
+   SD_MIGRATION_ADMISSION_GATE_ENABLED=true \
+   SD_MIGRATION_RUNTIME_PROBE_URLS=https://submarine-dash.example.com/api/health \
+   SD_MIGRATION_EXPECTED_DEPLOYED_COMMIT=replace-with-exact-40-character-commit \
+   npm run migration:control -- preflight
+   ```
+
+3. Confirm that preflight returned `"outcome": "ready"`, then freeze:
+
+   ```bash
+   SD_MIGRATION_ADMISSION_GATE_ENABLED=true \
+   SD_MIGRATION_RUNTIME_PROBE_URLS=https://submarine-dash.example.com/api/health \
+   SD_MIGRATION_EXPECTED_DEPLOYED_COMMIT=replace-with-exact-40-character-commit \
+   SD_MIGRATION_CONTROL_CONFIRM=FREEZE \
+   npm run migration:control -- freeze
+   ```
+
+4. Proceed only when the result is `"outcome": "frozen"`, with `gate.gate` equal to `closed`, `gate.activeLeases` equal to `0`, `gate.hardExpiredLease` equal to `false`, and `pvp.drained` equal to `true`.
+
+Decision log and failure handling:
+
+- Runtime probes are checked first so an outdated or partially deployed fleet cannot close the shared gate.
+- The default drain timeout is 1,000,000 ms: the default 930,000 ms lease TTL plus a 70,000 ms safety margin. A configured timeout must cover the configured lease TTL plus this margin and cannot exceed 30 minutes. Polling defaults to 1,000 ms and must be between 50 and 10,000 ms.
+- A lease timeout, gate-state change, or expired-lease hard failure is fail-closed. Do not reopen merely to make the migration command succeed; investigate and reconcile the durable state.
+- PVP is checked both before and after close. A post-close PVP race triggers one automatic reopen attempt only if the gate remains closed, healthy, and at zero leases. The command re-reads control state after the attempt and reports confirmed open, confirmed closed, or unknown; it never infers closed state from a transport error.
+- PVP drain checks traverse every cursor page for `sd:pvp:match:*` and merge those keys with room references. Active orphan matches, missing referenced matches, malformed records, incomplete pagination, and provider failures all block freeze.
+- Drain uses only canonical terminal phases: rooms must be `CANCELED` or `COMPLETED`; matches must be `MATCH_RESULT` or `ABORTED`. Unrecognized and legacy-looking aliases remain active blockers.
+- CLI output redacts raw PVP room identifiers. Use aggregate room/match counts for operator decisions.
+- Manual reopen always requires `SD_MIGRATION_CONTROL_CONFIRM=REOPEN`. After any failure, first run `npm run migration:control -- status`, resolve the reported blocker, and obtain the appropriate operator approval before reopening.
+
 ### Verify Deployment
 
 1. **Test the frontend**

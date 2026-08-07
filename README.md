@@ -173,7 +173,16 @@ npm run backend:install  # Install backend dependencies
 
 ### Migration admission controls
 
-The Redis-backed mutation gate is disabled by default. Before a freeze, deploy every participating runtime with `SD_MIGRATION_ADMISSION_GATE_ENABLED=true`, then verify its `/api/health` response. The operator command requires every configured HTTPS probe to report the same route-inventory version/digest and the exact deployed **40-character commit SHA**.
+The Redis-backed mutation gate is disabled by default. Before a freeze, deploy every participating runtime with `SD_MIGRATION_ADMISSION_GATE_ENABLED=true`, then verify its `/api/health` response. The operator command requires every configured HTTPS probe to report the same route-inventory version/digest and the exact deployed **40-character commit SHA**. Run the safety-state reconciliation preflight first; it verifies the probes, requires an open healthy gate, and requires PVP to be fully drained without closing the gate. Its Redis status check may atomically sweep expired leases and set the corresponding hard-failure evidence, so it is not a strictly read-only Redis operation.
+
+```bash
+SD_MIGRATION_ADMISSION_GATE_ENABLED=true \
+SD_MIGRATION_RUNTIME_PROBE_URLS=https://submarine-dash.example.com/api/health \
+SD_MIGRATION_EXPECTED_DEPLOYED_COMMIT=replace-with-exact-40-character-commit \
+npm run migration:control -- preflight
+```
+
+When preflight reports `"outcome": "ready"`, run freeze with an explicit confirmation:
 
 ```bash
 SD_MIGRATION_ADMISSION_GATE_ENABLED=true \
@@ -182,6 +191,8 @@ SD_MIGRATION_EXPECTED_DEPLOYED_COMMIT=3065c4defce45314ae166922f64df60136d25c88 \
 SD_MIGRATION_CONTROL_CONFIRM=FREEZE \
 npm run migration:control -- freeze
 ```
+
+Freeze closes the gate only after the initial checks pass, then polls until all mutation leases drain. PVP drain verification follows a complete cursor-based `sd:pvp:match:*` scan as well as the room index, so orphan matches and room/match partial writes cannot be mistaken for a drain. Success is reported only when the gate is closed, active leases are zero, no expired-lease hard failure exists, and PVP is still drained. The default 1,000,000 ms timeout exceeds the default 930,000 ms lease TTL; custom timeout and poll values use `SD_MIGRATION_FREEZE_DRAIN_TIMEOUT_MS` and `SD_MIGRATION_FREEZE_POLL_INTERVAL_MS`. A timeout or hard failure deliberately leaves the gate closed. If PVP appears after close, freeze attempts reopen only when the closed gate is healthy and has zero leases, then re-reads state and reports confirmed open, confirmed closed, or unknown. Output includes counts but never raw room IDs or upstream error payloads.
 
 An expired lease sets a hard blocker and records its first Redis-time occurrence. Closing the gate records a separate Redis-time anchor. `reopen` remains unavailable until reconciliation is recorded. The remediation command atomically requires a closed gate, zero active leases, and a Redis-time quarantine starting at the later trusted anchor. The duration is code-owned: at least 930,000 ms and automatically extended to the largest lease TTL admitted by Redis. Operator-supplied quarantine timestamps or durations are not accepted. Two equal durable manifests must each have an ordered capture timestamp after that trusted quarantine and not in the future relative to Redis TIME. The reconciliation-report SHA, manifest SHA, capture times, batch, and operator are retained in the Redis audit record.
 
@@ -197,7 +208,7 @@ SD_MIGRATION_OPERATOR_ID=replace-with-operator-id \
 npm run migration:control -- reconcile-expired
 ```
 
-After reconciliation succeeds, run `npm run migration:control -- reopen` with `SD_MIGRATION_CONTROL_CONFIRM=REOPEN`.
+After reconciliation succeeds, run `npm run migration:control -- reopen` with `SD_MIGRATION_CONTROL_CONFIRM=REOPEN`. There is no implicit operator reopen after a timeout or hard failure.
 
 ## 📝 License
 

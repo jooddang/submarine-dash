@@ -405,23 +405,65 @@ export async function reconcileExpiredLeaseHardFailure(adapter, evidence) {
 
 export async function activePvpDrainStatus(redis) {
   const roomIds = await redis.smembers('sd:pvp:rooms:all');
+  if (!Array.isArray(roomIds)) throw new TypeError('PVP room index response is malformed.');
   const activeRooms = [];
-  const activeMatches = [];
+  const referencedMatchKeys = new Set();
   for (const roomId of roomIds) {
+    if (typeof roomId !== 'string' || roomId.length === 0) throw new TypeError('PVP room index contains a malformed identifier.');
     const raw = await redis.get('sd:pvp:room:' + roomId);
-    if (!raw) continue;
+    if (!raw) throw new TypeError('PVP room index references a missing room record.');
     const room = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!room || typeof room !== 'object' || Array.isArray(room)) throw new TypeError('PVP room record is malformed.');
     const roomPhase = String(room?.phase || room?.status || 'UNKNOWN').toUpperCase();
-    const roomIsTerminal = ['CANCELED', 'CANCELLED', 'CLOSED', 'COMPLETED', 'FINISHED'].includes(roomPhase);
+    const roomIsTerminal = ['CANCELED', 'COMPLETED'].includes(roomPhase);
     if (!roomIsTerminal) activeRooms.push(String(roomId));
-    if (room?.matchId && !roomIsTerminal) {
-      const matchRaw = await redis.get('sd:pvp:match:' + room.matchId);
-      const match = matchRaw ? (typeof matchRaw === 'string' ? JSON.parse(matchRaw) : matchRaw) : null;
-      const matchPhase = String(match?.phase || match?.status || 'UNKNOWN').toUpperCase();
-      if (!['CANCELED', 'CANCELLED', 'COMPLETED', 'FINISHED'].includes(matchPhase)) activeMatches.push(String(room.matchId));
+    if (room.matchId !== null && room.matchId !== undefined) {
+      if (typeof room.matchId !== 'string' || room.matchId.length === 0) throw new TypeError('PVP room contains a malformed match reference.');
+      referencedMatchKeys.add('sd:pvp:match:' + room.matchId);
     }
   }
-  return { activeRoomCount: activeRooms.length, activeMatchCount: new Set(activeMatches).size, activeRooms, drained: activeRooms.length === 0 && activeMatches.length === 0 };
+
+  const discoveredMatchKeys = new Set(referencedMatchKeys);
+  const seenCursors = new Set();
+  let cursor = '0';
+  for (let page = 0; page < 10_000; page += 1) {
+    const result = await redis.scan(cursor, { match: 'sd:pvp:match:*', count: 1_000 });
+    if (!Array.isArray(result) || result.length !== 2 || !Array.isArray(result[1])) throw new TypeError('PVP match scan response is malformed.');
+    const nextCursor = String(result[0]);
+    if (!/^\d+$/.test(nextCursor)) throw new TypeError('PVP match scan cursor is malformed.');
+    for (const key of result[1]) {
+      if (typeof key !== 'string' || !/^sd:pvp:match:.+/.test(key)) throw new TypeError('PVP match scan returned a malformed key.');
+      discoveredMatchKeys.add(key);
+    }
+    if (nextCursor === '0') break;
+    if (seenCursors.has(nextCursor)) throw new TypeError('PVP match scan cursor did not make progress.');
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+    if (page === 9_999) throw new TypeError('PVP match scan exceeded its page limit.');
+  }
+
+  const activeMatches = new Set();
+  const terminalMatchPhases = new Set(['ABORTED', 'MATCH_RESULT']);
+  for (const key of discoveredMatchKeys) {
+    const raw = await redis.get(key);
+    const matchId = key.slice('sd:pvp:match:'.length);
+    if (!raw) {
+      if (referencedMatchKeys.has(key)) {
+        activeMatches.add(matchId);
+        continue;
+      }
+      throw new TypeError('PVP match scan referenced a missing match record.');
+    }
+    const match = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!match || typeof match !== 'object' || Array.isArray(match)) throw new TypeError('PVP match record is malformed.');
+    const phaseValue = match.phase ?? match.status;
+    if (typeof phaseValue !== 'string' || phaseValue.length === 0) {
+      activeMatches.add(matchId);
+      continue;
+    }
+    if (!terminalMatchPhases.has(phaseValue.toUpperCase())) activeMatches.add(matchId);
+  }
+  return { activeRoomCount: activeRooms.length, activeMatchCount: activeMatches.size, activeRooms, drained: activeRooms.length === 0 && activeMatches.size === 0 };
 }
 
 export function createControlledRedis(rawRedis, adapter, flags = productionControlFlags()) {

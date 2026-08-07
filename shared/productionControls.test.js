@@ -314,11 +314,14 @@ describe('distributed production controls', () => {
       ['sd:pvp:room:canceled', JSON.stringify({ phase: 'CANCELED', matchId: 'old-1' })],
       ['sd:pvp:room:completed', JSON.stringify({ phase: 'COMPLETED', matchId: 'old-2' })],
       ['sd:pvp:room:active', JSON.stringify({ phase: 'IN_MATCH', matchId: 'match-1' })],
-      ['sd:pvp:match:match-1', JSON.stringify({ phase: 'COMPLETED' })],
+      ['sd:pvp:match:old-1', JSON.stringify({ phase: 'ABORTED' })],
+      ['sd:pvp:match:old-2', JSON.stringify({ phase: 'MATCH_RESULT' })],
+      ['sd:pvp:match:match-1', JSON.stringify({ phase: 'MATCH_RESULT' })],
     ]);
     const redis = {
       smembers: async () => ['canceled', 'completed', 'active'],
       get: async (key) => records.get(key) ?? null,
+      scan: async () => ['0', [...records.keys()].filter((key) => key.startsWith('sd:pvp:match:'))],
     };
     expect(await activePvpDrainStatus(redis)).toEqual({
       activeRoomCount: 1,
@@ -326,6 +329,124 @@ describe('distributed production controls', () => {
       activeRooms: ['active'],
       drained: false,
     });
+  });
+
+  it.each([
+    ['active', JSON.stringify({ phase: 'IN_MATCH' }), 1],
+    ['unknown', JSON.stringify({ unexpected: true }), 1],
+    ['missing', null, 1],
+    ['terminal', JSON.stringify({ phase: 'MATCH_RESULT' }), 0],
+  ])('checks a terminal room referenced %s match independently', async (_label, matchRecord, activeMatchCount) => {
+    const redis = {
+      smembers: async () => ['terminal-room'],
+      get: async (key) => key === 'sd:pvp:room:terminal-room'
+        ? JSON.stringify({ phase: 'COMPLETED', matchId: 'referenced-match' })
+        : matchRecord,
+      scan: async () => ['0', matchRecord ? ['sd:pvp:match:referenced-match'] : []],
+    };
+    expect(await activePvpDrainStatus(redis)).toEqual({
+      activeRoomCount: 0,
+      activeMatchCount,
+      activeRooms: [],
+      drained: activeMatchCount === 0,
+    });
+  });
+
+  it.each(['CANCELLED', 'CLOSED', 'FINISHED'])('does not treat unsupported room phase %s as terminal', async (phase) => {
+    const redis = {
+      smembers: async () => ['room-1'],
+      scan: async () => ['0', []],
+      get: async () => JSON.stringify({ phase, matchId: null }),
+    };
+    expect(await activePvpDrainStatus(redis)).toMatchObject({ activeRoomCount: 1, drained: false });
+  });
+
+  it.each(['CANCELED', 'CANCELLED', 'CLOSED', 'COMPLETED', 'FINISHED'])('does not treat unsupported match phase %s as terminal', async (phase) => {
+    const redis = {
+      smembers: async () => [],
+      scan: async () => ['0', ['sd:pvp:match:unsupported']],
+      get: async () => JSON.stringify({ phase }),
+    };
+    expect(await activePvpDrainStatus(redis)).toMatchObject({ activeMatchCount: 1, drained: false });
+  });
+
+  it('discovers an active orphan match outside the room index', async () => {
+    const redis = {
+      smembers: async () => [],
+      scan: async () => ['0', ['sd:pvp:match:orphan-active']],
+      get: async () => JSON.stringify({ phase: 'PLAYING' }),
+    };
+    expect(await activePvpDrainStatus(redis)).toEqual({ activeRoomCount: 0, activeMatchCount: 1, activeRooms: [], drained: false });
+  });
+
+  it('catches completion partial-write after room matchId is cleared but before match terminal write', async () => {
+    const records = new Map([
+      ['sd:pvp:room:room-1', JSON.stringify({ phase: 'READY_CHECK', matchId: null })],
+      ['sd:pvp:match:partial', JSON.stringify({ phase: 'ROUND_RESULT' })],
+    ]);
+    const redis = {
+      smembers: async () => ['room-1'],
+      scan: async () => ['0', ['sd:pvp:match:partial']],
+      get: async (key) => records.get(key) ?? null,
+    };
+    expect(await activePvpDrainStatus(redis)).toMatchObject({ activeMatchCount: 1, drained: false });
+  });
+
+  it.each(['MATCH_RESULT', 'ABORTED'])('treats an orphan %s record as terminal', async (phase) => {
+    const redis = {
+      smembers: async () => [],
+      scan: async () => ['0', ['sd:pvp:match:orphan-terminal']],
+      get: async () => JSON.stringify({ phase, completedAt: 123 }),
+    };
+    expect(await activePvpDrainStatus(redis)).toEqual({ activeRoomCount: 0, activeMatchCount: 0, activeRooms: [], drained: true });
+  });
+
+  it('scans every cursor page and stops only at cursor zero', async () => {
+    const scan = vi.fn()
+      .mockResolvedValueOnce(['17', ['sd:pvp:match:terminal']])
+      .mockResolvedValueOnce(['42', []])
+      .mockResolvedValueOnce(['0', ['sd:pvp:match:active']]);
+    const redis = {
+      smembers: async () => [],
+      scan,
+      get: async (key) => JSON.stringify({ phase: key.endsWith(':terminal') ? 'MATCH_RESULT' : 'PLAYING' }),
+    };
+    expect(await activePvpDrainStatus(redis)).toMatchObject({ activeMatchCount: 1, drained: false });
+    expect(scan.mock.calls).toEqual([
+      ['0', { match: 'sd:pvp:match:*', count: 1_000 }],
+      ['17', { match: 'sd:pvp:match:*', count: 1_000 }],
+      ['42', { match: 'sd:pvp:match:*', count: 1_000 }],
+    ]);
+  });
+
+  it('deduplicates a match found by both room reference and SCAN', async () => {
+    const get = vi.fn(async (key) => key.startsWith('sd:pvp:room:')
+      ? JSON.stringify({ phase: 'IN_MATCH', matchId: 'same-match' })
+      : JSON.stringify({ phase: 'PLAYING' }));
+    const redis = {
+      smembers: async () => ['room-1'],
+      scan: async () => ['0', ['sd:pvp:match:same-match', 'sd:pvp:match:same-match']],
+      get,
+    };
+    expect(await activePvpDrainStatus(redis)).toMatchObject({ activeRoomCount: 1, activeMatchCount: 1, drained: false });
+    expect(get.mock.calls.filter(([key]) => key === 'sd:pvp:match:same-match')).toHaveLength(1);
+  });
+
+  it.each([
+    ['malformed match JSON', {
+      smembers: async () => [], scan: async () => ['0', ['sd:pvp:match:broken']], get: async () => '{not-json',
+    }],
+    ['provider scan failure', {
+      smembers: async () => [], scan: async () => { throw new Error('provider payload'); }, get: vi.fn(),
+    }],
+    ['malformed scan page', {
+      smembers: async () => [], scan: async () => ['not-a-cursor', []], get: vi.fn(),
+    }],
+    ['non-progressing cursor', {
+      smembers: async () => [], scan: vi.fn().mockResolvedValueOnce(['7', []]).mockResolvedValueOnce(['7', []]), get: vi.fn(),
+    }],
+  ])('fails closed on %s', async (_label, redis) => {
+    await expect(activePvpDrainStatus(redis)).rejects.toThrow();
   });
 
   it('defaults every rollout flag off except legacy storage', () => {
