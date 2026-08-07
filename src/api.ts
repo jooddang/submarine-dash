@@ -50,6 +50,7 @@ export type AuthUser = {
   refCode: string;
   canonical: boolean;
   readOnly: boolean;
+  readCapabilities?: string[];
   writeCapabilities?: string[];
   inventory?: { dolphinSaved: number; coins: number; tube?: TubeState; skins?: SkinState };
   rewards?: {
@@ -58,7 +59,7 @@ export type AuthUser = {
   };
 };
 
-let activeAuthAccess: Pick<AuthUser, 'userId' | 'canonical' | 'readOnly' | 'writeCapabilities'> | null = null;
+let activeAuthAccess: Pick<AuthUser, 'userId' | 'canonical' | 'readOnly' | 'readCapabilities' | 'writeCapabilities'> | null = null;
 
 export function isReadOnlyCanary(user: AuthUser | null | undefined): boolean {
   return user?.canonical === true && user.readOnly === true;
@@ -71,8 +72,15 @@ export function dolphinMutationAccessState(user: AuthUser | null, hasPendingCons
 
 function rememberAuthAccess(user: AuthUser | null) {
   activeAuthAccess = user ? {
-    userId: user.userId, canonical: user.canonical, readOnly: user.readOnly, writeCapabilities: user.writeCapabilities || [],
+    userId: user.userId, canonical: user.canonical, readOnly: user.readOnly,
+    readCapabilities: user.readCapabilities || [], writeCapabilities: user.writeCapabilities || [],
   } : null;
+}
+
+function requireReadableGameSession(capability: string) {
+  if (activeAuthAccess?.canonical && !activeAuthAccess.readCapabilities?.includes(capability)) {
+    throw new Error('This canonical read capability is unavailable');
+  }
 }
 
 function requireWritableGameSession(capability?: string) {
@@ -168,6 +176,7 @@ export const authAPI = {
         rewards: data.rewards,
         canonical: data.canonical === true,
         readOnly: data.readOnly === true,
+        readCapabilities: Array.isArray(data.readCapabilities) ? data.readCapabilities : [],
         writeCapabilities: Array.isArray(data.writeCapabilities) ? data.writeCapabilities : [],
       } as AuthUser;
       rememberAuthAccess(user);
@@ -263,7 +272,7 @@ export type DailyMissionsResponse =
 
 export const missionsAPI = {
   async getDaily(): Promise<DailyMissionsResponse> {
-    requireWritableGameSession();
+    requireReadableGameSession('read_daily_missions');
     const res = await fetch(`${API_BASE_URL}/api/missions/daily`, {
       credentials: 'include',
       headers: getTimezoneHeaders(),

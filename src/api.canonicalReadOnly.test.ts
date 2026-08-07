@@ -33,7 +33,7 @@ describe('canonical read-only client barrier', () => {
   });
   it('rejects every game mutation helper without issuing a request', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      canonical: true,
+      canonical: true, readCapabilities: ['read_daily_missions'],
       readOnly: true,
       user: { userId: 'road-user', loginId: 'road-user', refCode: '' },
     }), { status: 200, headers: { 'content-type': 'application/json' } }));
@@ -41,9 +41,13 @@ describe('canonical read-only client barrier', () => {
 
     await expect(authAPI.me()).resolves.toMatchObject({ canonical: true, readOnly: true });
 
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      date:'2026-08-06',missions:[],user:{progress:{runs:0,oxygenCollected:0,maxScore:0,completedMissionIds:[]},streak:{},inventory:{dolphinSaved:2,coins:1}},
+    }), { status:200,headers:{'content-type':'application/json'} }));
+    await expect(missionsAPI.getDaily()).resolves.toMatchObject({date:'2026-08-06'});
+
     const mutations: Array<[string, () => Promise<unknown>]> = [
       ['leaderboard.submitScore', () => leaderboardAPI.submitScore('Diver', 12)],
-      ['missions.getDaily', () => missionsAPI.getDaily()],
       ['missions.postEvent', () => missionsAPI.postEvent({ type: 'run_end', score: 12 })],
       ['inventory.consumeDolphin', () => inventoryAPI.consumeDolphin()],
       ['inventory.importDolphin', () => inventoryAPI.importDolphin(1)],
@@ -74,7 +78,7 @@ describe('canonical read-only client barrier', () => {
     for (const [name, mutate] of mutations) {
       await expect(mutate(), name).rejects.toThrow('read-only');
     }
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
 
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ user: null }), {
       status: 200,

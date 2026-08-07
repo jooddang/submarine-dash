@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { withProductionControl } from './../_lib/productionControls.js';
-import { getUserIdForSession, KEY_PREFIX } from '../_lib/auth.js';
+import { getCanonicalSessionToken, getUserIdForSession, KEY_PREFIX } from '../_lib/auth.js';
 import { getUpstashRedisClient } from '../_lib/redis.js';
 import {
   addSavedDolphins,
@@ -178,7 +178,7 @@ function areAllMissionsCompleted(missions: DailyMission[], completedMissionIds: 
   return missions.every((m) => done.has(m.id));
 }
 
-async function handler(req: VercelRequest, res: VercelResponse) {
+export async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-TZ-Offset-Min');
@@ -187,6 +187,9 @@ async function handler(req: VercelRequest, res: VercelResponse) {
 
 
   try {
+    if (getCanonicalSessionToken(req)) {
+      return res.status(409).json({ error: 'Canonical mission rewards require trusted gameplay settlement' });
+    }
     const userId = await getUserIdForSession(req);
     if (!userId) return res.status(401).json({ error: 'Login required' });
 
@@ -404,4 +407,10 @@ async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-export default withProductionControl('api/missions/event.ts', handler);
+export function isCanonicalMissionEventRejection(req: VercelRequest) {
+  return req.method === 'POST' && Boolean(getCanonicalSessionToken(req));
+}
+
+export const createMissionEventRoute = (dependencies: Parameters<typeof withProductionControl>[2] = {}) =>
+  withProductionControl('api/missions/event.ts', handler, dependencies, isCanonicalMissionEventRejection);
+export default createMissionEventRoute();

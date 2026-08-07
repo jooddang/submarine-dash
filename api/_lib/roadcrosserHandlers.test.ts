@@ -5,6 +5,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 const road = vi.hoisted(() => ({
   consume: vi.fn(), revoke: vi.fn(), bootstrap: vi.fn(), equip: vi.fn(), purchase: vi.fn(),
   consumeDolphin: vi.fn(), importDolphin: vi.fn(),
+  daily: vi.fn(),
 }));
 const redis = vi.hoisted(() => ({
   get: vi.fn(), set: vi.fn(), del: vi.fn(), incr: vi.fn(), expire: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock('./roadcrosserAuth.js', () => ({
   purchaseRoadcrosserCanarySkin: road.purchase,
   consumeRoadcrosserCanaryDolphin: road.consumeDolphin,
   importRoadcrosserCanaryDolphin: road.importDolphin,
+  readRoadcrosserDailyMissions: road.daily,
 }));
 vi.mock('./redis.js', () => ({
   getUpstashRedisClient: redisFactory,
@@ -34,6 +36,8 @@ import { createEquipSkinRoute, handler as equipSkinHandler, isSyntheticCanaryEqu
 import { createPurchaseSkinRoute, handler as purchaseSkinHandler, isSyntheticCanaryPurchaseRequest } from '../inventory/skin/purchase.js';
 import { handler as consumeDolphinHandler, isSyntheticCanaryDolphinConsumeRequest } from '../inventory/dolphin/consume.js';
 import { handler as importDolphinHandler, isSyntheticCanaryDolphinImportRequest } from '../inventory/dolphin/import.js';
+import { createDailyMissionsRoute, handler as dailyMissionsHandler, isCanonicalDailyMissionsRequest } from '../missions/daily.js';
+import { createMissionEventRoute, handler as missionEventHandler } from '../missions/event.js';
 import { MaintenanceFreezeError } from '../../shared/productionControls.js';
 import { SKIN_CATALOG_VERSION } from '../../shared/canaryPurchase.js';
 import { DOLPHIN_CONTRACT_VERSION } from '../../shared/canaryDolphin.js';
@@ -102,6 +106,9 @@ beforeEach(() => {
     version:'submarine-write-v1',contractVersion:DOLPHIN_CONTRACT_VERSION,operation:'import_dolphin',idempotent:false,
     ok:true,inventory:{dolphinSaved:3},stateVersion:4,keyVersions:{pending:1,saved:1,ledger:1},
   });
+  road.daily.mockResolvedValue({version:'submarine-daily-missions-v1',readOnly:true,date:'2026-08-06',missions:[],
+    user:{progress:{runs:0,oxygenCollected:0,maxScore:0,completedMissionIds:[]},streak:{},
+      inventory:{coins:0,dolphinSaved:0,dolphinPending:0,tube:{pieces:0,charges:0},skins:{owned:[],equipped:null}}}});
   redis.del.mockResolvedValue(1);
   redis.set.mockResolvedValue('OK');
   redis.incr.mockResolvedValue(1);
@@ -114,6 +121,47 @@ afterEach(() => {
 });
 
 describe('canonical auth handlers', () => {
+  it('routes canonical daily reads only under the exact default-off tuple and rejects mission mints without Redis', async () => {
+    const token=opaque('M'); const exact={cookie:`sd_roadcrosser_session=${token}`,origin:'https://submarine-dash.roadcrosser.com'};
+    expect(isCanonicalDailyMissionsRequest(request('GET',exact))).toBe(false);
+    vi.stubEnv('SD_SUPABASE_DAILY_READ_ENABLED','true');
+    expect(isCanonicalDailyMissionsRequest(request('GET',exact))).toBe(true);
+    expect(isCanonicalDailyMissionsRequest(request('GET',{cookie:exact.cookie,site:'same-origin'}))).toBe(true);
+    expect(isCanonicalDailyMissionsRequest(request('GET',{cookie:exact.cookie,site:'cross-site'}))).toBe(false);
+    expect(isCanonicalDailyMissionsRequest(request('GET',{...exact,origin:'https://tiles.roadcrosser.com'}))).toBe(false);
+    vi.stubEnv('SD_SUBMARINE_PUBLIC_ORIGIN','https://attacker.example');
+    expect(isCanonicalDailyMissionsRequest(request('GET',{cookie:exact.cookie,origin:'https://attacker.example'}))).toBe(false);
+    vi.stubEnv('SD_SUBMARINE_PUBLIC_ORIGIN','https://submarine-dash.roadcrosser.com');
+    const out=response(); await dailyMissionsHandler(request('GET',exact),out.res);
+    expect(out.state).toMatchObject({status:200,json:{date:'2026-08-06',missions:[]}});
+    expect(road.daily).toHaveBeenCalledWith(token);
+    const rejected=response(); await missionEventHandler(request('POST',{...exact,body:{type:'run_end',score:999999}}),rejected.res);
+    expect(rejected.state.status).toBe(409);
+    expect(redisFactory).not.toHaveBeenCalled();
+  });
+  it('bypasses the closed Redis gate only to read or reject canonical mission traffic', async () => {
+    vi.stubEnv('SD_SUPABASE_DAILY_READ_ENABLED','true');
+    const acquire=vi.fn(async()=>{throw new MaintenanceFreezeError();});
+    const dependencies={flags:()=>({admissionGate:true}) as any,adapter:()=>({}) as any,acquire,event:vi.fn()};
+    const token=opaque('R'); const exact={cookie:`sd_roadcrosser_session=${token}`,origin:'https://submarine-dash.roadcrosser.com'};
+    const daily=response(); await createDailyMissionsRoute(dependencies)(request('GET',exact),daily.res);
+    expect(daily.state.status).toBe(200);
+    const event=response(); await createMissionEventRoute(dependencies)(request('POST',{...exact,body:{type:'run_end',score:999999}}),event.res);
+    expect(event.state.status).toBe(409);
+    expect(acquire).not.toHaveBeenCalled();
+    vi.stubEnv('SD_SUPABASE_DAILY_READ_ENABLED','false');
+    const disabled=response(); await createDailyMissionsRoute(dependencies)(request('GET',exact),disabled.res);
+    expect(disabled.state.status).toBe(409);
+    vi.stubEnv('SD_SUPABASE_DAILY_READ_ENABLED','true');
+    const wrong=response(); await createDailyMissionsRoute(dependencies)(request('GET',{...exact,origin:'https://tiles.roadcrosser.com'}),wrong.res);
+    expect(wrong.state.status).toBe(409);
+    const crossSite=response(); await createDailyMissionsRoute(dependencies)(request('GET',{cookie:exact.cookie,site:'cross-site'}),crossSite.res);
+    expect(crossSite.state.status).toBe(409);
+    expect(acquire).not.toHaveBeenCalled();
+    const legacy=response(); await createDailyMissionsRoute(dependencies)(request('GET',{cookie:`sd_session=${opaque('L')}`,origin:exact.origin}),legacy.res);
+    expect(legacy.state.status).toBe(503);
+    expect(acquire).toHaveBeenCalledTimes(1);
+  });
   it('routes dolphin canary mutations only under the exact cookie, origin, flag, count, and idempotency contract', async () => {
     const token=opaque('D'); const key='97000000-0000-4000-8000-000000000009';
     const exact={cookie:`sd_roadcrosser_session=${token}`,origin:'https://submarine-dash.roadcrosser.com',idempotencyKey:key};
@@ -263,7 +311,7 @@ describe('canonical auth handlers', () => {
 
   it('serves canonical read-only bootstrap without touching Redis', async () => {
     road.bootstrap.mockResolvedValue({
-      version: 'submarine-canonical-bootstrap-v2', readOnly: true, writeCapabilities: [],
+      version: 'submarine-canonical-bootstrap-v2', readOnly: true, readCapabilities: ['read_daily_missions'], writeCapabilities: [],
       user: { externalUserId: 'protected-user', loginId: 'Protected' },
       inventory: { coins: 1, dolphinSaved: 2, dolphinPending: 0, tube: { pieces: 0, charges: 0 }, skins: { owned: ['default'], equipped: 'default' } },
       streak: {}, achievements: {}, unreadInboxCount: 0, stateVersion: 1,

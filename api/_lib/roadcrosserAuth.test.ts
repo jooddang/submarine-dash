@@ -36,7 +36,7 @@ describe('Roadcrosser scoped internal client', () => {
       if (url.endsWith('/sessions/revoke')) return Promise.resolve(new Response(null, { status: 204 }));
       if (url.endsWith('/bootstrap')) {
         return Promise.resolve(new Response(JSON.stringify({
-          version: 'submarine-canonical-bootstrap-v2', readOnly: true, writeCapabilities: [],
+          version: 'submarine-canonical-bootstrap-v2', readOnly: true, readCapabilities: ['read_daily_missions'], writeCapabilities: [],
           user: { externalUserId: 'fixture', loginId: 'fixture' },
         }), { status: 200 }));
       }

@@ -1,6 +1,7 @@
 import { validateCanaryEquipResponse } from '../../shared/canaryEquip.js';
 import { SKIN_CATALOG_VERSION, validateCanaryPurchaseResponse } from '../../shared/canaryPurchase.js';
 import { DOLPHIN_CONTRACT_VERSION, validateCanaryDolphinResponse } from '../../shared/canaryDolphin.js';
+import { validateCanonicalDailyMissions } from '../../shared/canonicalDailyMissions.js';
 
 const productionBaseUrl = 'https://www.roadcrosser.com';
 const opaque256 = /^[A-Za-z0-9_-]{43}$/;
@@ -13,6 +14,7 @@ const allowedPaths = new Set([
   '/api/internal/submarine-dash/mutations/purchase-skin',
   '/api/internal/submarine-dash/mutations/consume-dolphin',
   '/api/internal/submarine-dash/mutations/import-dolphin',
+  '/api/internal/submarine-dash/daily-missions',
 ]);
 
 export type CanonicalSubmarineUser = {
@@ -38,6 +40,7 @@ export type CanonicalSubmarineBootstrap = {
   unreadInboxCount: number;
   stateVersion: number;
   readOnly: boolean;
+  readCapabilities: string[];
   writeCapabilities: string[];
 };
 
@@ -108,6 +111,8 @@ export async function readRoadcrosserCanonicalBootstrap(sessionToken: string) {
   if (
     result.version !== 'submarine-canonical-bootstrap-v2'
     || typeof result.readOnly !== 'boolean'
+    || !Array.isArray(result.readCapabilities)
+    || result.readCapabilities.some((capability) => capability !== 'read_daily_missions')
     || !Array.isArray(result.writeCapabilities)
     || !user
     || typeof user.externalUserId !== 'string'
@@ -142,4 +147,8 @@ export async function importRoadcrosserCanaryDolphin(sessionToken: string, idemp
     sessionToken, idempotencyKey, count, contractVersion: DOLPHIN_CONTRACT_VERSION,
   });
   return validateCanaryDolphinResponse(result, 'import_dolphin');
+}
+
+export async function readRoadcrosserDailyMissions(sessionToken: string) {
+  return validateCanonicalDailyMissions(await request('/api/internal/submarine-dash/daily-missions', { sessionToken }));
 }

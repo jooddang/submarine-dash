@@ -48,6 +48,16 @@ describe('production route inventory', () => {
           "withProductionControl('api/inventory/dolphin/import.ts',handler,dependencies,isSyntheticCanaryDolphinImportRequest)",
         );
         expect(source.trimEnd().endsWith('export default createImportDolphinRoute();'), file).toBe(true);
+      } else if (file === 'api/missions/daily.ts') {
+        expect(source, file).toContain(
+          "withProductionControl('api/missions/daily.ts', handler, dependencies, isCanonicalDailyMissionsBoundary)",
+        );
+        expect(source.trimEnd().endsWith('export default createDailyMissionsRoute();'), file).toBe(true);
+      } else if (file === 'api/missions/event.ts') {
+        expect(source, file).toContain(
+          "withProductionControl('api/missions/event.ts', handler, dependencies, isCanonicalMissionEventRejection)",
+        );
+        expect(source.trimEnd().endsWith('export default createMissionEventRoute();'), file).toBe(true);
       } else {
         expect(source.trimEnd().endsWith(`export default withProductionControl('${file}', handler);`), file).toBe(true);
       }

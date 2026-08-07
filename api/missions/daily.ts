@@ -1,8 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { withProductionControl } from './../_lib/productionControls.js';
-import { getUserIdForSession, KEY_PREFIX } from '../_lib/auth.js';
+import { getCanonicalSessionToken, getUserIdForSession, isAllowedSubmarineMutationOrigin, KEY_PREFIX } from '../_lib/auth.js';
 import { getUpstashRedisClient } from '../_lib/redis.js';
 import { migratePendingDolphins, getSavedDolphins } from '../_lib/dolphinInventory.js';
+import { readRoadcrosserDailyMissions } from '../_lib/roadcrosserAuth.js';
+import { isCanonicalDailyReadAdmission } from '../../shared/canonicalDailyMissions.js';
 
 export const config = { runtime: 'nodejs' };
 
@@ -95,7 +97,7 @@ function computeCompleted(missions: DailyMission[], progress: DailyProgress): st
   return [...out];
 }
 
-async function handler(req: VercelRequest, res: VercelResponse) {
+export async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-TZ-Offset-Min');
@@ -104,6 +106,17 @@ async function handler(req: VercelRequest, res: VercelResponse) {
 
 
   try {
+    const canonicalToken = getCanonicalSessionToken(req);
+    if (canonicalToken) {
+      const origin = Array.isArray(req.headers.origin) ? req.headers.origin[0] : req.headers.origin;
+      const expectedOrigin = process.env.SD_SUBMARINE_PUBLIC_ORIGIN || 'https://submarine-dash.roadcrosser.com';
+      if (!isCanonicalDailyReadAdmission({ method: req.method, origin, expectedOrigin, canonicalToken,
+        enabled: process.env.SD_SUPABASE_DAILY_READ_ENABLED === 'true', allowedOrigin: isAllowedSubmarineMutationOrigin(req) })) {
+        return res.status(409).json({ error: 'Canonical daily missions are not enabled' });
+      }
+      const canonical = await readRoadcrosserDailyMissions(canonicalToken);
+      return res.status(200).json({ date: canonical.date, missions: canonical.missions, user: canonical.user });
+    }
     const tzOffsetMin = tzOffsetFromReq(req);
     const date = tzOffsetMin !== null ? dateKeyFromOffsetMinutes(tzOffsetMin) : todayKeyUTC();
 
@@ -163,4 +176,18 @@ async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-export default withProductionControl('api/missions/daily.ts', handler);
+export function isCanonicalDailyMissionsRequest(req: VercelRequest) {
+  const origin = Array.isArray(req.headers.origin) ? req.headers.origin[0] : req.headers.origin;
+  return isCanonicalDailyReadAdmission({ method: req.method, origin,
+    expectedOrigin: process.env.SD_SUBMARINE_PUBLIC_ORIGIN || 'https://submarine-dash.roadcrosser.com',
+    canonicalToken: getCanonicalSessionToken(req), enabled: process.env.SD_SUPABASE_DAILY_READ_ENABLED === 'true',
+    allowedOrigin: isAllowedSubmarineMutationOrigin(req) });
+}
+
+export function isCanonicalDailyMissionsBoundary(req: VercelRequest) {
+  return req.method === 'GET' && Boolean(getCanonicalSessionToken(req));
+}
+
+export const createDailyMissionsRoute = (dependencies: Parameters<typeof withProductionControl>[2] = {}) =>
+  withProductionControl('api/missions/daily.ts', handler, dependencies, isCanonicalDailyMissionsBoundary);
+export default createDailyMissionsRoute();

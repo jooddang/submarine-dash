@@ -41,6 +41,7 @@ export async function handler(req: VercelRequest, res: VercelResponse) {
           streak: canonical.streak,
           unreadInboxCount: canonical.unreadInboxCount,
           readOnly: canonical.readOnly,
+          readCapabilities: canonical.readCapabilities,
           writeCapabilities: canonical.writeCapabilities,
           canonical: true,
         });

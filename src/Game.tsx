@@ -8,6 +8,7 @@ import { drawSwordfish, drawUrchin, drawBackgroundEntities, drawTurtleShell } fr
 import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, AuthModal, DailyMissionsPanel, DolphinStreakRewardOverlay, DolphinWeeklyWinnerRewardOverlay, InventoryPanel, SkinPanel, AchievementsPanel } from "./components/UIOverlays";
 import { getSkinDef, drawSubmarine, updateTrailParticles, drawTrailParticles, isGoldenTubeEligible, GOLDEN_TUBE_EXTRA_CHARGES, GOLDEN_TUBE_EXTRA_SCORE_BONUS, DEFAULT_SKIN_ID, preloadSkinImages, type TrailParticle, type SkinDef } from "./skins";
 import { authAPI, dolphinMutationAccessState, inventoryAPI, isReadOnlyCanary, leaderboardAPI, missionsAPI, achievementsAPI, type DailyMissionsResponse, type AuthUser, type UserAchievementSummary } from "./api";
+import { DailyRequestGuard, latestDailyResult } from "./dailyRequestGuard";
 import { runLeaderboardSubmission } from "./leaderboardSubmission";
 import turtleRescueImg from "../turtle.png";
 import turtleShellItemImg from "../turtle-shell-item.png";
@@ -206,6 +207,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
   const DOLPHIN_USES_PER_RUN_MAX = 3;
 
   const dolphinSyncSeqRef = useRef<number>(0);
+  const dailyRequestGuardRef = useRef(new DailyRequestGuard());
   const dolphinLastAppliedSeqRef = useRef<number>(0);
   const nextDolphinSyncSeq = () => {
     dolphinSyncSeqRef.current += 1;
@@ -295,10 +297,15 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
   };
 
   const refreshDailyMissions = async () => {
-    if (isReadOnlyCanary(authUserRef.current)) return;
+    const account = authUserRef.current?.userId ?? null;
+    const token = dailyRequestGuardRef.current.begin(account);
     const seq = nextDolphinSyncSeq();
     try {
-      const data = await missionsAPI.getDaily();
+      const data = await latestDailyResult(
+        dailyRequestGuardRef.current, token, () => missionsAPI.getDaily(),
+        () => authUserRef.current?.userId ?? null,
+      );
+      if (!data) return;
       setDailyMissions(data);
       if (data.user?.inventory && typeof data.user.inventory.dolphinSaved === "number") {
         applyDolphinCountSync(data.user.inventory.dolphinSaved, seq);
@@ -309,6 +316,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
   };
 
   const resetAuthenticatedUserState = () => {
+    dailyRequestGuardRef.current.invalidate();
     setAuthUser(null);
     authUserRef.current = null;
     bindDolphinMutationAccess(null);
@@ -355,6 +363,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
       setAuthUser(me);
       // Keep the auth ref in sync immediately (used by gameplay-side auth checks).
       authUserRef.current = me;
+      dailyRequestGuardRef.current.invalidate();
       const readOnlyCanary = isReadOnlyCanary(me);
       const hasPendingConsume = bindDolphinMutationAccess(me);
 
@@ -414,10 +423,8 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
           setWeeklyDolphinRewardOpen(true);
         }
       }
-      if (!isReadOnlyCanary(me)) {
-        await loadLeaderboard();
-        await refreshDailyMissions();
-      }
+      if (!isReadOnlyCanary(me)) await loadLeaderboard();
+      await refreshDailyMissions();
     };
     loadMe();
 
@@ -443,7 +450,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
 
   useEffect(() => {
     // Refresh missions and achievements when auth changes (login/logout)
-    if (!isReadOnlyCanary(authUser)) refreshDailyMissions();
+    refreshDailyMissions();
     if (authUser?.userId && !isReadOnlyCanary(authUser)) {
       achievementsAPI.getAll().then(setAchievementsList).catch(() => undefined);
     } else {
