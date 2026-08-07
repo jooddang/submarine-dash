@@ -277,3 +277,79 @@ export async function freezeMigration({
     drain: { polls, elapsedMs },
   };
 }
+
+export async function quarantineStalePvp({
+  urls,
+  expectedCommit,
+  expectedEpoch,
+  timeoutMs,
+  pollIntervalMs,
+  timingEnv = process.env,
+  verifyRuntimeProbes = verifyDeployedRuntimeProbes,
+  prepareEvidence,
+  readStatus,
+  readPvp,
+  closeGate,
+  executeTransaction,
+  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+}) {
+  requireCallbacks({ verifyRuntimeProbes, prepareEvidence, readStatus, readPvp, closeGate, executeTransaction, sleep });
+  const verifiedRuntimeProbes = await sanitizedBoundary(
+    'RUNTIME_PROBE_VERIFICATION_FAILED', 'Deployed runtime probe verification failed.',
+    () => verifyRuntimeProbes({ urls, expectedCommit }),
+  );
+  const evidence = await sanitizedBoundary('QUARANTINE_EVIDENCE_INVALID', 'Stale-PVP quarantine evidence validation failed.', prepareEvidence);
+  const timing = timeoutMs === undefined && pollIntervalMs === undefined
+    ? freezeTimingFromEnv(timingEnv)
+    : validateFreezeTiming(timeoutMs, pollIntervalMs, timingEnv);
+  const initial = redactedMigrationGateStatus(await readGateBoundary(readStatus));
+  if (initial.hardExpiredLease) throw new MigrationFreezeError('QUARANTINE_INITIAL_GATE_INVALID', 'Quarantine requires a gate without a hard-expired lease.');
+  if (expectedEpoch !== undefined && initial.epoch !== expectedEpoch) throw new MigrationFreezeError('GATE_EPOCH_CHANGED', 'Quarantine expected epoch does not match the initial gate epoch.');
+  if (initial.gate === 'open') {
+    const closeResult = redactedCloseResult(await sanitizedBoundary('GATE_CLOSE_FAILED', 'Mutation gate close failed.', closeGate));
+    if (closeResult.epoch !== initial.epoch) throw new MigrationFreezeError('GATE_EPOCH_CHANGED', 'Quarantine close changed the mutation gate epoch unexpectedly.');
+  } else if (initial.gate !== 'closed' || expectedEpoch === undefined) {
+    throw new MigrationFreezeError('QUARANTINE_INITIAL_GATE_INVALID', 'Closed-gate quarantine rerun requires the exact expected epoch.');
+  }
+
+  let elapsedMs = 0;
+  let polls = 0;
+  while (true) {
+    polls += 1;
+    const gate = assertClosedHealthy(await readGateBoundary(readStatus), initial.epoch);
+    if (gate.activeLeases === 0) break;
+    if (elapsedMs >= timing.timeoutMs) throw new MigrationFreezeError('LEASE_DRAIN_TIMEOUT', `Quarantine remains closed after the ${timing.timeoutMs}ms lease-drain timeout.`);
+    const waitMs = Math.min(timing.pollIntervalMs, timing.timeoutMs - elapsedMs);
+    await sanitizedBoundary('LEASE_DRAIN_WAIT_FAILED', 'Lease-drain polling wait failed.', () => sleep(waitMs));
+    elapsedMs += waitMs;
+  }
+  const transaction = await sanitizedBoundary('QUARANTINE_TRANSACTION_FAILED', 'Stale-PVP quarantine transaction failed or is ambiguous.', () => executeTransaction({ evidence, epoch: initial.epoch }));
+  const pvp = redactedPvpDrainStatus(await sanitizedBoundary('PVP_STATUS_READ_FAILED', 'PVP drain status could not be read.', readPvp));
+  if (!pvp.drained) throw new MigrationFreezeError('QUARANTINE_POSTCHECK_FAILED', 'Quarantine remains closed because authoritative PVP state did not drain to zero.');
+  const finalGate = assertClosedHealthy(await readGateBoundary(readStatus), initial.epoch);
+  if (finalGate.activeLeases !== 0) throw new MigrationFreezeError('LEASE_RACE_AFTER_DRAIN', 'Quarantine remains closed because a lease appeared after the transaction.');
+  return { outcome: transaction?.outcome ?? 'quarantined', verifiedRuntimeProbes, gate: finalGate, pvp, drain: { polls, elapsedMs } };
+}
+
+export async function verifyFrozenMigration({
+  urls,
+  expectedCommit,
+  expectedEpoch,
+  verifyRuntimeProbes = verifyDeployedRuntimeProbes,
+  readStatus,
+  readPvp,
+}) {
+  requireCallbacks({ verifyRuntimeProbes, readStatus, readPvp });
+  const verifiedRuntimeProbes = await sanitizedBoundary(
+    'RUNTIME_PROBE_VERIFICATION_FAILED', 'Deployed runtime probe verification failed.',
+    () => verifyRuntimeProbes({ urls, expectedCommit }),
+  );
+  if (!Number.isSafeInteger(expectedEpoch) || expectedEpoch < 1) throw new MigrationFreezeError('INVALID_CONTROL_STATUS', 'An exact frozen gate epoch is required.');
+  const initialGate = assertClosedHealthy(await readGateBoundary(readStatus), expectedEpoch);
+  if (initialGate.activeLeases !== 0) throw new MigrationFreezeError('FROZEN_VERIFICATION_FAILED', 'Frozen verification requires zero active leases.');
+  const pvp = redactedPvpDrainStatus(await sanitizedBoundary('PVP_STATUS_READ_FAILED', 'PVP drain status could not be read.', readPvp));
+  if (!pvp.drained) throw new MigrationFreezeError('FROZEN_VERIFICATION_FAILED', 'Frozen verification requires zero active PVP rooms and matches.');
+  const finalGate = assertClosedHealthy(await readGateBoundary(readStatus), expectedEpoch);
+  if (finalGate.activeLeases !== 0) throw new MigrationFreezeError('FROZEN_VERIFICATION_FAILED', 'Frozen verification final check requires zero active leases.');
+  return { outcome: 'frozen_verified', verifiedRuntimeProbes, gate: finalGate, pvp };
+}

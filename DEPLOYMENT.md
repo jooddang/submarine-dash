@@ -151,6 +151,8 @@ Decision log and failure handling:
 - CLI output redacts raw PVP room identifiers. Use aggregate room/match counts for operator decisions.
 - Manual reopen always requires `SD_MIGRATION_CONTROL_CONFIRM=REOPEN`. After any failure, first run `npm run migration:control -- status`, resolve the reported blocker, and obtain the appropriate operator approval before reopening.
 
+If strict preflight identifies restore-verified stale PVP, use the dedicated `quarantine-stale-pvp` command only with approved precleanup evidence. It requires confirmation `QUARANTINE_STALE_PVP`, exact archive/manifest/restore-report hashes, separate precleanup archive and current runtime commits, a cutoff at least 30 days before Redis TIME, the exact epoch/operator, and inherited archive/key/report FDs. Source inventory v1 and executing/final inventory v2 identities are independently audited. It closes the gate despite the approved active graph but never weakens `freeze`, never auto-reopens, rejects every unexpected `sd:pvp:*` key, and writes only durable CAS-matched quarantine targets plus a redacted audit. Run `verify-frozen` afterward and keep that epoch closed through final T1 capture.
+
 ### Verify Deployment
 
 1. **Test the frontend**

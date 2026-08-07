@@ -59,7 +59,7 @@ export const PRODUCTION_ROUTE_INVENTORY = Object.freeze([
   route('api/pvp/settle-bet.ts', { POST: ROUTE_CLASS.DURABLE_MUTATION }, ['sd:user:*:coins', 'sd:user:*:dolphin:*', 'sd:user:*:tube']),
 ]);
 
-export const ROUTE_INVENTORY_VERSION = 1;
+export const ROUTE_INVENTORY_VERSION = 2;
 export const PRODUCTION_KEY_FAMILIES = Object.freeze([...new Set(
   PRODUCTION_ROUTE_INVENTORY.flatMap((entry) => entry.keyFamilies),
 )].sort());
@@ -104,10 +104,11 @@ export const SUBMARINE_PRESERVATION_KEY_SPECS = Object.freeze([
   keySpec('pvp-ws-ticket', 'sd:pvp:ws-ticket:{segment}', 'ephemeral', ['api/_lib/pvpOnlineAuth.ts', 'backend/src/server.js'], ['sd:pvp:ws-ticket:*']),
   ...['gate', 'epoch', 'fence', 'leases', 'expired-leases', 'hard-failure', 'hard-failure-at', 'closed-at', 'max-lease-ttl-ms', 'mutation-count', 'reconciliations'].map((suffix) =>
     keySpec(`migration-control-${suffix}`, `sd:migration:control:${suffix}`, 'durable', ['shared/productionControls.js'])),
+  keySpec('migration-control-stale-pvp-audit', 'sd:migration:control:stale-pvp-audit:{segment}', 'durable', ['scripts/submarine-migration/stale-pvp-quarantine.mjs']),
   keySpec('migration-control-lease', 'sd:migration:control:lease:{segment}', 'ephemeral', ['shared/productionControls.js']),
 ]);
 export const ROUTE_INVENTORY_DIGEST = createHash('sha256')
-  .update(JSON.stringify(PRODUCTION_ROUTE_INVENTORY))
+  .update(JSON.stringify({ routes: PRODUCTION_ROUTE_INVENTORY, preservation: SUBMARINE_PRESERVATION_KEY_SPECS }))
   .digest('hex');
 
 export const ROUTE_BY_FILE = new Map(PRODUCTION_ROUTE_INVENTORY.map((entry) => [entry.file, entry]));

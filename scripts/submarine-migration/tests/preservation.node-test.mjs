@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { EventEmitter } from 'node:events';
 import { createServer } from 'node:net';
-import { openArchive, sealArchive } from '../archive.mjs';
+import { openArchive, openArchiveFromFds, sealArchive } from '../archive.mjs';
 import { canonicalJson, sha256 } from '../canonical.mjs';
 import { captureManifest, scanRawKeys } from '../capture.mjs';
 import { buildManifest, classifyKey, compareManifestSnapshots, redactedManifest, verifyProtectedInvariants } from '../manifest.mjs';
@@ -83,6 +83,30 @@ test('sd-archive-v1 seals exact framing and decrypts losslessly', async () => {
   const decryptFd = keyFile(directory);
   assert.deepEqual(openArchive({ archivePath: output, keyFd: decryptFd }).plaintext, plaintext);
   closeSync(decryptFd);
+});
+
+test('quarantine archive input is authenticated through already-open FDs', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'sd-archive-fd-test-'));
+  chmodSync(directory, 0o700);
+  const output = join(directory, 'capture.sealed');
+  const keyPath = join(directory, 'key.bin');
+  writeFileSync(keyPath, Buffer.alloc(32, 17), { mode: 0o600 });
+  let keyFd = openSync(keyPath, 'r');
+  try {
+    await sealArchive({
+      keyFd, outputPath: output, plaintext: Buffer.from('{"fixture":true}'),
+      header: { artifactKind: 'logical-redis', captureId: 'fd-capture', createdAt: '2026-08-07T00:00:00.000Z', keyId: 'fd-key', sourceDatabaseId: 'fixture-source' },
+    });
+  } finally { closeSync(keyFd); }
+  const archiveFd = openSync(output, 'r');
+  keyFd = openSync(keyPath, 'r');
+  try {
+    const opened = openArchiveFromFds({ archiveFd, keyFd });
+    assert.equal(opened.plaintext.toString(), '{"fixture":true}');
+    assert.match(opened.archiveSha256, /^[a-f0-9]{64}$/);
+  } finally {
+    closeSync(archiveFd); closeSync(keyFd); rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('archive rejects tamper, truncation, wrong key, and non-32-byte key', async () => {

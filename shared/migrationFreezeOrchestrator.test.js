@@ -7,6 +7,8 @@ import {
   freezeTimingFromEnv,
   migrationControlErrorPayload,
   preflightMigrationFreeze,
+  quarantineStalePvp,
+  verifyFrozenMigration,
 } from './migrationFreezeOrchestrator.js';
 
 const commit = '3065c4defce45314ae166922f64df60136d25c88';
@@ -220,5 +222,81 @@ describe('migration freeze orchestration', () => {
     });
     expect(JSON.stringify(migrationControlErrorPayload(new Error('SECRET_UPSTREAM_JSON_PAYLOAD')))).not.toContain('SECRET');
     expect(migrationControlErrorPayload(new Error('{"roomId":"SECRET_ROOM"}'))).not.toHaveProperty('roomId');
+  });
+});
+
+describe('stale PVP quarantine orchestration', () => {
+  function quarantineCallbacks(override = {}) {
+    return {
+      urls, expectedCommit: commit, expectedEpoch: 4,
+      timeoutMs: 100_000, pollIntervalMs: 10_000, timingEnv,
+      verifyRuntimeProbes: vi.fn(async () => probes),
+      prepareEvidence: vi.fn(async () => ({ archiveSha256: 'a'.repeat(64) })),
+      readStatus: vi.fn().mockResolvedValueOnce(open).mockResolvedValueOnce(closed(2)).mockResolvedValueOnce(closed()).mockResolvedValueOnce(closed()),
+      readPvp: vi.fn(async () => drained),
+      closeGate: vi.fn(async () => ({ activeLeases: 2, epoch: 4 })),
+      executeTransaction: vi.fn(async () => ({ outcome: 'quarantined' })),
+      sleep: vi.fn(async () => {}),
+      ...override,
+    };
+  }
+
+  it('verifies probes, closes despite stale PVP, drains leases, transacts, and stays closed', async () => {
+    const options = quarantineCallbacks();
+    await expect(quarantineStalePvp(options)).resolves.toEqual({
+      outcome: 'quarantined', verifiedRuntimeProbes: probes,
+      gate: { gate: 'closed', epoch: 4, activeLeases: 0, hardExpiredLease: false },
+      pvp: { activeRoomCount: 0, activeMatchCount: 0, drained: true },
+      drain: { polls: 2, elapsedMs: 10_000 },
+    });
+    expect(options.verifyRuntimeProbes.mock.invocationCallOrder[0]).toBeLessThan(options.prepareEvidence.mock.invocationCallOrder[0]);
+    expect(options.closeGate).toHaveBeenCalledOnce();
+  });
+
+  it('does not close when archive evidence validation fails', async () => {
+    const options = quarantineCallbacks({ prepareEvidence: vi.fn(async () => { throw new Error('SECRET_ARCHIVE_DATA'); }) });
+    const error = await quarantineStalePvp(options).catch((caught) => caught);
+    expect(error).toMatchObject({ code: 'QUARANTINE_EVIDENCE_INVALID', message: expect.not.stringContaining('SECRET') });
+    expect(options.closeGate).not.toHaveBeenCalled();
+  });
+
+  it('supports an idempotent audit/after-state rerun on the already-closed exact epoch', async () => {
+    const options = quarantineCallbacks({
+      readStatus: vi.fn().mockResolvedValueOnce(closed()).mockResolvedValueOnce(closed()).mockResolvedValueOnce(closed()),
+      executeTransaction: vi.fn(async () => ({ outcome: 'already_quarantined' })),
+    });
+    await expect(quarantineStalePvp(options)).resolves.toMatchObject({ outcome: 'already_quarantined', gate: { gate: 'closed', epoch: 4 } });
+    expect(options.closeGate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['epoch drift', { readStatus: vi.fn().mockResolvedValueOnce(open).mockResolvedValueOnce(closed(1, { epoch: 5 })) }, 'GATE_EPOCH_CHANGED'],
+    ['hard failure', { readStatus: vi.fn().mockResolvedValueOnce(open).mockResolvedValueOnce(closed(1, { hardExpiredLease: true })) }, 'HARD_EXPIRED_LEASE_AFTER_CLOSE'],
+    ['transaction ambiguity', { executeTransaction: vi.fn(async () => { throw new Error('SECRET_REDIS_REPLY'); }) }, 'QUARANTINE_TRANSACTION_FAILED'],
+    ['postcheck race', { readPvp: vi.fn(async () => ({ activeRoomCount: 1, activeMatchCount: 0, drained: false })) }, 'QUARANTINE_POSTCHECK_FAILED'],
+  ])('fails closed on %s without any reopen surface', async (_label, override, code) => {
+    const options = quarantineCallbacks(override);
+    await expect(quarantineStalePvp(options)).rejects.toMatchObject({ code });
+    expect(options).not.toHaveProperty('reopenGate');
+  });
+
+  it('verifies an already-closed pinned epoch without reopening', async () => {
+    await expect(verifyFrozenMigration({
+      urls, expectedCommit: commit, expectedEpoch: 4,
+      verifyRuntimeProbes: vi.fn(async () => probes), readStatus: vi.fn(async () => closed()), readPvp: vi.fn(async () => drained),
+    })).resolves.toEqual({
+      outcome: 'frozen_verified', verifiedRuntimeProbes: probes,
+      gate: { gate: 'closed', epoch: 4, activeLeases: 0, hardExpiredLease: false },
+      pvp: { activeRoomCount: 0, activeMatchCount: 0, drained: true },
+    });
+  });
+
+  it('fails verify-frozen when the final post-PVP gate re-read gains a lease', async () => {
+    await expect(verifyFrozenMigration({
+      urls, expectedCommit: commit, expectedEpoch: 4,
+      verifyRuntimeProbes: vi.fn(async () => probes),
+      readStatus: vi.fn().mockResolvedValueOnce(closed()).mockResolvedValueOnce(closed(1)),
+      readPvp: vi.fn(async () => drained),
+    })).rejects.toMatchObject({ code: 'FROZEN_VERIFICATION_FAILED' });
   });
 });

@@ -13,7 +13,18 @@ import {
   preflightMigrationFreeze,
   redactedMigrationGateStatus,
   redactedPvpDrainStatus,
+  quarantineStalePvp,
+  verifyFrozenMigration,
 } from '../shared/migrationFreezeOrchestrator.js';
+import { openArchiveFromFds } from './submarine-migration/archive.mjs';
+import {
+  deriveStalePvpQuarantinePlan,
+  executeQuarantineTransaction,
+  quarantineAuditKey,
+  quarantineTransaction,
+  readQuarantineRedisTime,
+  verifyRestoreReportFromFd,
+} from './submarine-migration/stale-pvp-quarantine.mjs';
 
 const command = process.argv[2] || 'status';
 const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
@@ -30,12 +41,68 @@ async function main() {
 
   if (command === 'status') {
     console.log(JSON.stringify({ gate: redactedMigrationGateStatus(await readStatus()), pvp: redactedPvpDrainStatus(await readPvp()) }, null, 2));
-  } else if (command === 'preflight' || command === 'freeze') {
+  } else if (command === 'preflight' || command === 'freeze' || command === 'quarantine-stale-pvp' || command === 'verify-frozen') {
     if (process.env.SD_MIGRATION_ADMISSION_GATE_ENABLED !== 'true') {
       throw new MigrationFreezeError('ADMISSION_GATE_FLAG_REQUIRED', 'SD_MIGRATION_ADMISSION_GATE_ENABLED must be true in every game runtime first.');
     }
     if (command === 'preflight') {
       console.log(JSON.stringify(await preflightMigrationFreeze({ urls: probeUrls, expectedCommit, readStatus, readPvp }), null, 2));
+    } else if (command === 'verify-frozen') {
+      console.log(JSON.stringify(await verifyFrozenMigration({
+        urls: probeUrls, expectedCommit,
+        expectedEpoch: Number(process.env.SD_MIGRATION_EXPECTED_FROZEN_EPOCH), readStatus, readPvp,
+      }), null, 2));
+    } else if (command === 'quarantine-stale-pvp') {
+      if (process.env.SD_MIGRATION_CONTROL_CONFIRM !== 'QUARANTINE_STALE_PVP') {
+        throw new MigrationFreezeError('QUARANTINE_CONFIRMATION_REQUIRED', 'Set SD_MIGRATION_CONTROL_CONFIRM=QUARANTINE_STALE_PVP to quarantine approved stale PVP.');
+      }
+      if (process.argv.length !== 3) throw new MigrationFreezeError('QUARANTINE_FD_INPUT_REQUIRED', 'Quarantine accepts archive and key material only through already-open file descriptors.');
+      if (process.env.SD_MIGRATION_QUARANTINE_ARCHIVE_PATH || process.env.SD_MIGRATION_QUARANTINE_KEY || process.env.SD_MIGRATION_QUARANTINE_KEY_HEX ||
+          process.env.SD_MIGRATION_QUARANTINE_RESTORE_REPORT_PATH || process.env.SD_MIGRATION_QUARANTINE_RESTORE_REPORT) {
+        throw new MigrationFreezeError('QUARANTINE_FD_INPUT_REQUIRED', 'Quarantine accepts archive and key material only through already-open file descriptors.');
+      }
+      const archiveFd = Number(process.env.SD_MIGRATION_QUARANTINE_ARCHIVE_FD);
+      const keyFd = Number(process.env.SD_MIGRATION_QUARANTINE_KEY_FD);
+      const restoreReportFd = Number(process.env.SD_MIGRATION_QUARANTINE_RESTORE_REPORT_FD);
+      const cutoffMs = Number(process.env.SD_MIGRATION_QUARANTINE_CUTOFF_MS);
+      const operatorId = process.env.SD_MIGRATION_OPERATOR_ID;
+      const expectedEpoch = Number(process.env.SD_MIGRATION_EXPECTED_FROZEN_EPOCH);
+      console.log(JSON.stringify(await quarantineStalePvp({
+        urls: probeUrls, expectedCommit, expectedEpoch, readStatus, readPvp,
+        closeGate: () => closeMutationGate(adapter),
+        prepareEvidence: () => {
+          const openedArchive = openArchiveFromFds({ archiveFd, keyFd });
+          try {
+            const restoreEvidence = verifyRestoreReportFromFd({
+              reportFd: restoreReportFd,
+              expectedSha256: process.env.SD_MIGRATION_QUARANTINE_RESTORE_REPORT_SHA256,
+              archiveSha256: process.env.SD_MIGRATION_QUARANTINE_ARCHIVE_SHA256,
+              manifestChecksum: process.env.SD_MIGRATION_QUARANTINE_MANIFEST_CHECKSUM,
+              captureId: openedArchive.header.captureId,
+            });
+            return deriveStalePvpQuarantinePlan({
+              openedArchive,
+              expectedArchiveSha256: process.env.SD_MIGRATION_QUARANTINE_ARCHIVE_SHA256,
+              expectedManifestChecksum: process.env.SD_MIGRATION_QUARANTINE_MANIFEST_CHECKSUM,
+              expectedArchiveApplicationCommit: process.env.SD_MIGRATION_QUARANTINE_ARCHIVE_APPLICATION_COMMIT,
+              restoreEvidence,
+              cutoffMs,
+            });
+          } finally {
+            openedArchive.plaintext.fill(0);
+          }
+        },
+        executeTransaction: async ({ evidence, epoch }) => {
+          const recordedTimestamp = await redis.hget(quarantineAuditKey(evidence.archiveSha256), 'quarantinedAtMs');
+          const parsedTimestamp = recordedTimestamp == null ? null : Number(recordedTimestamp);
+          if (parsedTimestamp !== null && (!Number.isSafeInteger(parsedTimestamp) || parsedTimestamp < 0)) {
+            throw new MigrationFreezeError('QUARANTINE_AUDIT_INVALID', 'Existing quarantine audit is invalid; keep the gate closed and verify state.');
+          }
+          const quarantinedAtMs = parsedTimestamp ?? await readQuarantineRedisTime(adapter);
+          const transaction = quarantineTransaction({ plan: evidence, epoch, operatorId, quarantinedAtMs, executingRuntimeCommit: expectedCommit });
+          return executeQuarantineTransaction(adapter, transaction);
+        },
+      }), null, 2));
     } else {
       if (process.env.SD_MIGRATION_CONTROL_CONFIRM !== 'FREEZE') {
         throw new MigrationFreezeError('FREEZE_CONFIRMATION_REQUIRED', 'Set SD_MIGRATION_CONTROL_CONFIRM=FREEZE to close the mutation gate.');
@@ -68,7 +135,7 @@ async function main() {
       operatorId: process.env.SD_MIGRATION_OPERATOR_ID,
     }), null, 2));
   } else {
-    throw new MigrationFreezeError('INVALID_MIGRATION_CONTROL_COMMAND', 'Usage: node scripts/migration-control.mjs [status|preflight|freeze|reopen|reconcile-expired]');
+    throw new MigrationFreezeError('INVALID_MIGRATION_CONTROL_COMMAND', 'Usage: node scripts/migration-control.mjs [status|preflight|freeze|quarantine-stale-pvp|verify-frozen|reopen|reconcile-expired]');
   }
 }
 

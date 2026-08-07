@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import { chmodSync, closeSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync, writeSync } from 'node:fs';
+import { chmodSync, closeSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync, writeSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { canonicalJson } from './canonical.mjs';
 import { identityFromFd, pathMatchesIdentity, unlinkIfOwned } from './ownership.mjs';
@@ -168,10 +168,25 @@ export async function sealArchive({ keyFd, ...options }) {
   return prepareArchiveSealer(keyFd)(options);
 }
 
-export function openArchive({ archivePath, keyFd }) {
+function readArchiveFd(archiveFd) {
+  if (!Number.isInteger(archiveFd) || archiveFd < 0) throw new Error('archive must be supplied by an already-open --archive-fd');
+  const metadata = fstatSync(archiveFd);
+  if (!metadata.isFile()) throw new Error('archive FD must reference one regular file');
+  const size = metadata.size;
+  if (!Number.isSafeInteger(size) || size < 1 || size > 512 * 1024 * 1024) throw new Error('archive FD size is invalid');
+  const envelope = Buffer.alloc(size);
+  let offset = 0;
+  while (offset < size) {
+    const count = readSync(archiveFd, envelope, offset, size - offset, offset);
+    if (count <= 0) throw new Error('archive FD ended before its declared size');
+    offset += count;
+  }
+  return envelope;
+}
+
+function openArchiveEnvelope(envelope, keyFd) {
   const key = readExactKey(keyFd);
   try {
-    const envelope = readFileSync(archivePath);
     if (envelope.length < 8 + 4 + 2 + 16 || !envelope.subarray(0, 8).equals(ARCHIVE_MAGIC)) throw new Error('archive is truncated or has invalid magic');
     const headerLength = envelope.readUInt32BE(8);
     if (headerLength > 64 * 1024) throw new Error('archive header is too large');
@@ -187,8 +202,20 @@ export function openArchive({ archivePath, keyFd }) {
     const decipher = createDecipheriv('aes-256-gcm', key, nonce, { authTagLength: 16 });
     decipher.setAAD(headerBytes);
     decipher.setAuthTag(envelope.subarray(-16));
-    return { header, plaintext: Buffer.concat([decipher.update(envelope.subarray(ciphertextStart, -16)), decipher.final()]) };
+    return {
+      header,
+      archiveSha256: createHash('sha256').update(envelope).digest('hex'),
+      plaintext: Buffer.concat([decipher.update(envelope.subarray(ciphertextStart, -16)), decipher.final()]),
+    };
   } finally {
     key.fill(0);
   }
+}
+
+export function openArchive({ archivePath, keyFd }) {
+  return openArchiveEnvelope(readFileSync(archivePath), keyFd);
+}
+
+export function openArchiveFromFds({ archiveFd, keyFd }) {
+  return openArchiveEnvelope(readArchiveFd(archiveFd), keyFd);
 }

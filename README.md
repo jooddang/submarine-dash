@@ -210,6 +210,12 @@ npm run migration:control -- reconcile-expired
 
 After reconciliation succeeds, run `npm run migration:control -- reopen` with `SD_MIGRATION_CONTROL_CONFIRM=REOPEN`. There is no implicit operator reopen after a timeout or hard failure.
 
+#### Stale-PVP evidence quarantine
+
+`quarantine-stale-pvp` is a separate fail-closed reconciliation path; normal freeze remains strict and never ignores active PVP. The command verifies every exact runtime probe first, authenticates an approved sealed precleanup archive from already-open archive/key file descriptors, independently binds a canonical process-verified/equal restore report supplied by FD, validates the complete archived room/match/membership/index/invite graph and zero economic exposure, closes and pins the gate epoch, drains leases, and executes one conditional Lua transaction. It preserves room/match records while changing only approved active rooms to `CANCELED`, active matches to `ABORTED`, exact memberships, the active room index, and a redacted control-prefix audit. Every failure leaves the gate closed and never attempts reopen.
+
+Invoke with inherited archive, key, and restore-report descriptors and `SD_MIGRATION_CONTROL_CONFIRM=QUARANTINE_STALE_PVP`; do not put their paths or bytes in arguments or environment variables. Supply the approved archive SHA-256, manifest checksum, restore-report SHA-256, precleanup archive application commit, current executing runtime commit, explicit cutoff, operator ID, and expected gate epoch. Source evidence is bound to inventory v1 and its exact reviewed digest; the executing runtime and final T1 capture use inventory v2 and its exact digest. Redis TIME supplies the quarantine timestamp, and code requires the cutoff to be at least 30 days old and the archive capture not to be in the future. Durable `connected=true` flags are treated only as stale archived fields: the atomic scan rejects any live `sd:pvp:presence:*`, `sd:pvp:ws-ticket:*`, `sd:pvp:lobby:online`, or other unexpected `sd:pvp:*` key. After success, run `migration:control -- verify-frozen` with the current runtime commit and same epoch. It re-reads the already-closed gate after authoritative zero-PVP verification without reopening before final T1 capture.
+
 ## 📝 License
 
 MIT License - feel free to use this project for learning or creating your own games!
