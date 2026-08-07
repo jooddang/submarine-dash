@@ -19,6 +19,7 @@ const getApiBaseUrl = () => {
 };
 
 const API_BASE_URL = getApiBaseUrl();
+const MUTATION_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 export class ApiResponseError extends Error {
   constructor(
@@ -57,15 +58,20 @@ export type AuthUser = {
   };
 };
 
-let activeAuthAccess: Pick<AuthUser, 'canonical' | 'readOnly' | 'writeCapabilities'> | null = null;
+let activeAuthAccess: Pick<AuthUser, 'userId' | 'canonical' | 'readOnly' | 'writeCapabilities'> | null = null;
 
 export function isReadOnlyCanary(user: AuthUser | null | undefined): boolean {
   return user?.canonical === true && user.readOnly === true;
 }
 
+export function dolphinMutationAccessState(user: AuthUser | null, hasPendingConsume: boolean) {
+  const pending = Boolean(user?.canonical && hasPendingConsume);
+  return { pending, enabled: !isReadOnlyCanary(user) && !pending };
+}
+
 function rememberAuthAccess(user: AuthUser | null) {
   activeAuthAccess = user ? {
-    canonical: user.canonical, readOnly: user.readOnly, writeCapabilities: user.writeCapabilities || [],
+    userId: user.userId, canonical: user.canonical, readOnly: user.readOnly, writeCapabilities: user.writeCapabilities || [],
   } : null;
 }
 
@@ -314,32 +320,81 @@ export const missionsAPI = {
 };
 
 export const inventoryAPI = {
-  async consumeDolphin(): Promise<{ ok: boolean; inventory: { dolphinSaved: number } } | null> {
-    requireWritableGameSession();
+  hasPendingDolphinConsume(account: string): boolean {
+    const storageKey = `sd:dolphin-consume-outbox:${account}`;
     try {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return false;
+      const attempt = JSON.parse(raw) as { account?: unknown; idempotencyKey?: unknown };
+      if (attempt.account === account && typeof attempt.idempotencyKey === 'string'
+          && MUTATION_UUID_RE.test(attempt.idempotencyKey)) return true;
+      localStorage.removeItem(storageKey);
+      return false;
+    } catch {
+      try { localStorage.removeItem(storageKey); } catch { /* unavailable storage */ }
+      return false;
+    }
+  },
+
+  async consumeDolphin(): Promise<{ ok: boolean; inventory: { dolphinSaved: number }; acknowledgement?: { account: string; idempotencyKey: string } } | null> {
+    requireWritableGameSession('consume_dolphin');
+    try {
+      const account = activeAuthAccess?.canonical ? activeAuthAccess.userId : '';
+      const storageKey = account ? `sd:dolphin-consume-outbox:${account}` : '';
+      let stored = storageKey ? localStorage.getItem(storageKey) : null;
+      let attempt: { account: string; idempotencyKey: string } | null = null;
+      try { attempt = stored ? JSON.parse(stored) : null; } catch { /* discard corrupt local-only state */ }
+      if (attempt?.account !== account || !MUTATION_UUID_RE.test(attempt?.idempotencyKey || '')) {
+        if (storageKey) localStorage.removeItem(storageKey);
+        stored = null;
+        attempt = { account, idempotencyKey: crypto.randomUUID() };
+      }
+      if (storageKey && !stored) localStorage.setItem(storageKey, JSON.stringify(attempt));
       const res = await fetch(`${API_BASE_URL}/api/inventory/dolphin/consume`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": attempt.idempotencyKey },
         credentials: "include",
       });
       if (!res.ok) return null;
-      return await res.json();
+      const result = await res.json();
+      if (typeof result?.ok !== 'boolean' || !Number.isSafeInteger(result?.inventory?.dolphinSaved)) return null;
+      if (storageKey) localStorage.removeItem(storageKey);
+      return { ...result, acknowledgement: account ? { account, idempotencyKey: attempt.idempotencyKey } : undefined };
     } catch {
       return null;
     }
   },
 
-  async importDolphin(count: number): Promise<{ ok: boolean; inventory: { dolphinSaved: number } } | null> {
-    requireWritableGameSession();
+  async importDolphin(count: number): Promise<{ ok: boolean; inventory: { dolphinSaved: number }; acknowledgement?: { account: string; count: number; idempotencyKey: string } } | null> {
+    requireWritableGameSession('import_dolphin');
     try {
+      if (!activeAuthAccess?.canonical) {
+        const res = await fetch(`${API_BASE_URL}/api/inventory/dolphin/import`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+          credentials: 'include', body: JSON.stringify({ count }),
+        });
+        if (!res.ok) return null;
+        return await res.json();
+      }
+      const account = activeAuthAccess?.userId || '';
+      if (!account || !Number.isSafeInteger(count) || count < 0) throw new Error('Invalid dolphin import snapshot');
+      const storageKey = `sd:dolphin-import-outbox:${account}`;
+      const stored = localStorage.getItem(storageKey);
+      const attempt = stored ? JSON.parse(stored) as { account: string; count: number; idempotencyKey: string }
+        : { account, count, idempotencyKey: crypto.randomUUID() };
+      if (attempt.account !== account || !Number.isSafeInteger(attempt.count) || attempt.count < 0
+          || !MUTATION_UUID_RE.test(attempt.idempotencyKey)) throw new Error('Invalid dolphin import outbox');
+      if (!stored) localStorage.setItem(storageKey, JSON.stringify(attempt));
       const res = await fetch(`${API_BASE_URL}/api/inventory/dolphin/import`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": attempt.idempotencyKey },
         credentials: "include",
-        body: JSON.stringify({ count }),
+        body: JSON.stringify({ count: attempt.count }),
       });
       if (!res.ok) return null;
-      return await res.json();
+      const result = await res.json();
+      if (result?.ok !== true || !Number.isSafeInteger(result?.inventory?.dolphinSaved)) return null;
+      return { ...result, acknowledgement: { account, count: attempt.count, idempotencyKey: attempt.idempotencyKey } };
     } catch {
       return null;
     }

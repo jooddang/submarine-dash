@@ -1,5 +1,6 @@
 import { validateCanaryEquipResponse } from '../../shared/canaryEquip.js';
 import { SKIN_CATALOG_VERSION, validateCanaryPurchaseResponse } from '../../shared/canaryPurchase.js';
+import { DOLPHIN_CONTRACT_VERSION, validateCanaryDolphinResponse } from '../../shared/canaryDolphin.js';
 
 const productionBaseUrl = 'https://www.roadcrosser.com';
 const opaque256 = /^[A-Za-z0-9_-]{43}$/;
@@ -10,6 +11,8 @@ const allowedPaths = new Set([
   '/api/internal/submarine-dash/bootstrap',
   '/api/internal/submarine-dash/mutations/equip-skin',
   '/api/internal/submarine-dash/mutations/purchase-skin',
+  '/api/internal/submarine-dash/mutations/consume-dolphin',
+  '/api/internal/submarine-dash/mutations/import-dolphin',
 ]);
 
 export type CanonicalSubmarineUser = {
@@ -48,7 +51,7 @@ function baseUrl() {
   throw new Error('Roadcrosser internal base URL is invalid');
 }
 
-async function request(path: string, body: Record<string, string>) {
+async function request(path: string, body: Record<string, unknown>) {
   if (!allowedPaths.has(path)) throw new Error('Roadcrosser internal path is forbidden');
   const credential = process.env.SD_ROADCROSSER_INTERNAL_AUTH_TOKEN;
   if (!credential || credential.length < 32) throw new Error('Roadcrosser internal client is not configured');
@@ -125,4 +128,18 @@ export async function purchaseRoadcrosserCanarySkin(sessionToken: string, idempo
     sessionToken, idempotencyKey, skinId, catalogVersion: SKIN_CATALOG_VERSION,
   });
   return validateCanaryPurchaseResponse(result, skinId);
+}
+
+export async function consumeRoadcrosserCanaryDolphin(sessionToken: string, idempotencyKey: string) {
+  const result = await request('/api/internal/submarine-dash/mutations/consume-dolphin', {
+    sessionToken, idempotencyKey, contractVersion: DOLPHIN_CONTRACT_VERSION,
+  });
+  return validateCanaryDolphinResponse(result, 'consume_dolphin');
+}
+
+export async function importRoadcrosserCanaryDolphin(sessionToken: string, idempotencyKey: string, count: number) {
+  const result = await request('/api/internal/submarine-dash/mutations/import-dolphin', {
+    sessionToken, idempotencyKey, count, contractVersion: DOLPHIN_CONTRACT_VERSION,
+  });
+  return validateCanaryDolphinResponse(result, 'import_dolphin');
 }

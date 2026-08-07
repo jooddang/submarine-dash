@@ -3,6 +3,7 @@ import cors from 'cors';
 import Redis from 'ioredis';
 import { validateCanaryEquipResponse } from '../../shared/canaryEquip.js';
 import { SKIN_CATALOG_VERSION, SKIN_COSTS, validateCanaryPurchaseResponse } from '../../shared/canaryPurchase.js';
+import { executeExpressCanonicalDolphin, isExpressDolphinCanaryAdmission } from '../../shared/canaryDolphinExpress.js';
 import dotenv from 'dotenv';
 import { sanitizeLeaderboardName } from '../../shared/profanity.js';
 import { getPstCurrentWeekId, getPrevWeekId, getWeekEndDate } from '../../shared/week.js';
@@ -107,6 +108,9 @@ app.use(async (req, res, next) => {
     '/api/inventory/skin/equip',
     '/api/inventory/skin/purchase',
   ]).has(req.path);
+  const dolphinCanaryRoute = req.method === 'POST' && new Set([
+    '/api/inventory/dolphin/consume','/api/inventory/dolphin/import',
+  ]).has(req.path);
   const expectedCanaryOrigin = process.env.SD_SUBMARINE_PUBLIC_ORIGIN || 'https://submarine-dash.roadcrosser.com';
   const canaryEquipOriginAllowed = req.headers.origin === expectedCanaryOrigin && isAllowedSubmarineMutationOrigin(req);
   if (canonicalToken && canaryMutationRoute && process.env.SD_SUPABASE_WRITE_CANARY_ENABLED === 'true'
@@ -114,15 +118,18 @@ app.use(async (req, res, next) => {
   const canaryMutationEnabled = canaryMutationRoute
     && process.env.SD_SUPABASE_WRITE_CANARY_ENABLED === 'true'
     && canaryEquipOriginAllowed;
+  const dolphinCanaryEnabled = isExpressDolphinCanaryAdmission({method:req.method,path:req.path,origin:req.headers.origin,
+    expectedOrigin:expectedCanaryOrigin,canonicalToken,enabled:process.env.SD_SUPABASE_DOLPHIN_WRITE_CANARY_ENABLED === 'true',
+    allowedOrigin:isAllowedSubmarineMutationOrigin(req)});
   const leaderboardBootstrapRead = req.method === 'GET'
     && (req.path === '/api/leaderboard' || req.path === '/api/leaderboard/weekly');
-  if (canonicalToken && !transitionRoute && !canaryMutationEnabled && (mutationMethod || leaderboardBootstrapRead)) {
+  if (canonicalToken && !transitionRoute && !canaryMutationEnabled && !dolphinCanaryEnabled && (mutationMethod || leaderboardBootstrapRead)) {
     return res.status(409).json({
       error: 'Canonical account progress is read-only in Submarine Dash',
       code: 'CANONICAL_READ_ONLY',
     });
   }
-  if (canonicalToken && canaryMutationEnabled) return next();
+  if (canonicalToken && (canaryMutationEnabled || dolphinCanaryEnabled)) return next();
 
   const classification = localRouteClassification(req.path, req.method);
   const flags = productionControlFlags();
@@ -266,6 +273,8 @@ async function roadcrosserRequest(path, body) {
     '/api/internal/submarine-dash/bootstrap',
     '/api/internal/submarine-dash/mutations/equip-skin',
     '/api/internal/submarine-dash/mutations/purchase-skin',
+    '/api/internal/submarine-dash/mutations/consume-dolphin',
+    '/api/internal/submarine-dash/mutations/import-dolphin',
   ]);
   if (!allowed.has(path)) throw new Error('Roadcrosser internal path is forbidden');
   const credential = process.env.SD_ROADCROSSER_INTERNAL_AUTH_TOKEN;
@@ -1390,6 +1399,12 @@ app.post('/api/missions/event', async (req, res) => {
 // Dolphin inventory endpoints (Redis source of truth)
 app.post('/api/inventory/dolphin/consume', async (req, res) => {
   try {
+    const canonicalToken=parseCookies(req)[CANONICAL_SESSION_COOKIE_NAME];
+    if (canonicalToken) {
+      const out=await executeExpressCanonicalDolphin({operation:'consume_dolphin',canonicalToken,
+        idempotencyKey:req.get('idempotency-key')||'',roadcrosserRequest});
+      return res.status(out.status).json(out.body);
+    }
     if (!redis) return res.status(503).json({ error: 'Redis not connected' });
     const userId = await getUserIdForSession(req);
     if (!userId) return res.status(401).json({ error: 'Login required' });
@@ -1403,6 +1418,12 @@ app.post('/api/inventory/dolphin/consume', async (req, res) => {
 
 app.post('/api/inventory/dolphin/import', async (req, res) => {
   try {
+    const canonicalToken=parseCookies(req)[CANONICAL_SESSION_COOKIE_NAME];
+    if (canonicalToken) {
+      const key=req.get('idempotency-key')||''; const count=req.body?.count;
+      const out=await executeExpressCanonicalDolphin({operation:'import_dolphin',canonicalToken,idempotencyKey:key,count,roadcrosserRequest});
+      return res.status(out.status).json(out.body);
+    }
     if (!redis) return res.status(503).json({ error: 'Redis not connected' });
     const userId = await getUserIdForSession(req);
     if (!userId) return res.status(401).json({ error: 'Login required' });

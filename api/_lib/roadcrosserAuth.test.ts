@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  consumeRoadcrosserTicket, equipRoadcrosserCanarySkin, purchaseRoadcrosserCanarySkin, readRoadcrosserCanonicalBootstrap,
+  consumeRoadcrosserTicket, consumeRoadcrosserCanaryDolphin, importRoadcrosserCanaryDolphin,
+  equipRoadcrosserCanarySkin, purchaseRoadcrosserCanarySkin, readRoadcrosserCanonicalBootstrap,
   resolveRoadcrosserSession, revokeRoadcrosserSession,
 } from './roadcrosserAuth.js';
 import { SKIN_CATALOG_VERSION } from '../../shared/canaryPurchase.js';
+import { DOLPHIN_CONTRACT_VERSION } from '../../shared/canaryDolphin.js';
 
 const opaque = 'A'.repeat(43);
 
@@ -53,6 +55,14 @@ describe('Roadcrosser scoped internal client', () => {
           stateVersion: 3, keyVersions: { coins: 1, ownedSkins: 1 },
         }), { status: 200 }));
       }
+      if (url.endsWith('/mutations/consume-dolphin') || url.endsWith('/mutations/import-dolphin')) {
+        const operation = url.endsWith('/consume-dolphin') ? 'consume_dolphin' : 'import_dolphin';
+        return Promise.resolve(new Response(JSON.stringify({
+          version: 'submarine-write-v1', contractVersion: DOLPHIN_CONTRACT_VERSION,
+          operation, idempotent: false, ok: true, inventory: { dolphinSaved: 2 }, stateVersion: 4,
+          keyVersions: { pending: 1, saved: 2, ledger: 3 },
+        }), { status: 200 }));
+      }
       return Promise.resolve(new Response(JSON.stringify({
         version: 'submarine-game-session-v1', externalUserId: 'fixture', loginId: 'fixture',
       }), { status: 200 }));
@@ -63,14 +73,25 @@ describe('Roadcrosser scoped internal client', () => {
     await readRoadcrosserCanonicalBootstrap(opaque);
     await equipRoadcrosserCanarySkin(opaque, '97000000-0000-4000-8000-000000000001', 'default');
     await purchaseRoadcrosserCanarySkin(opaque, '97000000-0000-4000-8000-000000000002', 'gold');
+    await consumeRoadcrosserCanaryDolphin(opaque, '97000000-0000-4000-8000-000000000003');
+    await importRoadcrosserCanaryDolphin(opaque, '97000000-0000-4000-8000-000000000004', 2);
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       'https://www.roadcrosser.com/api/internal/submarine-dash/sessions/resolve',
       'https://www.roadcrosser.com/api/internal/submarine-dash/sessions/revoke',
       'https://www.roadcrosser.com/api/internal/submarine-dash/bootstrap',
       'https://www.roadcrosser.com/api/internal/submarine-dash/mutations/equip-skin',
       'https://www.roadcrosser.com/api/internal/submarine-dash/mutations/purchase-skin',
+      'https://www.roadcrosser.com/api/internal/submarine-dash/mutations/consume-dolphin',
+      'https://www.roadcrosser.com/api/internal/submarine-dash/mutations/import-dolphin',
     ]);
     expect(JSON.parse(fetchMock.mock.calls[4][1].body)).toMatchObject({ catalogVersion: SKIN_CATALOG_VERSION });
+    expect(JSON.parse(fetchMock.mock.calls[5][1].body)).toEqual({
+      sessionToken: opaque, idempotencyKey: '97000000-0000-4000-8000-000000000003', contractVersion: DOLPHIN_CONTRACT_VERSION,
+    });
+    expect(JSON.parse(fetchMock.mock.calls[6][1].body)).toEqual({
+      sessionToken: opaque, idempotencyKey: '97000000-0000-4000-8000-000000000004', count: 2,
+      contractVersion: DOLPHIN_CONTRACT_VERSION,
+    });
   });
 
   it('rejects remote overrides and redacts central failures', async () => {

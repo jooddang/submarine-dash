@@ -38,6 +38,16 @@ describe('production route inventory', () => {
           "return withProductionControl('api/inventory/skin/purchase.ts', handler, dependencies, isSyntheticCanaryPurchaseRequest);",
         );
         expect(source.trimEnd().endsWith('export default createPurchaseSkinRoute();'), file).toBe(true);
+      } else if (file === 'api/inventory/dolphin/consume.ts') {
+        expect(source, file).toContain(
+          "withProductionControl('api/inventory/dolphin/consume.ts',handler,dependencies,isSyntheticCanaryDolphinConsumeRequest)",
+        );
+        expect(source.trimEnd().endsWith('export default createConsumeDolphinRoute();'), file).toBe(true);
+      } else if (file === 'api/inventory/dolphin/import.ts') {
+        expect(source, file).toContain(
+          "withProductionControl('api/inventory/dolphin/import.ts',handler,dependencies,isSyntheticCanaryDolphinImportRequest)",
+        );
+        expect(source.trimEnd().endsWith('export default createImportDolphinRoute();'), file).toBe(true);
       } else {
         expect(source.trimEnd().endsWith(`export default withProductionControl('${file}', handler);`), file).toBe(true);
       }

@@ -4,6 +4,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 const road = vi.hoisted(() => ({
   consume: vi.fn(), revoke: vi.fn(), bootstrap: vi.fn(), equip: vi.fn(), purchase: vi.fn(),
+  consumeDolphin: vi.fn(), importDolphin: vi.fn(),
 }));
 const redis = vi.hoisted(() => ({
   get: vi.fn(), set: vi.fn(), del: vi.fn(), incr: vi.fn(), expire: vi.fn(),
@@ -16,6 +17,8 @@ vi.mock('./roadcrosserAuth.js', () => ({
   readRoadcrosserCanonicalBootstrap: road.bootstrap,
   equipRoadcrosserCanarySkin: road.equip,
   purchaseRoadcrosserCanarySkin: road.purchase,
+  consumeRoadcrosserCanaryDolphin: road.consumeDolphin,
+  importRoadcrosserCanaryDolphin: road.importDolphin,
 }));
 vi.mock('./redis.js', () => ({
   getUpstashRedisClient: redisFactory,
@@ -29,8 +32,11 @@ import { handler as logoutHandler } from '../auth/logout.js';
 import { handler as meHandler } from '../auth/me.js';
 import { createEquipSkinRoute, handler as equipSkinHandler, isSyntheticCanaryEquipRequest } from '../inventory/skin/equip.js';
 import { createPurchaseSkinRoute, handler as purchaseSkinHandler, isSyntheticCanaryPurchaseRequest } from '../inventory/skin/purchase.js';
+import { handler as consumeDolphinHandler, isSyntheticCanaryDolphinConsumeRequest } from '../inventory/dolphin/consume.js';
+import { handler as importDolphinHandler, isSyntheticCanaryDolphinImportRequest } from '../inventory/dolphin/import.js';
 import { MaintenanceFreezeError } from '../../shared/productionControls.js';
 import { SKIN_CATALOG_VERSION } from '../../shared/canaryPurchase.js';
+import { DOLPHIN_CONTRACT_VERSION } from '../../shared/canaryDolphin.js';
 
 const opaque = (character: string) => character.repeat(43);
 
@@ -88,6 +94,14 @@ beforeEach(() => {
     skins: { owned: ['default', 'gold'], equipped: 'default' },
     stateVersion: 3, keyVersions: { coins: 1, ownedSkins: 1 },
   });
+  road.consumeDolphin.mockResolvedValue({
+    version:'submarine-write-v1',contractVersion:DOLPHIN_CONTRACT_VERSION,operation:'consume_dolphin',idempotent:false,
+    ok:true,inventory:{dolphinSaved:1},stateVersion:4,keyVersions:{pending:1,saved:1,ledger:1},
+  });
+  road.importDolphin.mockResolvedValue({
+    version:'submarine-write-v1',contractVersion:DOLPHIN_CONTRACT_VERSION,operation:'import_dolphin',idempotent:false,
+    ok:true,inventory:{dolphinSaved:3},stateVersion:4,keyVersions:{pending:1,saved:1,ledger:1},
+  });
   redis.del.mockResolvedValue(1);
   redis.set.mockResolvedValue('OK');
   redis.incr.mockResolvedValue(1);
@@ -100,6 +114,26 @@ afterEach(() => {
 });
 
 describe('canonical auth handlers', () => {
+  it('routes dolphin canary mutations only under the exact cookie, origin, flag, count, and idempotency contract', async () => {
+    const token=opaque('D'); const key='97000000-0000-4000-8000-000000000009';
+    const exact={cookie:`sd_roadcrosser_session=${token}`,origin:'https://submarine-dash.roadcrosser.com',idempotencyKey:key};
+    expect(isSyntheticCanaryDolphinConsumeRequest(request('POST',exact))).toBe(false);
+    vi.stubEnv('SD_SUPABASE_DOLPHIN_WRITE_CANARY_ENABLED','true');
+    expect(isSyntheticCanaryDolphinConsumeRequest(request('POST',exact))).toBe(true);
+    expect(isSyntheticCanaryDolphinImportRequest(request('POST',{...exact,body:{count:2}}))).toBe(true);
+    expect(isSyntheticCanaryDolphinConsumeRequest(request('POST',{...exact,origin:'https://tiles.roadcrosser.com'}))).toBe(false);
+    const consumed=response(); await consumeDolphinHandler(request('POST',exact),consumed.res);
+    expect(consumed.state).toMatchObject({status:200,json:{ok:true,inventory:{dolphinSaved:1}}});
+    expect(road.consumeDolphin).toHaveBeenCalledWith(token,key);
+    const imported=response(); await importDolphinHandler(request('POST',{...exact,body:{count:2}}),imported.res);
+    expect(imported.state.status).toBe(200); expect(road.importDolphin).toHaveBeenCalledWith(token,key,2);
+    for (const count of ['2',-1,1.5,Number.MAX_SAFE_INTEGER+1]) {
+      const invalid=response(); await importDolphinHandler(request('POST',{...exact,body:{count}}),invalid.res);
+      expect(invalid.state.status).toBe(400);
+    }
+    expect(road.importDolphin).toHaveBeenCalledTimes(1);
+    expect(redisFactory).not.toHaveBeenCalled();
+  });
   it('starts with a host-only state cookie and a challenge-only redirect', async () => {
     const out = response();
     await startHandler(request('GET'), out.res);

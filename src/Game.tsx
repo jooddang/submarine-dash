@@ -7,7 +7,7 @@ import { createBubble, spawnBackgroundEntity } from "./entities";
 import { drawSwordfish, drawUrchin, drawBackgroundEntities, drawTurtleShell } from "./drawing";
 import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, AuthModal, DailyMissionsPanel, DolphinStreakRewardOverlay, DolphinWeeklyWinnerRewardOverlay, InventoryPanel, SkinPanel, AchievementsPanel } from "./components/UIOverlays";
 import { getSkinDef, drawSubmarine, updateTrailParticles, drawTrailParticles, isGoldenTubeEligible, GOLDEN_TUBE_EXTRA_CHARGES, GOLDEN_TUBE_EXTRA_SCORE_BONUS, DEFAULT_SKIN_ID, preloadSkinImages, type TrailParticle, type SkinDef } from "./skins";
-import { authAPI, inventoryAPI, isReadOnlyCanary, leaderboardAPI, missionsAPI, achievementsAPI, type DailyMissionsResponse, type AuthUser, type UserAchievementSummary } from "./api";
+import { authAPI, dolphinMutationAccessState, inventoryAPI, isReadOnlyCanary, leaderboardAPI, missionsAPI, achievementsAPI, type DailyMissionsResponse, type AuthUser, type UserAchievementSummary } from "./api";
 import { runLeaderboardSubmission } from "./leaderboardSubmission";
 import turtleRescueImg from "../turtle.png";
 import turtleShellItemImg from "../turtle-shell-item.png";
@@ -179,6 +179,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
   const pendingDolphinRewardRef = useRef<boolean>(false);
   const dolphinUseEnabledRef = useRef<boolean>(true);
   const dolphinUsesThisRunRef = useRef<number>(0);
+  const pendingDolphinConsumeRef = useRef<boolean>(false);
 
   // ── Achievement tracking refs (per-run) ──
   const deathCauseRef = useRef<string | null>(null);
@@ -226,6 +227,15 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
   const setDolphinCountLocal = (value: number) => {
     const seq = nextDolphinSyncSeq();
     applyDolphinCountSync(value, seq);
+  };
+
+  const bindDolphinMutationAccess = (user: AuthUser | null) => {
+    const hasPending = Boolean(user?.canonical && inventoryAPI.hasPendingDolphinConsume(user.userId));
+    const access = dolphinMutationAccessState(user, hasPending);
+    pendingDolphinConsumeRef.current = access.pending;
+    dolphinUseEnabledRef.current = access.enabled;
+    setDolphinUseEnabled(access.enabled);
+    return access.pending;
   };
 
   const TUBE_SESSION_KEY = "subdash:session:tubePieces";
@@ -301,6 +311,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
   const resetAuthenticatedUserState = () => {
     setAuthUser(null);
     authUserRef.current = null;
+    bindDolphinMutationAccess(null);
     setCoinBalance(0);
     setOwnedSkins([DEFAULT_SKIN_ID]);
     setEquippedSkinId(DEFAULT_SKIN_ID);
@@ -344,7 +355,8 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
       setAuthUser(me);
       // Keep the auth ref in sync immediately (used by gameplay-side auth checks).
       authUserRef.current = me;
-      setDolphinUseEnabled(!isReadOnlyCanary(me));
+      const readOnlyCanary = isReadOnlyCanary(me);
+      const hasPendingConsume = bindDolphinMutationAccess(me);
 
       // Hydrate dolphin count and coin balance from Redis (source of truth).
       if (me?.inventory && typeof me.inventory.dolphinSaved === "number") {
@@ -368,16 +380,28 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
         setEquippedSkinId(me.inventory.skins.equipped);
       }
 
+      // Resolve a prior unknown consume outcome before allowing another spend. The
+      // durable account-bound outbox forces the exact same idempotency key.
+      if (me?.canonical && !readOnlyCanary && hasPendingConsume) {
+        const reconciled = await inventoryAPI.consumeDolphin();
+        if (authUserRef.current?.userId === me.userId && reconciled?.inventory && typeof reconciled.inventory.dolphinSaved === 'number') {
+          applyDolphinCountSync(reconciled.inventory.dolphinSaved, nextDolphinSyncSeq());
+          pendingDolphinConsumeRef.current = false;
+          dolphinUseEnabledRef.current = true;
+          setDolphinUseEnabled(true);
+        }
+      }
+
       // One-time import of legacy localStorage dolphins into Redis (prevents losing old items).
-      if (me?.userId && !isReadOnlyCanary(me)) {
+      if (me?.userId && !me.canonical && !isReadOnlyCanary(me)) {
         const legacy = readLegacyLocalDolphinCount(me.userId);
         if (legacy > 0) {
           const importSeq = nextDolphinSyncSeq();
           const imported = await inventoryAPI.importDolphin(legacy);
           if (imported?.inventory && typeof imported.inventory.dolphinSaved === "number") {
             applyDolphinCountSync(imported.inventory.dolphinSaved, importSeq);
+            clearLegacyLocalDolphinCount(me.userId);
           }
-          clearLegacyLocalDolphinCount(me.userId);
         }
       }
 
@@ -754,6 +778,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
     if (
       allowDolphin &&
       dolphinUseEnabledRef.current &&
+      !pendingDolphinConsumeRef.current &&
       dolphinSavedCountRef.current > 0 &&
       dolphinUsesThisRunRef.current < DOLPHIN_USES_PER_RUN_MAX &&
       !isImminentLandingWhileFalling()
@@ -763,15 +788,27 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
       const seq = nextDolphinSyncSeq();
       applyDolphinCountSync(before - 1, seq);
       dolphinUsesThisRunRef.current = beforeUses + 1;
+      pendingDolphinConsumeRef.current = true;
       setDolphinSpendSeq((s) => s + 1);
       // Reconcile with Redis source of truth (best-effort).
       // If the server rejects (e.g., already 0), restore the local count.
       inventoryAPI
         .consumeDolphin()
         .then((out) => {
-          if (!out || !out.ok) {
+          if (out?.acknowledgement && authUserRef.current?.userId !== out.acknowledgement.account) {
+            // A response for the prior account must not mutate the newly active
+            // account's inventory or pending-spend state.
+            return;
+          }
+          if (!out) {
+            // Unknown outcome: retain the optimistic reservation and block any
+            // second spend until the same durable idempotency key is reconciled.
+            return;
+          }
+          pendingDolphinConsumeRef.current = false;
+          if (!out.ok) {
             applyDolphinCountSync(before, seq);
-            dolphinUsesThisRunRef.current = beforeUses;
+            dolphinUsesThisRunRef.current = Math.max(0, dolphinUsesThisRunRef.current - 1);
             return;
           }
           if (typeof out.inventory?.dolphinSaved === "number") {
@@ -779,8 +816,8 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
           }
         })
         .catch(() => {
-          applyDolphinCountSync(before, seq);
-          dolphinUsesThisRunRef.current = beforeUses;
+          // Treat transport failure as unknown, not rejected. The reservation
+          // and outbox remain until replay establishes the authoritative result.
         });
 
       player.dy = Constants.JUMP_FORCE_INITIAL;
@@ -1426,6 +1463,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
       setAuthUser(user);
       // Keep the auth ref in sync immediately (streak rewards + saved items use this for per-user storage keys).
       authUserRef.current = user;
+      bindDolphinMutationAccess(user);
       if (user?.inventory && typeof user.inventory.coins === "number") {
         setCoinBalance(user.inventory.coins);
       }

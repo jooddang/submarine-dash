@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   authAPI,
+  dolphinMutationAccessState,
   inventoryAPI,
   leaderboardAPI,
   missionsAPI,
@@ -13,6 +15,22 @@ afterEach(async () => {
 });
 
 describe('canonical read-only client barrier', () => {
+  it('rebinds pending-consume access per account instead of leaking A state into B', () => {
+    const a={userId:'a',loginId:'A',refCode:'',canonical:true,readOnly:false} as const;
+    const b={...a,userId:'b',loginId:'B'};
+    expect(dolphinMutationAccessState(a,true)).toEqual({pending:true,enabled:false});
+    expect(dolphinMutationAccessState(null,false)).toEqual({pending:false,enabled:true});
+    expect(dolphinMutationAccessState(b,false)).toEqual({pending:false,enabled:true});
+  });
+  it('never auto-imports or clears local dolphin buckets during canonical hydration', () => {
+    const game=readFileSync(new URL('./Game.tsx',import.meta.url),'utf8');
+    expect(game).toContain('if (me?.userId && !me.canonical && !isReadOnlyCanary(me))');
+    expect(game.indexOf('if (imported?.inventory && typeof imported.inventory.dolphinSaved === "number")'))
+      .toBeLessThan(game.indexOf('clearLegacyLocalDolphinCount(me.userId)'));
+    expect(game).toContain('bindDolphinMutationAccess(null);');
+    expect(game).toContain('bindDolphinMutationAccess(user);');
+    expect(game).toContain("authUserRef.current?.userId !== out.acknowledgement.account");
+  });
   it('rejects every game mutation helper without issuing a request', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       canonical: true,
@@ -89,5 +107,92 @@ describe('canonical read-only client barrier', () => {
     await expect(missionsAPI.postEvent({ type: 'run_end', score: 1 })).rejects.toThrow('read-only');
     await expect(leaderboardAPI.submitScore('Synthetic', 1)).rejects.toThrow('read-only');
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('reuses one account-bound consume key after an unknown outcome', async () => {
+    const values = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        canonical: true, readOnly: false, writeCapabilities: ['consume_dolphin'],
+        user: { userId: 'canary-a', loginId: 'A', refCode: '' },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockRejectedValueOnce(new Error('connection lost after write'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, inventory: { dolphinSaved: 1 } }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    await authAPI.me();
+    values.set('sd:dolphin-consume-outbox:canary-a', JSON.stringify({
+      account: 'canary-a', idempotencyKey: '------------------------------------',
+    }));
+    expect(inventoryAPI.hasPendingDolphinConsume('canary-a')).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(values.has('sd:dolphin-consume-outbox:canary-a')).toBe(false);
+    await expect(inventoryAPI.consumeDolphin()).resolves.toBeNull();
+    expect(inventoryAPI.hasPendingDolphinConsume('canary-a')).toBe(true);
+    await expect(inventoryAPI.consumeDolphin()).resolves.toMatchObject({ ok: true });
+    const first = (fetchMock.mock.calls[1][1]?.headers as Record<string, string>)['Idempotency-Key'];
+    const retry = (fetchMock.mock.calls[2][1]?.headers as Record<string, string>)['Idempotency-Key'];
+    expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(first).not.toBe('------------------------------------');
+    expect(retry).toBe(first);
+    expect(inventoryAPI.hasPendingDolphinConsume('canary-a')).toBe(false);
+  });
+
+  it('keeps canonical import attempts account-bound and never consumes a guest bucket', async () => {
+    const values = new Map<string, string>([['subdash:savedItem:dolphin:guest', '9']]);
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        canonical: true, readOnly: false, writeCapabilities: ['import_dolphin'],
+        user: { userId: 'canary-a', loginId: 'A', refCode: '' },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, inventory: { dolphinSaved: 3 } }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    await authAPI.me();
+    await expect(inventoryAPI.importDolphin(3)).resolves.toMatchObject({
+      acknowledgement: { account: 'canary-a', count: 3 },
+    });
+    expect(values.get('subdash:savedItem:dolphin:guest')).toBe('9');
+    expect(values.has('sd:dolphin-import-outbox:canary-a')).toBe(true);
+    expect(JSON.parse(fetchMock.mock.calls[1][1]?.body as string)).toEqual({ count: 3 });
+  });
+
+  it('isolates unknown consume attempts across an in-page account switch', async () => {
+    const values=new Map<string,string>();
+    vi.stubGlobal('localStorage',{
+      getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value),removeItem:(key:string)=>values.delete(key),
+    });
+    const me=(id:string)=>new Response(JSON.stringify({canonical:true,readOnly:false,writeCapabilities:['consume_dolphin'],
+      user:{userId:id,loginId:id,refCode:''}}),{status:200,headers:{'content-type':'application/json'}});
+    const confirmed=(saved:number)=>new Response(JSON.stringify({ok:true,inventory:{dolphinSaved:saved}}),{status:200,headers:{'content-type':'application/json'}});
+    const fetchMock=vi.fn()
+      .mockResolvedValueOnce(me('account-a')).mockRejectedValueOnce(new Error('unknown A outcome'))
+      .mockResolvedValueOnce(me('account-b')).mockResolvedValueOnce(confirmed(7))
+      .mockResolvedValueOnce(me('account-a')).mockResolvedValueOnce(confirmed(2));
+    vi.stubGlobal('fetch',fetchMock);
+    await authAPI.me(); await inventoryAPI.consumeDolphin();
+    const aKey=(fetchMock.mock.calls[1][1]?.headers as Record<string,string>)['Idempotency-Key'];
+    expect(inventoryAPI.hasPendingDolphinConsume('account-a')).toBe(true);
+    await authAPI.me();
+    expect(inventoryAPI.hasPendingDolphinConsume('account-b')).toBe(false);
+    const b=await inventoryAPI.consumeDolphin();
+    const bKey=(fetchMock.mock.calls[3][1]?.headers as Record<string,string>)['Idempotency-Key'];
+    expect(b?.acknowledgement?.account).toBe('account-b'); expect(bKey).not.toBe(aKey);
+    await authAPI.me();
+    const replay=await inventoryAPI.consumeDolphin();
+    const replayKey=(fetchMock.mock.calls[5][1]?.headers as Record<string,string>)['Idempotency-Key'];
+    expect(replay?.acknowledgement?.account).toBe('account-a'); expect(replayKey).toBe(aKey);
   });
 });

@@ -64,6 +64,10 @@ describe('canonical Submarine auth contract', () => {
     expect(server).toContain("process.env.SD_SUPABASE_WRITE_CANARY_ENABLED === 'true'");
     expect(server).toContain("'/api/internal/submarine-dash/mutations/equip-skin'");
     expect(server).toContain("'/api/internal/submarine-dash/mutations/purchase-skin'");
+    expect(server).toContain("process.env.SD_SUPABASE_DOLPHIN_WRITE_CANARY_ENABLED === 'true'");
+    expect(server).toContain('isExpressDolphinCanaryAdmission({');
+    expect(server).toContain("executeExpressCanonicalDolphin({operation:'consume_dolphin'");
+    expect(server).toContain("executeExpressCanonicalDolphin({operation:'import_dolphin'");
     expect(server).toContain('validateCanaryPurchaseResponse(result, skinId)');
     expect(server).toContain("result.rejected === 'insufficient_coins'");
   });
