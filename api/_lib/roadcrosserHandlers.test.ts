@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 const road = vi.hoisted(() => ({
-  consume: vi.fn(), revoke: vi.fn(), bootstrap: vi.fn(),
+  consume: vi.fn(), revoke: vi.fn(), bootstrap: vi.fn(), equip: vi.fn(),
 }));
 const redis = vi.hoisted(() => ({
   get: vi.fn(), set: vi.fn(), del: vi.fn(), incr: vi.fn(), expire: vi.fn(),
@@ -13,7 +13,8 @@ const redisFactory = vi.hoisted(() => vi.fn(() => redis));
 vi.mock('./roadcrosserAuth.js', () => ({
   consumeRoadcrosserTicket: road.consume,
   revokeRoadcrosserSession: road.revoke,
-  readRoadcrosserProtectedBootstrap: road.bootstrap,
+  readRoadcrosserCanonicalBootstrap: road.bootstrap,
+  equipRoadcrosserCanarySkin: road.equip,
 }));
 vi.mock('./redis.js', () => ({
   getUpstashRedisClient: redisFactory,
@@ -25,10 +26,12 @@ import { handler as callbackHandler } from '../auth/roadcrosser/callback.js';
 import { handler as loginHandler } from '../auth/login.js';
 import { handler as logoutHandler } from '../auth/logout.js';
 import { handler as meHandler } from '../auth/me.js';
+import { createEquipSkinRoute, handler as equipSkinHandler, isSyntheticCanaryEquipRequest } from '../inventory/skin/equip.js';
+import { MaintenanceFreezeError } from '../../shared/productionControls.js';
 
 const opaque = (character: string) => character.repeat(43);
 
-function request(method: string, options: { cookie?: string; origin?: string; site?: string; body?: unknown } = {}) {
+function request(method: string, options: { cookie?: string; origin?: string; site?: string; idempotencyKey?: string; body?: unknown } = {}) {
   return {
     method,
     body: options.body,
@@ -36,6 +39,7 @@ function request(method: string, options: { cookie?: string; origin?: string; si
       ...(options.cookie ? { cookie: options.cookie } : {}),
       ...(options.origin ? { origin: options.origin } : {}),
       ...(options.site ? { 'sec-fetch-site': options.site } : {}),
+      ...(options.idempotencyKey ? { 'idempotency-key': options.idempotencyKey } : {}),
     },
   } as unknown as VercelRequest;
 }
@@ -70,6 +74,10 @@ beforeEach(() => {
   vi.stubEnv('SD_ROADCROSSER_INTERNAL_AUTH_TOKEN', 'fixture-internal-token-with-32-characters');
   road.consume.mockResolvedValue({ sessionToken: opaque('N') });
   road.revoke.mockResolvedValue(undefined);
+  road.equip.mockResolvedValue({
+    version: 'submarine-write-v1', operation: 'equip_skin', idempotent: false,
+    skins: { equipped: 'default' }, stateVersion: 2, keyVersion: 1,
+  });
   redis.del.mockResolvedValue(1);
   redis.set.mockResolvedValue('OK');
   redis.incr.mockResolvedValue(1);
@@ -211,7 +219,7 @@ describe('canonical auth handlers', () => {
 
   it('serves canonical read-only bootstrap without touching Redis', async () => {
     road.bootstrap.mockResolvedValue({
-      version: 'submarine-protected-bootstrap-v1', readOnly: true,
+      version: 'submarine-canonical-bootstrap-v2', readOnly: true, writeCapabilities: [],
       user: { externalUserId: 'protected-user', loginId: 'Protected' },
       inventory: { coins: 1, dolphinSaved: 2, dolphinPending: 0, tube: { pieces: 0, charges: 0 }, skins: { owned: ['default'], equipped: 'default' } },
       streak: {}, achievements: {}, unreadInboxCount: 0, stateVersion: 1,
@@ -221,6 +229,75 @@ describe('canonical auth handlers', () => {
     expect(out.state.status).toBe(200);
     expect(out.state.json).toMatchObject({ canonical: true, readOnly: true, user: { userId: 'protected-user' } });
     expect(redisFactory).not.toHaveBeenCalled();
+  });
+
+  it('keeps canonical writes default-off, then routes enabled equip through Roadcrosser without Redis', async () => {
+    const token = opaque('C');
+    const idempotencyKey = '96000000-0000-4000-8000-000000000001';
+    const disabled = response();
+    await equipSkinHandler(request('POST', {
+      cookie: `sd_roadcrosser_session=${token}`, origin: 'https://submarine-dash.roadcrosser.com',
+      idempotencyKey, body: { skinId: 'default' },
+    }), disabled.res);
+    expect(disabled.state.status).toBe(409);
+    expect(road.equip).not.toHaveBeenCalled();
+
+    vi.stubEnv('SD_SUPABASE_WRITE_CANARY_ENABLED', 'true');
+    expect(isSyntheticCanaryEquipRequest(request('POST', {
+      cookie: `sd_roadcrosser_session=${token}`, origin: 'https://submarine-dash.roadcrosser.com',
+    }))).toBe(true);
+    expect(isSyntheticCanaryEquipRequest(request('POST', {
+      cookie: `sd_roadcrosser_session=${token}`, origin: 'https://attacker.example',
+    }))).toBe(false);
+    expect(isSyntheticCanaryEquipRequest(request('POST', {
+      cookie: `sd_roadcrosser_session=${token}`, site: 'same-origin',
+    }))).toBe(false);
+    expect(isSyntheticCanaryEquipRequest(request('POST', {
+      cookie: `sd_session=${token}`, origin: 'https://submarine-dash.roadcrosser.com',
+    }))).toBe(false);
+    const enabled = response();
+    await equipSkinHandler(request('POST', {
+      cookie: `sd_roadcrosser_session=${token}`, origin: 'https://submarine-dash.roadcrosser.com',
+      idempotencyKey, body: { skinId: 'default' },
+    }), enabled.res);
+    expect(enabled.state.status).toBe(200);
+    expect(road.equip).toHaveBeenCalledWith(token, idempotencyKey, 'default');
+    expect(redisFactory).not.toHaveBeenCalled();
+  });
+
+  it('bypasses a closed Redis gate only for the real enabled canonical equip predicate', async () => {
+    vi.stubEnv('SD_SUPABASE_WRITE_CANARY_ENABLED', 'true');
+    const acquire = vi.fn(async () => { throw new MaintenanceFreezeError(); });
+    const wrapped = createEquipSkinRoute({
+      flags: () => ({ admissionGate: true }) as any,
+      adapter: () => ({}) as any, acquire, event: vi.fn(),
+    });
+    const idempotencyKey = '96000000-0000-4000-8000-000000000002';
+    const allowed = response();
+    await wrapped(request('POST', {
+      cookie: `sd_roadcrosser_session=${opaque('C')}`, origin: 'https://submarine-dash.roadcrosser.com',
+      idempotencyKey, body: { skinId: 'default' },
+    }), allowed.res);
+    expect(allowed.state.status).toBe(200);
+    expect(acquire).not.toHaveBeenCalled();
+
+    for (const options of [
+      { cookie: `sd_session=${opaque('L')}`, origin: 'https://submarine-dash.roadcrosser.com' },
+      { cookie: `sd_roadcrosser_session=${opaque('C')}`, origin: 'https://attacker.example' },
+      { origin: 'https://submarine-dash.roadcrosser.com' },
+    ]) {
+      const blocked = response();
+      await wrapped(request('POST', { ...options, idempotencyKey, body: { skinId: 'default' } }), blocked.res);
+      expect(blocked.state.status).toBe(503);
+    }
+    vi.stubEnv('SD_SUPABASE_WRITE_CANARY_ENABLED', 'false');
+    const disabled = response();
+    await wrapped(request('POST', {
+      cookie: `sd_roadcrosser_session=${opaque('C')}`, origin: 'https://submarine-dash.roadcrosser.com',
+      idempotencyKey, body: { skinId: 'default' },
+    }), disabled.res);
+    expect(disabled.state.status).toBe(503);
+    expect(acquire).toHaveBeenCalledTimes(4);
   });
 
   it('cannot reactivate a stale legacy cookie after canonical expiry', async () => {

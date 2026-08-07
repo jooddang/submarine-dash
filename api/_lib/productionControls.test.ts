@@ -91,4 +91,21 @@ describe('production route wrapper runtime contract', () => {
       vi.useRealTimers();
     }
   });
+
+  it('bypasses a closed Redis gate only when the caller-specific predicate approves', async () => {
+    const handler = vi.fn(async () => ({ canonical: true }));
+    const acquire = vi.fn(async () => { throw new MaintenanceFreezeError(); });
+    const bypass = vi.fn((request: any) => request.syntheticCanary === true);
+    const wrapped = withProductionControl('api/inventory/skin/equip.ts', handler, {
+      flags: () => ({ admissionGate: true }) as ReturnType<any>,
+      adapter: () => ({}) as any, acquire, event: vi.fn(),
+    }, bypass);
+    await expect(wrapped({ method: 'POST', syntheticCanary: true } as any, responseDouble() as any))
+      .resolves.toEqual({ canonical: true });
+    expect(acquire).not.toHaveBeenCalled();
+    const legacyResponse = responseDouble();
+    await wrapped({ method: 'POST', syntheticCanary: false } as any, legacyResponse as any);
+    expect(acquire).toHaveBeenCalledOnce();
+    expect(legacyResponse.statusCode).toBe(503);
+  });
 });

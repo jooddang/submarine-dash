@@ -28,7 +28,14 @@ describe('production route inventory', () => {
     for (const { file } of PRODUCTION_ROUTE_INVENTORY) {
       const source = readFileSync(join(root, file), 'utf8');
       expect(source, file).toContain("import { withProductionControl }");
-      expect(source.trimEnd().endsWith(`export default withProductionControl('${file}', handler);`), file).toBe(true);
+      if (file === 'api/inventory/skin/equip.ts') {
+        expect(source, file).toContain(
+          "return withProductionControl('api/inventory/skin/equip.ts', handler, dependencies, isSyntheticCanaryEquipRequest);",
+        );
+        expect(source.trimEnd().endsWith('export default createEquipSkinRoute();'), file).toBe(true);
+      } else {
+        expect(source.trimEnd().endsWith(`export default withProductionControl('${file}', handler);`), file).toBe(true);
+      }
       const transpiled = ts.transpileModule(source, {
         fileName: file,
         reportDiagnostics: true,

@@ -49,6 +49,7 @@ export type AuthUser = {
   refCode: string;
   canonical: boolean;
   readOnly: boolean;
+  writeCapabilities?: string[];
   inventory?: { dolphinSaved: number; coins: number; tube?: TubeState; skins?: SkinState };
   rewards?: {
     weeklyWinner?: { dolphin: true; weekId: string };
@@ -56,18 +57,20 @@ export type AuthUser = {
   };
 };
 
-let activeAuthAccess: Pick<AuthUser, 'canonical' | 'readOnly'> | null = null;
+let activeAuthAccess: Pick<AuthUser, 'canonical' | 'readOnly' | 'writeCapabilities'> | null = null;
 
 export function isReadOnlyCanary(user: AuthUser | null | undefined): boolean {
   return user?.canonical === true && user.readOnly === true;
 }
 
 function rememberAuthAccess(user: AuthUser | null) {
-  activeAuthAccess = user ? { canonical: user.canonical, readOnly: user.readOnly } : null;
+  activeAuthAccess = user ? {
+    canonical: user.canonical, readOnly: user.readOnly, writeCapabilities: user.writeCapabilities || [],
+  } : null;
 }
 
-function requireWritableGameSession() {
-  if (activeAuthAccess?.canonical && activeAuthAccess.readOnly) {
+function requireWritableGameSession(capability?: string) {
+  if (activeAuthAccess?.canonical && (!capability || !activeAuthAccess.writeCapabilities?.includes(capability))) {
     throw new Error('This canonical canary session is read-only');
   }
 }
@@ -159,6 +162,7 @@ export const authAPI = {
         rewards: data.rewards,
         canonical: data.canonical === true,
         readOnly: data.readOnly === true,
+        writeCapabilities: Array.isArray(data.writeCapabilities) ? data.writeCapabilities : [],
       } as AuthUser;
       rememberAuthAccess(user);
       return user;
@@ -357,11 +361,11 @@ export const inventoryAPI = {
   },
 
   async equipSkin(skinId: string): Promise<{ ok: boolean; skins: SkinState } | null> {
-    requireWritableGameSession();
+    requireWritableGameSession('equip_skin');
     try {
       const res = await fetch(`${API_BASE_URL}/api/inventory/skin/equip`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
         credentials: "include",
         body: JSON.stringify({ skinId }),
       });

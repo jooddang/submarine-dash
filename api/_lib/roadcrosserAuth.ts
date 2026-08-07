@@ -1,3 +1,5 @@
+import { validateCanaryEquipResponse } from '../../shared/canaryEquip.js';
+
 const productionBaseUrl = 'https://www.roadcrosser.com';
 const opaque256 = /^[A-Za-z0-9_-]{43}$/;
 const allowedPaths = new Set([
@@ -5,6 +7,7 @@ const allowedPaths = new Set([
   '/api/internal/submarine-dash/sessions/resolve',
   '/api/internal/submarine-dash/sessions/revoke',
   '/api/internal/submarine-dash/bootstrap',
+  '/api/internal/submarine-dash/mutations/equip-skin',
 ]);
 
 export type CanonicalSubmarineUser = {
@@ -15,8 +18,8 @@ export type CanonicalSubmarineUser = {
   expiresInSeconds?: number;
 };
 
-export type ProtectedSubmarineBootstrap = {
-  version: 'submarine-protected-bootstrap-v1';
+export type CanonicalSubmarineBootstrap = {
+  version: 'submarine-canonical-bootstrap-v2';
   user: { externalUserId: string; loginId: string };
   inventory: {
     coins: number;
@@ -29,7 +32,8 @@ export type ProtectedSubmarineBootstrap = {
   achievements: Record<string, unknown>;
   unreadInboxCount: number;
   stateVersion: number;
-  readOnly: true;
+  readOnly: boolean;
+  writeCapabilities: string[];
 };
 
 function baseUrl() {
@@ -93,17 +97,23 @@ export async function revokeRoadcrosserSession(sessionToken: string) {
   await request('/api/internal/submarine-dash/sessions/revoke', { sessionToken });
 }
 
-export async function readRoadcrosserProtectedBootstrap(sessionToken: string) {
+export async function readRoadcrosserCanonicalBootstrap(sessionToken: string) {
   const result = await request('/api/internal/submarine-dash/bootstrap', { sessionToken });
   const user = result.user as Record<string, unknown> | undefined;
   if (
-    result.version !== 'submarine-protected-bootstrap-v1'
-    || result.readOnly !== true
+    result.version !== 'submarine-canonical-bootstrap-v2'
+    || typeof result.readOnly !== 'boolean'
+    || !Array.isArray(result.writeCapabilities)
     || !user
     || typeof user.externalUserId !== 'string'
     || typeof user.loginId !== 'string'
   ) {
     throw new Error('Roadcrosser protected bootstrap response is invalid');
   }
-  return result as ProtectedSubmarineBootstrap;
+  return result as CanonicalSubmarineBootstrap;
+}
+
+export async function equipRoadcrosserCanarySkin(sessionToken: string, idempotencyKey: string, skinId: string) {
+  const result = await request('/api/internal/submarine-dash/mutations/equip-skin', { sessionToken, idempotencyKey, skinId });
+  return validateCanaryEquipResponse(result, skinId);
 }

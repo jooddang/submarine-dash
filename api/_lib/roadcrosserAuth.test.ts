@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  consumeRoadcrosserTicket, readRoadcrosserProtectedBootstrap, resolveRoadcrosserSession, revokeRoadcrosserSession,
+  consumeRoadcrosserTicket, equipRoadcrosserCanarySkin, readRoadcrosserCanonicalBootstrap,
+  resolveRoadcrosserSession, revokeRoadcrosserSession,
 } from './roadcrosserAuth.js';
 
 const opaque = 'A'.repeat(43);
@@ -32,8 +33,14 @@ describe('Roadcrosser scoped internal client', () => {
       if (url.endsWith('/sessions/revoke')) return Promise.resolve(new Response(null, { status: 204 }));
       if (url.endsWith('/bootstrap')) {
         return Promise.resolve(new Response(JSON.stringify({
-          version: 'submarine-protected-bootstrap-v1', readOnly: true,
+          version: 'submarine-canonical-bootstrap-v2', readOnly: true, writeCapabilities: [],
           user: { externalUserId: 'fixture', loginId: 'fixture' },
+        }), { status: 200 }));
+      }
+      if (url.endsWith('/mutations/equip-skin')) {
+        return Promise.resolve(new Response(JSON.stringify({
+          version: 'submarine-write-v1', operation: 'equip_skin', idempotent: false,
+          skins: { equipped: 'default' }, stateVersion: 2, keyVersion: 1,
         }), { status: 200 }));
       }
       return Promise.resolve(new Response(JSON.stringify({
@@ -43,11 +50,13 @@ describe('Roadcrosser scoped internal client', () => {
     vi.stubGlobal('fetch', fetchMock);
     await resolveRoadcrosserSession(opaque);
     await revokeRoadcrosserSession(opaque);
-    await readRoadcrosserProtectedBootstrap(opaque);
+    await readRoadcrosserCanonicalBootstrap(opaque);
+    await equipRoadcrosserCanarySkin(opaque, '97000000-0000-4000-8000-000000000001', 'default');
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       'https://www.roadcrosser.com/api/internal/submarine-dash/sessions/resolve',
       'https://www.roadcrosser.com/api/internal/submarine-dash/sessions/revoke',
       'https://www.roadcrosser.com/api/internal/submarine-dash/bootstrap',
+      'https://www.roadcrosser.com/api/internal/submarine-dash/mutations/equip-skin',
     ]);
   });
 

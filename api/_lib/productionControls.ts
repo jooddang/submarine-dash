@@ -31,7 +31,12 @@ function redisAdapter() {
   };
 }
 
-export function withProductionControl(routeFile: string, handler: Handler, dependencies: ControlDependencies = {}): Handler {
+export function withProductionControl(
+  routeFile: string,
+  handler: Handler,
+  dependencies: ControlDependencies = {},
+  bypassAdmission?: (request: VercelRequest) => boolean,
+): Handler {
   const getFlags = dependencies.flags ?? productionControlFlags;
   const getAdapter = dependencies.adapter ?? redisAdapter;
   const acquire = dependencies.acquire ?? acquireMutationLease;
@@ -40,6 +45,7 @@ export function withProductionControl(routeFile: string, handler: Handler, depen
   const run = dependencies.run ?? runWithMutationLease;
   const event = dependencies.event ?? redactedMigrationEvent;
   return async (req, res) => {
+    if (bypassAdmission?.(req)) return handler(req, res);
     const classification = routeClassification(routeFile, req.method);
     const flags = getFlags();
     if (!flags.admissionGate || !requiresDurableAdmission(classification)) return handler(req, res);

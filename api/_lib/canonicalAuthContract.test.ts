@@ -61,5 +61,7 @@ describe('canonical Submarine auth contract', () => {
     const server = readFileSync(join(root, 'backend/src/server.js'), 'utf8');
     expect(server.indexOf('credentialMutationRoute')).toBeLessThan(server.indexOf("app.post('/api/auth/login'"));
     expect(server).toContain('!isAllowedSubmarineMutationOrigin(req)');
+    expect(server).toContain("process.env.SD_SUPABASE_WRITE_CANARY_ENABLED === 'true'");
+    expect(server).toContain("'/api/internal/submarine-dash/mutations/equip-skin'");
   });
 });

@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import Redis from 'ioredis';
+import { validateCanaryEquipResponse } from '../../shared/canaryEquip.js';
 import dotenv from 'dotenv';
 import { sanitizeLeaderboardName } from '../../shared/profanity.js';
 import { getPstCurrentWeekId, getPrevWeekId, getWeekEndDate } from '../../shared/week.js';
@@ -100,14 +101,23 @@ app.use(async (req, res, next) => {
     '/api/auth/roadcrosser/callback',
   ]).has(req.path);
   const mutationMethod = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
+  const canaryEquipRoute = req.method === 'POST' && req.path === '/api/inventory/skin/equip';
+  const expectedCanaryOrigin = process.env.SD_SUBMARINE_PUBLIC_ORIGIN || 'https://submarine-dash.roadcrosser.com';
+  const canaryEquipOriginAllowed = req.headers.origin === expectedCanaryOrigin && isAllowedSubmarineMutationOrigin(req);
+  if (canonicalToken && canaryEquipRoute && process.env.SD_SUPABASE_WRITE_CANARY_ENABLED === 'true'
+    && !canaryEquipOriginAllowed) return res.status(403).json({ error: 'Origin not allowed' });
+  const canaryEquipEnabled = canaryEquipRoute
+    && process.env.SD_SUPABASE_WRITE_CANARY_ENABLED === 'true'
+    && canaryEquipOriginAllowed;
   const leaderboardBootstrapRead = req.method === 'GET'
     && (req.path === '/api/leaderboard' || req.path === '/api/leaderboard/weekly');
-  if (canonicalToken && !transitionRoute && (mutationMethod || leaderboardBootstrapRead)) {
+  if (canonicalToken && !transitionRoute && !canaryEquipEnabled && (mutationMethod || leaderboardBootstrapRead)) {
     return res.status(409).json({
       error: 'Canonical account progress is read-only in Submarine Dash',
       code: 'CANONICAL_READ_ONLY',
     });
   }
+  if (canonicalToken && canaryEquipEnabled) return next();
 
   const classification = localRouteClassification(req.path, req.method);
   const flags = productionControlFlags();
@@ -249,6 +259,7 @@ async function roadcrosserRequest(path, body) {
     '/api/internal/submarine-dash/sessions/resolve',
     '/api/internal/submarine-dash/sessions/revoke',
     '/api/internal/submarine-dash/bootstrap',
+    '/api/internal/submarine-dash/mutations/equip-skin',
   ]);
   if (!allowed.has(path)) throw new Error('Roadcrosser internal path is forbidden');
   const credential = process.env.SD_ROADCROSSER_INTERNAL_AUTH_TOKEN;
@@ -1108,7 +1119,8 @@ app.get('/api/auth/me', async (req, res) => {
         return res.json({
           user: { userId: canonical.user.externalUserId, loginId: canonical.user.loginId, refCode: '' },
           inventory: canonical.inventory, achievements: canonical.achievements, streak: canonical.streak,
-          unreadInboxCount: canonical.unreadInboxCount, readOnly: true, canonical: true,
+          unreadInboxCount: canonical.unreadInboxCount, readOnly: canonical.readOnly === true,
+          writeCapabilities: Array.isArray(canonical.writeCapabilities) ? canonical.writeCapabilities : [], canonical: true,
         });
       } catch {
         clearCanonicalSessionCookie(req, res);
@@ -1439,6 +1451,20 @@ app.post('/api/inventory/skin/purchase', async (req, res) => {
 // POST /api/inventory/skin/equip
 app.post('/api/inventory/skin/equip', async (req, res) => {
   try {
+    const canonicalToken = parseCookies(req)[CANONICAL_SESSION_COOKIE_NAME];
+    if (canonicalToken) {
+      const idempotencyKey = req.get('idempotency-key') || '';
+      const skinId = typeof req.body?.skinId === 'string' ? req.body.skinId : '';
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(idempotencyKey)) {
+        return res.status(400).json({ error: 'Valid Idempotency-Key required' });
+      }
+      if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(skinId)) return res.status(400).json({ error: 'Missing skinId' });
+      const result = await roadcrosserRequest('/api/internal/submarine-dash/mutations/equip-skin', {
+        sessionToken: canonicalToken, idempotencyKey, skinId,
+      });
+      validateCanaryEquipResponse(result, skinId);
+      return res.json({ ok: true, skins: result.skins, stateVersion: result.stateVersion, idempotent: result.idempotent });
+    }
     if (!redis) return res.status(503).json({ error: 'Redis not connected' });
     const userId = await getUserIdForSession(req);
     if (!userId) return res.status(401).json({ error: 'Login required' });

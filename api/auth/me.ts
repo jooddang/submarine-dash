@@ -3,7 +3,7 @@ import { withProductionControl } from './../_lib/productionControls.js';
 import {
   KEY_PREFIX, clearCanonicalSessionCookie, clearSessionCookie, getCanonicalSessionToken, getUser, getUserIdForSession,
 } from '../_lib/auth.js';
-import { readRoadcrosserProtectedBootstrap } from '../_lib/roadcrosserAuth.js';
+import { readRoadcrosserCanonicalBootstrap } from '../_lib/roadcrosserAuth.js';
 import { getUpstashRedisClient, RedisConfigError } from '../_lib/redis.js';
 import { getPrevWeekId } from '../../shared/week.js';
 import {
@@ -33,14 +33,15 @@ export async function handler(req: VercelRequest, res: VercelResponse) {
     const canonicalToken = getCanonicalSessionToken(req);
     if (canonicalToken) {
       try {
-        const canonical = await readRoadcrosserProtectedBootstrap(canonicalToken);
+        const canonical = await readRoadcrosserCanonicalBootstrap(canonicalToken);
         return res.status(200).json({
           user: { userId: canonical.user.externalUserId, loginId: canonical.user.loginId, refCode: '' },
           inventory: canonical.inventory,
           achievements: canonical.achievements,
           streak: canonical.streak,
           unreadInboxCount: canonical.unreadInboxCount,
-          readOnly: true,
+          readOnly: canonical.readOnly,
+          writeCapabilities: canonical.writeCapabilities,
           canonical: true,
         });
       } catch {
