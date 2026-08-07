@@ -58,6 +58,52 @@ export const PRODUCTION_ROUTE_INVENTORY = Object.freeze([
 ]);
 
 export const ROUTE_INVENTORY_VERSION = 1;
+export const PRODUCTION_KEY_FAMILIES = Object.freeze([...new Set(
+  PRODUCTION_ROUTE_INVENTORY.flatMap((entry) => entry.keyFamilies),
+)].sort());
+
+const keySpec = (id, pattern, ttl, sources, routeFamilies = []) => Object.freeze({ id, pattern, ttl, sources, routeFamilies });
+
+// Preservation patterns are deliberately narrower than route-level families.
+// `{segment}` never crosses `:`; `{opaque}` is reserved for the rate-limit key,
+// whose builder includes IP addresses and other intentionally multi-colon text.
+export const SUBMARINE_PRESERVATION_KEY_SPECS = Object.freeze([
+  keySpec('legacy-leaderboard', 'submarine-dash:leaderboard', 'durable', ['api/_lib/weeklyLeaderboard.ts', 'backend/src/server.js'], ['submarine-dash:leaderboard']),
+  keySpec('weekly-leaderboards', 'submarine-dash:leaderboards:weekly:v1', 'durable', ['api/_lib/weeklyLeaderboard.ts', 'backend/src/server.js'], ['submarine-dash:leaderboards:weekly:v1']),
+  keySpec('login-index', 'sd:loginId:{opaque}', 'durable', ['api/_lib/auth.ts', 'backend/src/server.js'], ['sd:loginId:*']),
+  keySpec('user-record', 'sd:user:{segment}', 'durable', ['api/_lib/auth.ts', 'backend/src/server.js'], ['sd:user:*']),
+  keySpec('session', 'sd:session:{segment}', 'ephemeral', ['api/_lib/auth.ts', 'backend/src/server.js'], ['sd:session:*']),
+  keySpec('rate-limit', 'sd:rl:{opaque}', 'ephemeral', ['api/_lib/auth.ts', 'backend/src/server.js'], ['sd:rl:*']),
+  keySpec('weekly-reward-claim', 'sd:reward:weeklyWinnerDolphin:claimed:{segment}', 'durable', ['api/_lib/weeklyLeaderboard.ts', 'backend/src/server.js'], ['sd:reward:*']),
+  keySpec('legacy-dolphin-grant', 'sd:reward:dolphin:grant:{segment}', 'durable', ['api/_lib/dolphinInventory.ts', 'backend/src/server.js'], ['sd:reward:*']),
+  keySpec('dolphin-saved', 'sd:user:{segment}:dolphin:saved', 'durable', ['api/_lib/dolphinInventory.ts', 'backend/src/server.js'], ['sd:user:*:dolphin:*']),
+  keySpec('dolphin-pending', 'sd:user:{segment}:dolphin:pending', 'durable', ['api/_lib/dolphinInventory.ts', 'backend/src/server.js'], ['sd:user:*:dolphin:*']),
+  keySpec('dolphin-ledger', 'sd:user:{segment}:dolphin:ledger', 'durable', ['api/_lib/dolphinInventory.ts', 'backend/src/server.js'], ['sd:user:*:dolphin:*']),
+  keySpec('dolphin-streak-award', 'sd:user:{segment}:reward:dolphin:streak:lastAwarded', 'durable', ['api/_lib/dolphinInventory.ts', 'backend/src/server.js']),
+  keySpec('coin-balance', 'sd:user:{segment}:coins', 'durable', ['api/_lib/coinInventory.ts', 'backend/src/server.js'], ['sd:user:*:coins']),
+  keySpec('coin-ledger', 'sd:user:{segment}:coin:ledger', 'durable', ['api/_lib/coinInventory.ts', 'backend/src/server.js']),
+  keySpec('tube-state', 'sd:user:{segment}:tube', 'durable', ['api/_lib/tubeInventory.ts', 'backend/src/server.js'], ['sd:user:*:tube']),
+  keySpec('skins-owned', 'sd:user:{segment}:skins:owned', 'durable', ['api/_lib/skinInventory.ts', 'backend/src/server.js'], ['sd:user:*:skins:*']),
+  keySpec('skin-equipped', 'sd:user:{segment}:skins:equipped', 'durable', ['api/_lib/skinInventory.ts', 'backend/src/server.js'], ['sd:user:*:skins:*']),
+  keySpec('achievements', 'sd:user:{segment}:achievements', 'durable', ['api/_lib/achievements.ts', 'backend/src/server.js'], ['sd:user:*:achievements']),
+  keySpec('daily-missions', 'sd:missions:daily:{segment}', 'durable', ['api/missions/daily.ts', 'api/missions/event.ts', 'backend/src/server.js'], ['sd:missions:daily:*']),
+  keySpec('user-daily', 'sd:user:{segment}:daily:{segment}', 'durable', ['api/missions/daily.ts', 'api/missions/event.ts', 'backend/src/server.js'], ['sd:user:*:daily:*']),
+  keySpec('user-streak', 'sd:user:{segment}:streak', 'durable', ['api/missions/daily.ts', 'api/missions/event.ts', 'backend/src/server.js'], ['sd:user:*:streak']),
+  keySpec('inbox', 'sd:inbox:{segment}', 'durable', ['api/_lib/pvpOnlineInbox.ts', 'backend/src/server.js'], ['sd:inbox:*']),
+  keySpec('inbox-unread', 'sd:inbox:unread:{segment}', 'durable', ['api/_lib/pvpOnlineInbox.ts', 'backend/src/server.js'], ['sd:inbox:unread:*']),
+  keySpec('pvp-invite', 'sd:pvp:invite:{segment}', 'durable', ['api/_lib/pvpOnlineInvites.ts', 'backend/src/server.js'], ['sd:pvp:invite:*']),
+  keySpec('pvp-user-invites', 'sd:pvp:user-invites:{segment}', 'durable', ['api/_lib/pvpOnlineInvites.ts', 'backend/src/server.js'], ['sd:pvp:user-invites:*']),
+  keySpec('pvp-room', 'sd:pvp:room:{segment}', 'durable', ['api/_lib/pvpOnlineRooms.ts', 'backend/src/server.js'], ['sd:pvp:room:*']),
+  keySpec('pvp-room-membership', 'sd:pvp:room-membership:{segment}', 'durable', ['api/_lib/pvpOnlineRooms.ts', 'api/_lib/pvpOnlinePresence.ts', 'backend/src/server.js'], ['sd:pvp:room-membership:*']),
+  keySpec('pvp-room-index', 'sd:pvp:rooms:all', 'durable', ['api/_lib/pvpOnlineRooms.ts', 'backend/src/server.js'], ['sd:pvp:rooms:all']),
+  keySpec('pvp-match', 'sd:pvp:match:{segment}', 'durable', ['api/_lib/pvpOnlineRooms.ts', 'backend/src/server.js'], ['sd:pvp:match:*']),
+  keySpec('pvp-presence', 'sd:pvp:presence:{segment}', 'ephemeral', ['api/_lib/pvpOnlinePresence.ts', 'backend/src/server.js'], ['sd:pvp:presence:*']),
+  keySpec('pvp-lobby-index', 'sd:pvp:lobby:online', 'ephemeral', ['api/_lib/pvpOnlinePresence.ts', 'backend/src/server.js', 'shared/productionControls.js'], ['sd:pvp:lobby:online']),
+  keySpec('pvp-ws-ticket', 'sd:pvp:ws-ticket:{segment}', 'ephemeral', ['api/_lib/pvpOnlineAuth.ts', 'backend/src/server.js'], ['sd:pvp:ws-ticket:*']),
+  ...['gate', 'epoch', 'fence', 'leases', 'expired-leases', 'hard-failure', 'hard-failure-at', 'closed-at', 'max-lease-ttl-ms', 'mutation-count', 'reconciliations'].map((suffix) =>
+    keySpec(`migration-control-${suffix}`, `sd:migration:control:${suffix}`, 'durable', ['shared/productionControls.js'])),
+  keySpec('migration-control-lease', 'sd:migration:control:lease:{segment}', 'ephemeral', ['shared/productionControls.js']),
+]);
 export const ROUTE_INVENTORY_DIGEST = createHash('sha256')
   .update(JSON.stringify(PRODUCTION_ROUTE_INVENTORY))
   .digest('hex');
