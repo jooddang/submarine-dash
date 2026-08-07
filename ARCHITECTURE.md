@@ -2,7 +2,7 @@
 
 ## 아키텍처 개요
 
-React 19 + HTML5 Canvas 기반 브라우저 게임 모놀리스. 프론트엔드는 단일 게임 컴포넌트(`Game.tsx`)가 Canvas 렌더링과 게임 루프를 담당하고, UI 오버레이는 React 컴포넌트로 분리. 백엔드는 Vercel 서버리스 함수(프로덕션)와 Express 로컬 서버(개발)의 이중 구조. Redis가 유일한 데이터 저장소.
+React 19 + HTML5 Canvas 기반 브라우저 게임 모놀리스. 프론트엔드는 단일 게임 컴포넌트(`Game.tsx`)가 Canvas 렌더링과 게임 루프를 담당하고, UI 오버레이는 React 컴포넌트로 분리. 백엔드는 Vercel 서버리스 함수(프로덕션)와 Express 로컬 서버(개발)의 이중 구조. Redis는 레거시 저장소이며, 보호 계정용 Roadcrosser/Supabase 읽기 전용 canary 경계가 추가되어 있다.
 
 ## 아키텍처 다이어그램
 
@@ -19,7 +19,29 @@ React 19 + HTML5 Canvas 기반 브라우저 게임 모놀리스. 프론트엔드
          │
          ▼ Redis Protocol
 [Upstash Redis / Local Redis]
+
+[Roadcrosser internal API]
+  └── hashed one-time ticket/session authority + read-only protected bootstrap
 ```
+
+### Canonical authentication boundary
+
+- Roadcrosser owns Supabase Auth, ticket/session hashes, and the service-role
+  boundary. Submarine receives neither database credentials nor service-role
+  credentials.
+- Submarine owns the host-only callback-state secret and the raw opaque
+  `sd_roadcrosser_session` cookie. Its server calls only four fixed internal
+  Roadcrosser paths with an audience-scoped credential.
+- `sd_session` remains a separate legacy authority. If a canonical cookie is
+  present, `getUserIdForSession()` refuses Redis resolution even when both
+  cookies are sent.
+- Protected canonical canaries are read-only. Browser controls explain and
+  suppress writes, but server-side session separation is the authoritative
+  defense against Redis mutation.
+- Account handoff replacement is fail-closed: a new ticket is consumed before
+  old-mode cleanup, old canonical revocation or legacy deletion must succeed,
+  and failed cleanup leaves existing cookies untouched while revoking the new
+  session best-effort.
 
 ## 디렉토리 구조
 

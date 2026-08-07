@@ -2,9 +2,11 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { withProductionControl } from './../_lib/productionControls.js';
 import {
   createSession,
+  getCanonicalSessionToken,
   getUser,
   hashPassword,
   isRateLimited,
+  isAllowedSubmarineMutationOrigin,
   keyLoginId,
   setUser,
   verifyPassword,
@@ -24,11 +26,10 @@ function bad(res: VercelResponse, status: number, message: string) {
 }
 
 async function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return bad(res, 405, 'Method not allowed');
+  if (!isAllowedSubmarineMutationOrigin(req)) return bad(res, 403, 'Forbidden');
+  if (getCanonicalSessionToken(req)) return bad(res, 409, 'Canonical session cannot change a legacy password');
 
 
   try {
@@ -98,4 +99,3 @@ async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 export default withProductionControl('api/auth/change-password.ts', handler);
-

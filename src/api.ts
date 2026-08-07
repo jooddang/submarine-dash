@@ -47,12 +47,30 @@ export type AuthUser = {
   userId: string;
   loginId: string;
   refCode: string;
+  canonical: boolean;
+  readOnly: boolean;
   inventory?: { dolphinSaved: number; coins: number; tube?: TubeState; skins?: SkinState };
   rewards?: {
     weeklyWinner?: { dolphin: true; weekId: string };
     grants?: { dolphin: number };
   };
 };
+
+let activeAuthAccess: Pick<AuthUser, 'canonical' | 'readOnly'> | null = null;
+
+export function isReadOnlyCanary(user: AuthUser | null | undefined): boolean {
+  return user?.canonical === true && user.readOnly === true;
+}
+
+function rememberAuthAccess(user: AuthUser | null) {
+  activeAuthAccess = user ? { canonical: user.canonical, readOnly: user.readOnly } : null;
+}
+
+function requireWritableGameSession() {
+  if (activeAuthAccess?.canonical && activeAuthAccess.readOnly) {
+    throw new Error('This canonical canary session is read-only');
+  }
+}
 
 export const leaderboardAPI = {
   // Get current leaderboard
@@ -92,6 +110,7 @@ export const leaderboardAPI = {
     leaderboard: LeaderboardEntry[];
     rank: number;
   }> {
+    requireWritableGameSession();
     const response = await fetch(`${API_BASE_URL}/api/leaderboard`, {
       method: 'POST',
       headers: {
@@ -122,14 +141,29 @@ export const leaderboardAPI = {
 };
 
 export const authAPI = {
+  beginRoadcrosserConnect(): void {
+    const target = `${API_BASE_URL}/api/auth/roadcrosser/start`;
+    if (window.top) window.top.location.href = target;
+    else window.location.href = target;
+  },
+
   async me(): Promise<AuthUser | null> {
     try {
       const res = await fetch(`${API_BASE_URL}/api/auth/me`, { credentials: 'include' });
-      if (!res.ok) return null;
+      if (!res.ok) { rememberAuthAccess(null); return null; }
       const data = await res.json();
-      if (!data?.user) return null;
-      return { ...data.user, inventory: data.inventory, rewards: data.rewards };
+      if (!data?.user) { rememberAuthAccess(null); return null; }
+      const user = {
+        ...data.user,
+        inventory: data.inventory,
+        rewards: data.rewards,
+        canonical: data.canonical === true,
+        readOnly: data.readOnly === true,
+      } as AuthUser;
+      rememberAuthAccess(user);
+      return user;
     } catch {
+      rememberAuthAccess(null);
       return null;
     }
   },
@@ -145,7 +179,9 @@ export const authAPI = {
       const text = await res.text().catch(() => '');
       throw new Error(`Register failed (status=${res.status}) ${text}`);
     }
-    return await res.json();
+    const user = { ...(await res.json()), canonical: false, readOnly: false } as AuthUser;
+    rememberAuthAccess(user);
+    return user;
   },
 
   async login(loginId: string, password: string): Promise<AuthUser> {
@@ -159,14 +195,18 @@ export const authAPI = {
       const text = await res.text().catch(() => '');
       throw new Error(`Login failed (status=${res.status}) ${text}`);
     }
-    return await res.json();
+    const user = { ...(await res.json()), canonical: false, readOnly: false } as AuthUser;
+    rememberAuthAccess(user);
+    return user;
   },
 
   async logout(): Promise<void> {
-    await fetch(`${API_BASE_URL}/api/auth/logout`, {
+    const response = await fetch(`${API_BASE_URL}/api/auth/logout`, {
       method: 'POST',
       credentials: 'include',
-    }).catch(() => undefined);
+    });
+    if (!response.ok) throw new Error(`Logout failed (${response.status})`);
+    rememberAuthAccess(null);
   },
 
   async changePassword(loginId: string, currentPassword: string, newPassword: string): Promise<AuthUser> {
@@ -180,7 +220,9 @@ export const authAPI = {
       const text = await res.text().catch(() => '');
       throw new Error(`Change password failed (status=${res.status}) ${text}`);
     }
-    return await res.json();
+    const user = { ...(await res.json()), canonical: false, readOnly: false } as AuthUser;
+    rememberAuthAccess(user);
+    return user;
   },
 };
 
@@ -211,6 +253,7 @@ export type DailyMissionsResponse =
 
 export const missionsAPI = {
   async getDaily(): Promise<DailyMissionsResponse> {
+    requireWritableGameSession();
     const res = await fetch(`${API_BASE_URL}/api/missions/daily`, {
       credentials: 'include',
       headers: getTimezoneHeaders(),
@@ -244,6 +287,7 @@ export const missionsAPI = {
       }
     | null
   > {
+    requireWritableGameSession();
     // Best-effort; mission tracking should not block gameplay.
     return await fetch(`${API_BASE_URL}/api/missions/event`, {
       method: 'POST',
@@ -267,6 +311,7 @@ export const missionsAPI = {
 
 export const inventoryAPI = {
   async consumeDolphin(): Promise<{ ok: boolean; inventory: { dolphinSaved: number } } | null> {
+    requireWritableGameSession();
     try {
       const res = await fetch(`${API_BASE_URL}/api/inventory/dolphin/consume`, {
         method: "POST",
@@ -281,6 +326,7 @@ export const inventoryAPI = {
   },
 
   async importDolphin(count: number): Promise<{ ok: boolean; inventory: { dolphinSaved: number } } | null> {
+    requireWritableGameSession();
     try {
       const res = await fetch(`${API_BASE_URL}/api/inventory/dolphin/import`, {
         method: "POST",
@@ -296,6 +342,7 @@ export const inventoryAPI = {
   },
 
   async purchaseSkin(skinId: string): Promise<{ ok: boolean; skinId: string; cost: number; coins: number; skins: SkinState } | { error: string } | null> {
+    requireWritableGameSession();
     try {
       const res = await fetch(`${API_BASE_URL}/api/inventory/skin/purchase`, {
         method: "POST",
@@ -310,6 +357,7 @@ export const inventoryAPI = {
   },
 
   async equipSkin(skinId: string): Promise<{ ok: boolean; skins: SkinState } | null> {
+    requireWritableGameSession();
     try {
       const res = await fetch(`${API_BASE_URL}/api/inventory/skin/equip`, {
         method: "POST",
@@ -381,6 +429,7 @@ export type PvpSettleBetResponse = {
 
 export const pvpAPI = {
   async settleBet(payload: PvpSettleBetRequest): Promise<PvpSettleBetResponse | null> {
+    requireWritableGameSession();
     try {
       const res = await fetch(`${API_BASE_URL}/api/pvp/settle-bet`, {
         method: 'POST',
@@ -399,6 +448,7 @@ export const pvpAPI = {
 // --- Online PvP API ---
 export const onlinePvpAPI = {
   async getWsTicket(): Promise<{ ticket: string; user: { userId: string; loginId: string }; expiresAt: number }> {
+    requireWritableGameSession();
     const res = await fetch(`${API_BASE_URL}/api/pvp-online/ws-ticket`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -430,6 +480,7 @@ export const onlinePvpAPI = {
   },
 
   async markInboxRead(inboxId: string): Promise<{ ok: boolean }> {
+    requireWritableGameSession();
     const res = await fetch(`${API_BASE_URL}/api/pvp-online/inbox/${inboxId}/read`, {
       method: 'POST',
       credentials: 'include',
@@ -439,6 +490,7 @@ export const onlinePvpAPI = {
   },
 
   async markAllInboxRead(): Promise<{ ok: boolean }> {
+    requireWritableGameSession();
     const res = await fetch(`${API_BASE_URL}/api/pvp-online/inbox/read-all`, {
       method: 'POST',
       credentials: 'include',
@@ -463,6 +515,7 @@ export const onlinePvpAPI = {
   },
 
   async enterLobby(): Promise<{ ok: boolean }> {
+    requireWritableGameSession();
     const res = await fetch(`${API_BASE_URL}/api/pvp-online/lobby/enter`, {
       method: 'POST',
       credentials: 'include',
@@ -472,6 +525,7 @@ export const onlinePvpAPI = {
   },
 
   async leaveLobby(): Promise<{ ok: boolean }> {
+    requireWritableGameSession();
     const res = await fetch(`${API_BASE_URL}/api/pvp-online/lobby/leave`, {
       method: 'POST',
       credentials: 'include',
@@ -493,6 +547,7 @@ export const onlinePvpAPI = {
   },
 
   async sendMatchInput(matchId: string, seq: number, action: 'down' | 'up'): Promise<{ ok: boolean }> {
+    requireWritableGameSession();
     const res = await fetch(`${API_BASE_URL}/api/pvp-online/matches/${matchId}/input`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -507,6 +562,7 @@ export const onlinePvpAPI = {
   },
 
   async updateMatchState(matchId: string, payload: object): Promise<{ match: unknown }> {
+    requireWritableGameSession();
     const res = await fetch(`${API_BASE_URL}/api/pvp-online/matches/${matchId}/state`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -521,6 +577,7 @@ export const onlinePvpAPI = {
   },
 
   async createRoom(config: import('./pvp-online/onlinePvpTypes').RoomConfig, skinId: string): Promise<{ room: import('./pvp-online/onlinePvpTypes').OnlineRoom }> {
+    requireWritableGameSession();
     const res = await fetch(`${API_BASE_URL}/api/pvp-online/rooms/create`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -535,6 +592,7 @@ export const onlinePvpAPI = {
   },
 
   async joinRoom(roomId: string, skinId: string): Promise<{ room: import('./pvp-online/onlinePvpTypes').OnlineRoom }> {
+    requireWritableGameSession();
     const res = await fetch(`${API_BASE_URL}/api/pvp-online/rooms/join`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -549,6 +607,7 @@ export const onlinePvpAPI = {
   },
 
   async updateRoomConfig(roomId: string, roomVersion: number, config: object): Promise<{ room: import('./pvp-online/onlinePvpTypes').OnlineRoom }> {
+    requireWritableGameSession();
     const res = await fetch(`${API_BASE_URL}/api/pvp-online/rooms/config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -563,6 +622,7 @@ export const onlinePvpAPI = {
   },
 
   async changeRoomSkin(roomId: string, roomVersion: number, skinId: string): Promise<{ room: import('./pvp-online/onlinePvpTypes').OnlineRoom }> {
+    requireWritableGameSession();
     const res = await fetch(`${API_BASE_URL}/api/pvp-online/rooms/skin`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -577,6 +637,7 @@ export const onlinePvpAPI = {
   },
 
   async setReady(roomId: string, roomVersion: number, ready: boolean): Promise<{ room: import('./pvp-online/onlinePvpTypes').OnlineRoom }> {
+    requireWritableGameSession();
     const res = await fetch(`${API_BASE_URL}/api/pvp-online/rooms/ready`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -591,6 +652,7 @@ export const onlinePvpAPI = {
   },
 
   async leaveRoom(roomId: string, roomVersion: number): Promise<{ ok: boolean }> {
+    requireWritableGameSession();
     const res = await fetch(`${API_BASE_URL}/api/pvp-online/rooms/leave`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -605,6 +667,7 @@ export const onlinePvpAPI = {
   },
 
   async cancelRoom(roomId: string, roomVersion: number): Promise<{ ok: boolean }> {
+    requireWritableGameSession();
     const res = await fetch(`${API_BASE_URL}/api/pvp-online/rooms/cancel`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -624,6 +687,7 @@ export const onlinePvpAPI = {
     targetUserId?: string,
     targetLoginId?: string,
   ): Promise<{ invite: import('./pvp-online/onlinePvpTypes').PvpInvite }> {
+    requireWritableGameSession();
     const res = await fetch(`${API_BASE_URL}/api/pvp-online/invites/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -638,6 +702,7 @@ export const onlinePvpAPI = {
   },
 
   async acceptInvite(inviteId: string): Promise<{ room: import('./pvp-online/onlinePvpTypes').OnlineRoom }> {
+    requireWritableGameSession();
     const res = await fetch(`${API_BASE_URL}/api/pvp-online/invites/accept`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -652,6 +717,7 @@ export const onlinePvpAPI = {
   },
 
   async declineInvite(inviteId: string): Promise<{ ok: boolean }> {
+    requireWritableGameSession();
     const res = await fetch(`${API_BASE_URL}/api/pvp-online/invites/decline`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

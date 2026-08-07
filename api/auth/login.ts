@@ -2,12 +2,17 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { withProductionControl } from './../_lib/productionControls.js';
 import {
   createSession,
+  clearCanonicalSessionCookie,
+  deleteSession,
+  getCanonicalSessionToken,
   getUser,
+  isAllowedSubmarineMutationOrigin,
   isRateLimited,
   keyLoginId,
   verifyPassword,
 } from '../_lib/auth.js';
 import { getUpstashRedisClient, RedisConfigError } from '../_lib/redis.js';
+import { revokeRoadcrosserSession } from '../_lib/roadcrosserAuth.js';
 
 export const config = { runtime: 'nodejs' };
 
@@ -20,12 +25,10 @@ function bad(res: VercelResponse, status: number, message: string) {
   return res.status(status).json({ error: message });
 }
 
-async function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+export async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return bad(res, 405, 'Method not allowed');
+  if (!isAllowedSubmarineMutationOrigin(req)) return bad(res, 403, 'Forbidden');
 
 
   try {
@@ -58,11 +61,23 @@ async function handler(req: VercelRequest, res: VercelResponse) {
       return bad(res, 401, 'Invalid credentials');
     }
 
+    const canonicalToken = getCanonicalSessionToken(req);
+    if (canonicalToken) {
+      try {
+        await revokeRoadcrosserSession(canonicalToken);
+      } catch {
+        return bad(res, 503, 'Canonical session could not be revoked');
+      }
+      clearCanonicalSessionCookie(res);
+    }
+    await deleteSession(req);
     await createSession(res, user.userId);
     return res.status(200).json({
       userId: user.userId,
       loginId: user.loginId,
       refCode: user.refCode,
+      canonical: false,
+      readOnly: false,
     });
   } catch (error) {
     if (error instanceof RedisConfigError) {

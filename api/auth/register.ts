@@ -2,10 +2,12 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { withProductionControl } from './../_lib/productionControls.js';
 import {
   createSession,
+  getCanonicalSessionToken,
   generateId,
   generateRefCode,
   hashPassword,
   isRateLimited,
+  isAllowedSubmarineMutationOrigin,
   keyLoginId,
   setUser,
   type UserRecord,
@@ -24,11 +26,16 @@ function bad(res: VercelResponse, status: number, message: string) {
 }
 
 async function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return bad(res, 405, 'Method not allowed');
+  if (!isAllowedSubmarineMutationOrigin(req)) return bad(res, 403, 'Forbidden');
+  if (getCanonicalSessionToken(req)) return bad(res, 409, 'Canonical session must be logged out first');
+  if (process.env.SD_CANONICAL_AUTH_TICKETS_ENABLED === 'true') {
+    return res.status(409).json({
+      error: 'New accounts use Roadcrosser Account',
+      roadcrosserConnect: '/api/auth/roadcrosser/start',
+    });
+  }
 
 
   try {

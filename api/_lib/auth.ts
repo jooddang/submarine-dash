@@ -4,6 +4,8 @@ import { getUpstashRedisClient } from './redis.js';
 
 export const KEY_PREFIX = 'sd:';
 export const SESSION_COOKIE_NAME = 'sd_session';
+export const CANONICAL_SESSION_COOKIE_NAME = 'sd_roadcrosser_session';
+export const ROAD_CROSSER_STATE_COOKIE_NAME = 'sd_rc_state';
 export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
 export type UserRecord = {
@@ -81,7 +83,7 @@ export function setSessionCookie(res: VercelResponse, sessionToken: string) {
     'Secure',
     `Max-Age=${SESSION_TTL_SECONDS}`,
   ].join('; ');
-  res.setHeader('Set-Cookie', cookie);
+  appendCookie(res, cookie);
 }
 
 export function clearSessionCookie(res: VercelResponse) {
@@ -93,7 +95,73 @@ export function clearSessionCookie(res: VercelResponse) {
     'Secure',
     'Max-Age=0',
   ].join('; ');
-  res.setHeader('Set-Cookie', cookie);
+  appendCookie(res, cookie);
+}
+
+function appendCookie(res: VercelResponse, cookie: string) {
+  const current = res.getHeader('Set-Cookie');
+  const cookies = Array.isArray(current) ? current : current ? [String(current)] : [];
+  res.setHeader('Set-Cookie', [...cookies, cookie]);
+}
+
+export function setCanonicalSessionCookie(res: VercelResponse, token: string) {
+  appendCookie(res, [
+    `${CANONICAL_SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    'Path=/', 'HttpOnly', 'SameSite=Lax', 'Secure', `Max-Age=${SESSION_TTL_SECONDS}`,
+  ].join('; '));
+}
+
+export function clearCanonicalSessionCookie(res: VercelResponse) {
+  appendCookie(res, [
+    `${CANONICAL_SESSION_COOKIE_NAME}=`, 'Path=/', 'HttpOnly', 'SameSite=Lax', 'Secure', 'Max-Age=0',
+  ].join('; '));
+}
+
+export function setRoadcrosserStateCookie(res: VercelResponse, state: string) {
+  appendCookie(res, [
+    `${ROAD_CROSSER_STATE_COOKIE_NAME}=${encodeURIComponent(state)}`,
+    'Path=/api/auth/roadcrosser/callback', 'HttpOnly', 'SameSite=None', 'Secure', 'Max-Age=300',
+  ].join('; '));
+}
+
+export function clearRoadcrosserStateCookie(res: VercelResponse) {
+  appendCookie(res, [
+    `${ROAD_CROSSER_STATE_COOKIE_NAME}=`,
+    'Path=/api/auth/roadcrosser/callback', 'HttpOnly', 'SameSite=None', 'Secure', 'Max-Age=0',
+  ].join('; '));
+}
+
+export function getCanonicalSessionToken(req: VercelRequest) {
+  return parseCookies(req)[CANONICAL_SESSION_COOKIE_NAME] || null;
+}
+
+export function getLegacySessionToken(req: VercelRequest) {
+  return parseCookies(req)[SESSION_COOKIE_NAME] || null;
+}
+
+export function isAllowedSubmarineMutationOrigin(req: VercelRequest) {
+  const expected = process.env.SD_SUBMARINE_PUBLIC_ORIGIN || 'https://submarine-dash.roadcrosser.com';
+  if (
+    expected !== 'https://submarine-dash.roadcrosser.com'
+    && !(process.env.NODE_ENV !== 'production' && /^http:\/\/(?:localhost|127\.0\.0\.1):[0-9]+$/.test(expected))
+  ) return false;
+  const origin = Array.isArray(req.headers.origin) ? req.headers.origin[0] : req.headers.origin;
+  if (origin) {
+    if (origin === expected) return true;
+    const host = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host;
+    const forwardedProto = req.headers['x-forwarded-proto'];
+    const protocol = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto || 'http';
+    return process.env.NODE_ENV !== 'production'
+      && /^http:\/\/(?:localhost|127\.0\.0\.1):[0-9]+$/.test(origin)
+      && Boolean(host)
+      && origin === `${protocol}://${host}`;
+  }
+  const site = req.headers['sec-fetch-site'];
+  return (Array.isArray(site) ? site[0] : site) === 'same-origin';
+}
+
+export function getRoadcrosserState(req: VercelRequest) {
+  return parseCookies(req)[ROAD_CROSSER_STATE_COOKIE_NAME] || null;
 }
 
 export function keyLoginId(loginIdLower: string) {
@@ -107,8 +175,10 @@ export function keySession(token: string) {
 }
 
 export async function getUserIdForSession(req: VercelRequest): Promise<string | null> {
-  const cookies = parseCookies(req);
-  const token = cookies[SESSION_COOKIE_NAME];
+  // Canonical and legacy credentials are separate authorities. Once a canonical
+  // cookie is present, a dormant legacy cookie must never authorize Redis.
+  if (getCanonicalSessionToken(req)) return null;
+  const token = getLegacySessionToken(req);
   if (!token) return null;
   const redis = getUpstashRedisClient(true);
   const userId = await redis.get<string>(keySession(token));
@@ -144,9 +214,12 @@ export async function createSession(res: VercelResponse, userId: string) {
 }
 
 export async function deleteSession(req: VercelRequest) {
-  const cookies = parseCookies(req);
-  const token = cookies[SESSION_COOKIE_NAME];
+  const token = getLegacySessionToken(req);
   if (!token) return;
+  await deleteLegacySessionToken(token);
+}
+
+export async function deleteLegacySessionToken(token: string) {
   const redis = getUpstashRedisClient(false);
   await redis.del(keySession(token));
 }
@@ -160,5 +233,3 @@ export async function isRateLimited(key: string, limit: number, windowSeconds: n
   }
   return count > limit;
 }
-
-

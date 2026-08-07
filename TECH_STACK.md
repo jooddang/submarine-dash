@@ -83,6 +83,16 @@
 | `SD_CANONICAL_AUTH_TICKETS_ENABLED` | Enable later canonical auth ticket flow | `false` | No |
 | `SD_PROTECTED_ACCOUNT_CANARY_ENABLED` | Restrict later cutover to protected canaries | `false` | No |
 | `SD_MIGRATION_ROLLBACK_MODE` | Route later storage access through rollback mode | `false` | No |
+| `SD_SUBMARINE_PUBLIC_ORIGIN` | Exact same-origin boundary for canonical logout | `https://submarine-dash.roadcrosser.com` | Canonical auth only |
+| `SD_ROADCROSSER_PUBLIC_ORIGIN` | Exact Roadcrosser ticket issuer origin | `https://www.roadcrosser.com` | Canonical auth only |
+| `SD_ROADCROSSER_INTERNAL_BASE_URL` | Fixed server-to-server Roadcrosser base URL; localhost is accepted only outside production | `https://www.roadcrosser.com` | Canonical auth only |
+| `SD_ROADCROSSER_INTERNAL_AUTH_TOKEN` | Audience-scoped server credential; never expose through `VITE_*` | random 32+ chars | Canonical auth only |
 | `SD_MIGRATION_LEASE_TTL_MS` | Mutation lease TTL; must exceed max invocation plus margin | `930000` | No |
 | `SD_MIGRATION_RUNTIME_PROBE_URLS` | Comma-separated deployed HTTPS health probes required before freeze | `https://game.example/api/health` | Freeze operator only |
 | `SD_MIGRATION_EXPECTED_DEPLOYED_COMMIT` | Exact commit every runtime probe must report | Git SHA | Freeze operator only |
+
+Canonical canary responses carry both `canonical: true` and `readOnly: true`.
+The browser disables writes for clear UX, while the server enforces the trust
+boundary by refusing legacy Redis session resolution whenever the canonical
+cookie is present. Canonical, legacy, and callback-state cookies are host-only
+and are never interchangeable.

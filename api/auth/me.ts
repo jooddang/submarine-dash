@@ -1,6 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { withProductionControl } from './../_lib/productionControls.js';
-import { KEY_PREFIX, getUser, getUserIdForSession } from '../_lib/auth.js';
+import {
+  KEY_PREFIX, clearCanonicalSessionCookie, clearSessionCookie, getCanonicalSessionToken, getUser, getUserIdForSession,
+} from '../_lib/auth.js';
+import { readRoadcrosserProtectedBootstrap } from '../_lib/roadcrosserAuth.js';
 import { getUpstashRedisClient, RedisConfigError } from '../_lib/redis.js';
 import { getPrevWeekId } from '../../shared/week.js';
 import {
@@ -21,15 +24,33 @@ import {
 
 export const config = { runtime: 'nodejs' };
 
-async function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+export async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
 
   try {
+    const canonicalToken = getCanonicalSessionToken(req);
+    if (canonicalToken) {
+      try {
+        const canonical = await readRoadcrosserProtectedBootstrap(canonicalToken);
+        return res.status(200).json({
+          user: { userId: canonical.user.externalUserId, loginId: canonical.user.loginId, refCode: '' },
+          inventory: canonical.inventory,
+          achievements: canonical.achievements,
+          streak: canonical.streak,
+          unreadInboxCount: canonical.unreadInboxCount,
+          readOnly: true,
+          canonical: true,
+        });
+      } catch {
+        clearCanonicalSessionCookie(res);
+        // Never let a dormant legacy cookie become authoritative after a
+        // canonical session expires or is revoked.
+        clearSessionCookie(res);
+        return res.status(200).json({ user: null });
+      }
+    }
     const userId = await getUserIdForSession(req);
     if (!userId) return res.status(200).json({ user: null });
 

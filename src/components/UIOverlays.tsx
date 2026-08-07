@@ -258,6 +258,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </div>
 
         <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }}>
+          {mode === "signup" ? (
+            <p style={{ ...panelSubtitleStyle, maxWidth: 380, textAlign: "center" }}>
+              New players use one Roadcrosser Account across Submarine Dash and other Roadcrosser games.
+            </p>
+          ) : (
+          <>
           <input
             autoFocus
             type="text"
@@ -339,6 +345,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               />
             </>
           )}
+          </>
+          )}
 
           {error && (
             <div style={{ color: "#ff6b6b", fontSize: "0.95rem" }}>{error}</div>
@@ -362,7 +370,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               opacity: isBusy ? 0.7 : 1,
             }}
           >
-            {isBusy ? "PLEASE WAIT..." : (mode === "login" ? "LOG IN" : mode === "signup" ? "SIGN UP" : "CHANGE PASSWORD")}
+            {isBusy ? "PLEASE WAIT..." : (mode === "login" ? "LEGACY LOGIN" : mode === "signup" ? "CONTINUE WITH ROADCROSSER" : "CHANGE PASSWORD")}
           </button>
 
           <div style={{ marginTop: 6, fontSize: "0.95rem", color: "rgba(255,255,255,0.8)" }}>

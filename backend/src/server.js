@@ -35,6 +35,8 @@ const CLEAR_ALLOWED = process.env.ALLOW_LEADERBOARD_CLEAR === 'true';
 // Auth (shared prefix with Vercel functions)
 const KEY_PREFIX = 'sd:';
 const SESSION_COOKIE_NAME = 'sd_session';
+const CANONICAL_SESSION_COOKIE_NAME = 'sd_roadcrosser_session';
+const ROAD_CROSSER_STATE_COOKIE_NAME = 'sd_rc_state';
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
 // Initialize Redis client
@@ -79,8 +81,34 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
 
 app.use(async (req, res, next) => {
+  const credentialMutationRoute = new Set([
+    '/api/auth/login',
+    '/api/auth/logout',
+    '/api/auth/register',
+    '/api/auth/change-password',
+  ]).has(req.path);
+  if (req.method === 'POST' && credentialMutationRoute && !isAllowedSubmarineMutationOrigin(req)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const canonicalToken = parseCookies(req)[CANONICAL_SESSION_COOKIE_NAME];
+  const transitionRoute = new Set([
+    '/api/auth/login',
+    '/api/auth/logout',
+    '/api/auth/roadcrosser/callback',
+  ]).has(req.path);
+  const mutationMethod = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
+  const leaderboardBootstrapRead = req.method === 'GET'
+    && (req.path === '/api/leaderboard' || req.path === '/api/leaderboard/weekly');
+  if (canonicalToken && !transitionRoute && (mutationMethod || leaderboardBootstrapRead)) {
+    return res.status(409).json({
+      error: 'Canonical account progress is read-only in Submarine Dash',
+      code: 'CANONICAL_READ_ONLY',
+    });
+  }
+
   const classification = localRouteClassification(req.path, req.method);
   const flags = productionControlFlags();
   if (!flags.admissionGate || !requiresDurableAdmission(classification) || !rawRedis) return next();
@@ -163,7 +191,7 @@ function setSessionCookie(req, res, token) {
   ];
   // Secure cookies won't be set on http://localhost
   if (isSecure) parts.push('Secure');
-  res.setHeader('Set-Cookie', parts.join('; '));
+  appendCookie(res, parts.join('; '));
 }
 
 function clearSessionCookie(req, res) {
@@ -177,7 +205,61 @@ function clearSessionCookie(req, res) {
     'Max-Age=0',
   ];
   if (isSecure) parts.push('Secure');
-  res.setHeader('Set-Cookie', parts.join('; '));
+  appendCookie(res, parts.join('; '));
+}
+
+function appendCookie(res, cookie) {
+  const current = res.getHeader('Set-Cookie');
+  const cookies = Array.isArray(current) ? current : current ? [String(current)] : [];
+  res.setHeader('Set-Cookie', [...cookies, cookie]);
+}
+
+function secureCookiePart(req) {
+  const proto = (req.headers['x-forwarded-proto'] || '').toString();
+  return req.secure || proto === 'https' ? '; Secure' : '';
+}
+
+function setRoadcrosserStateCookie(req, res, state) {
+  const secure = secureCookiePart(req);
+  appendCookie(res, `${ROAD_CROSSER_STATE_COOKIE_NAME}=${encodeURIComponent(state)}; Path=/api/auth/roadcrosser/callback; HttpOnly; SameSite=${secure ? 'None' : 'Lax'}; Max-Age=300${secure}`);
+}
+
+function clearRoadcrosserStateCookie(req, res) {
+  const secure = secureCookiePart(req);
+  appendCookie(res, `${ROAD_CROSSER_STATE_COOKIE_NAME}=; Path=/api/auth/roadcrosser/callback; HttpOnly; SameSite=${secure ? 'None' : 'Lax'}; Max-Age=0${secure}`);
+}
+
+function setCanonicalSessionCookie(req, res, token) {
+  appendCookie(res, `${CANONICAL_SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL_SECONDS}${secureCookiePart(req)}`);
+}
+
+function clearCanonicalSessionCookie(req, res) {
+  appendCookie(res, `${CANONICAL_SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookiePart(req)}`);
+}
+
+function roadcrosserBaseUrl() {
+  const value = process.env.SD_ROADCROSSER_INTERNAL_BASE_URL || 'https://www.roadcrosser.com';
+  if (value === 'https://www.roadcrosser.com' || (process.env.NODE_ENV !== 'production' && /^http:\/\/(?:localhost|127\.0\.0\.1):[0-9]+$/.test(value))) return value;
+  throw new Error('Roadcrosser internal base URL is invalid');
+}
+
+async function roadcrosserRequest(path, body) {
+  const allowed = new Set([
+    '/api/internal/submarine-dash/tickets/consume',
+    '/api/internal/submarine-dash/sessions/resolve',
+    '/api/internal/submarine-dash/sessions/revoke',
+    '/api/internal/submarine-dash/bootstrap',
+  ]);
+  if (!allowed.has(path)) throw new Error('Roadcrosser internal path is forbidden');
+  const credential = process.env.SD_ROADCROSSER_INTERNAL_AUTH_TOKEN;
+  if (!credential || credential.length < 32) throw new Error('Roadcrosser internal client is not configured');
+  const response = await fetch(`${roadcrosserBaseUrl()}${path}`, {
+    method: 'POST', headers: { authorization: `Bearer ${credential}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body), redirect: 'error', signal: AbortSignal.timeout(5000),
+  });
+  const text = await response.text();
+  if (!response.ok || text.length > 16 * 1024) throw new Error('Roadcrosser canonical auth request failed');
+  return text ? JSON.parse(text) : {};
 }
 
 function normalizeOnlineRoomConfig(config) {
@@ -597,6 +679,7 @@ async function isRateLimited(key, limit, windowSeconds) {
 async function getUserIdForSession(req) {
   if (!redis) return null;
   const cookies = parseCookies(req);
+  if (cookies[CANONICAL_SESSION_COOKIE_NAME]) return null;
   const token = cookies[SESSION_COOKIE_NAME];
   if (!token) return null;
   const userId = await redis.get(keySession(token));
@@ -794,8 +877,78 @@ function upsertWeek(store, weekId, entries, nowMs = Date.now()) {
 // API Routes
 
 // --- Auth routes (dev backend) ---
+function roadcrosserPublicOrigin() {
+  const value = process.env.SD_ROADCROSSER_PUBLIC_ORIGIN || 'https://www.roadcrosser.com';
+  if (value === 'https://www.roadcrosser.com' || (process.env.NODE_ENV !== 'production' && /^http:\/\/(?:localhost|127\.0\.0\.1):[0-9]+$/.test(value))) return value;
+  throw new Error('Roadcrosser public origin is invalid');
+}
+
+function isAllowedSubmarineMutationOrigin(req) {
+  const expected = process.env.SD_SUBMARINE_PUBLIC_ORIGIN || 'https://submarine-dash.roadcrosser.com';
+  if (expected !== 'https://submarine-dash.roadcrosser.com'
+    && !(process.env.NODE_ENV !== 'production' && /^http:\/\/(?:localhost|127\.0\.0\.1):[0-9]+$/.test(expected))) return false;
+  const origin = Array.isArray(req.headers.origin) ? req.headers.origin[0] : req.headers.origin;
+  if (origin) {
+    if (origin === expected) return true;
+    return process.env.NODE_ENV !== 'production'
+      && /^http:\/\/(?:localhost|127\.0\.0\.1):[0-9]+$/.test(origin)
+      && origin === `${req.protocol}://${req.get('host')}`;
+  }
+  const site = Array.isArray(req.headers['sec-fetch-site']) ? req.headers['sec-fetch-site'][0] : req.headers['sec-fetch-site'];
+  return site === 'same-origin';
+}
+
+app.get('/api/auth/roadcrosser/start', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  if (process.env.SD_CANONICAL_AUTH_TICKETS_ENABLED !== 'true') return res.status(404).json({ error: 'Canonical account connection is disabled' });
+  const state = crypto.randomBytes(32).toString('base64url');
+  const challenge = crypto.createHash('sha256').update(state, 'utf8').digest('base64url');
+  setRoadcrosserStateCookie(req, res, state);
+  return res.redirect(303, `${roadcrosserPublicOrigin()}/games/submarine-dash/connect?stateChallenge=${encodeURIComponent(challenge)}`);
+});
+
+app.post('/api/auth/roadcrosser/callback', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  if (process.env.SD_CANONICAL_AUTH_TICKETS_ENABLED !== 'true') return res.status(404).json({ error: 'Canonical account connection is disabled' });
+  if (req.headers.origin !== roadcrosserPublicOrigin()) return res.status(403).json({ error: 'Forbidden' });
+  const ticket = typeof req.body?.ticket === 'string' ? req.body.ticket : '';
+  const state = parseCookies(req)[ROAD_CROSSER_STATE_COOKIE_NAME] || '';
+  const opaque = /^[A-Za-z0-9_-]{43}$/;
+  if (!opaque.test(ticket) || !opaque.test(state)) return res.status(400).json({ error: 'Invalid account handoff' });
+  const stateChallenge = crypto.createHash('sha256').update(state, 'utf8').digest('base64url');
+  const cookies = parseCookies(req);
+  try {
+    const canonical = await roadcrosserRequest('/api/internal/submarine-dash/tickets/consume', { ticket, stateChallenge });
+    if (!opaque.test(canonical.sessionToken || '')) throw new Error('invalid session');
+    try {
+      if (cookies[SESSION_COOKIE_NAME]) {
+        if (!redis) throw new Error('legacy session store unavailable');
+        const legacyKey = keySession(cookies[SESSION_COOKIE_NAME]);
+        await redis.del(legacyKey);
+      }
+      if (cookies[CANONICAL_SESSION_COOKIE_NAME] && cookies[CANONICAL_SESSION_COOKIE_NAME] !== canonical.sessionToken) {
+        await roadcrosserRequest('/api/internal/submarine-dash/sessions/revoke', { sessionToken: cookies[CANONICAL_SESSION_COOKIE_NAME] });
+      }
+    } catch {
+      await roadcrosserRequest('/api/internal/submarine-dash/sessions/revoke', { sessionToken: canonical.sessionToken }).catch(() => undefined);
+      return res.status(503).json({ error: 'Existing session could not be replaced' });
+    }
+    setCanonicalSessionCookie(req, res, canonical.sessionToken);
+    if (cookies[SESSION_COOKIE_NAME]) clearSessionCookie(req, res);
+    clearRoadcrosserStateCookie(req, res);
+    return res.redirect(303, '/');
+  } catch {
+    return res.status(401).json({ error: 'Account handoff is invalid or expired' });
+  }
+});
+
 app.post('/api/auth/register', async (req, res) => {
   try {
+    if (process.env.SD_CANONICAL_AUTH_TICKETS_ENABLED === 'true') {
+      return res.status(409).json({ error: 'New accounts use Roadcrosser Account', roadcrosserConnect: '/api/auth/roadcrosser/start' });
+    }
     if (!redis) return res.status(503).json({ error: 'Redis not connected' });
 
     const ip = (req.headers['x-forwarded-for'] || '').toString().split(',')[0]?.trim() || req.ip || 'unknown';
@@ -856,11 +1009,22 @@ app.post('/api/auth/login', async (req, res) => {
     const ok = await verifyPassword(password, user.passwordSalt, user.passwordHash);
     if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
 
+    const cookies = parseCookies(req);
+    if (cookies[CANONICAL_SESSION_COOKIE_NAME]) {
+      try {
+        await roadcrosserRequest('/api/internal/submarine-dash/sessions/revoke', { sessionToken: cookies[CANONICAL_SESSION_COOKIE_NAME] });
+      } catch {
+        return res.status(503).json({ error: 'Canonical session could not be revoked' });
+      }
+      clearCanonicalSessionCookie(req, res);
+    }
+    if (cookies[SESSION_COOKIE_NAME]) await redis.del(keySession(cookies[SESSION_COOKIE_NAME]));
+
     const token = generateId('sess');
     await redis.set(keySession(token), user.userId, 'EX', SESSION_TTL_SECONDS);
     setSessionCookie(req, res, token);
 
-    return res.json({ userId: user.userId, loginId: user.loginId, refCode: user.refCode });
+    return res.json({ userId: user.userId, loginId: user.loginId, refCode: user.refCode, canonical: false, readOnly: false });
   } catch (e) {
     console.error('POST /api/auth/login error:', e);
     return res.status(500).json({ error: 'Internal server error' });
@@ -869,6 +1033,7 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.post('/api/auth/change-password', async (req, res) => {
   try {
+    if (parseCookies(req)[CANONICAL_SESSION_COOKIE_NAME]) return res.status(409).json({ error: 'Canonical session cannot change a legacy password' });
     if (!redis) return res.status(503).json({ error: 'Redis not connected' });
 
     const ip = (req.headers['x-forwarded-for'] || '').toString().split(',')[0]?.trim() || req.ip || 'unknown';
@@ -911,11 +1076,22 @@ app.post('/api/auth/change-password', async (req, res) => {
 
 app.post('/api/auth/logout', async (req, res) => {
   try {
-    if (!redis) return res.json({ ok: true });
+    const expectedOrigin = process.env.SD_SUBMARINE_PUBLIC_ORIGIN || 'https://submarine-dash.roadcrosser.com';
+    if ((req.headers.origin && req.headers.origin !== expectedOrigin) || (!req.headers.origin && req.headers['sec-fetch-site'] !== 'same-origin')) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     const cookies = parseCookies(req);
+    const canonicalToken = cookies[CANONICAL_SESSION_COOKIE_NAME];
+    if (canonicalToken) await roadcrosserRequest('/api/internal/submarine-dash/sessions/revoke', { sessionToken: canonicalToken });
+    if (!redis) {
+      clearSessionCookie(req, res);
+      clearCanonicalSessionCookie(req, res);
+      return res.json({ ok: true });
+    }
     const token = cookies[SESSION_COOKIE_NAME];
     if (token) await redis.del(keySession(token));
     clearSessionCookie(req, res);
+    clearCanonicalSessionCookie(req, res);
     return res.json({ ok: true });
   } catch (e) {
     console.error('POST /api/auth/logout error:', e);
@@ -925,6 +1101,21 @@ app.post('/api/auth/logout', async (req, res) => {
 
 app.get('/api/auth/me', async (req, res) => {
   try {
+    const canonicalToken = parseCookies(req)[CANONICAL_SESSION_COOKIE_NAME];
+    if (canonicalToken) {
+      try {
+        const canonical = await roadcrosserRequest('/api/internal/submarine-dash/bootstrap', { sessionToken: canonicalToken });
+        return res.json({
+          user: { userId: canonical.user.externalUserId, loginId: canonical.user.loginId, refCode: '' },
+          inventory: canonical.inventory, achievements: canonical.achievements, streak: canonical.streak,
+          unreadInboxCount: canonical.unreadInboxCount, readOnly: true, canonical: true,
+        });
+      } catch {
+        clearCanonicalSessionCookie(req, res);
+        clearSessionCookie(req, res);
+        return res.json({ user: null });
+      }
+    }
     if (!redis) return res.json({ user: null });
     const userId = await getUserIdForSession(req);
     if (!userId) return res.json({ user: null });

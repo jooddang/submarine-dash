@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { withProductionControl } from './_lib/productionControls.js';
 import { sanitizeLeaderboardName } from '../shared/profanity.js';
-import { getUser, getUserIdForSession } from './_lib/auth.js';
+import { getCanonicalSessionToken, getUser, getUserIdForSession } from './_lib/auth.js';
 import { getUpstashRedisClient } from './_lib/redis.js';
 import {
   LEGACY_LEADERBOARD_KEY,
@@ -27,6 +27,7 @@ async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
+  if (getCanonicalSessionToken(req)) return res.status(409).json({ error: 'Canonical canary is read-only' });
 
   try {
     if (req.method === 'GET') {

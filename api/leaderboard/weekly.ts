@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { getCanonicalSessionToken } from '../_lib/auth.js';
 import { withProductionControl } from './../_lib/productionControls.js';
 import { sanitizeLeaderboardName } from '../../shared/profanity.js';
 import {
@@ -21,6 +22,7 @@ async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  if (getCanonicalSessionToken(req)) return res.status(409).json({ error: 'Canonical canary is read-only' });
 
 
   try {
