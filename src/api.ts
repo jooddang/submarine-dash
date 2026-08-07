@@ -346,11 +346,11 @@ export const inventoryAPI = {
   },
 
   async purchaseSkin(skinId: string): Promise<{ ok: boolean; skinId: string; cost: number; coins: number; skins: SkinState } | { error: string } | null> {
-    requireWritableGameSession();
+    requireWritableGameSession('purchase_skin');
     try {
       const res = await fetch(`${API_BASE_URL}/api/inventory/skin/purchase`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
         credentials: "include",
         body: JSON.stringify({ skinId }),
       });

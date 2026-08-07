@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  consumeRoadcrosserTicket, equipRoadcrosserCanarySkin, readRoadcrosserCanonicalBootstrap,
+  consumeRoadcrosserTicket, equipRoadcrosserCanarySkin, purchaseRoadcrosserCanarySkin, readRoadcrosserCanonicalBootstrap,
   resolveRoadcrosserSession, revokeRoadcrosserSession,
 } from './roadcrosserAuth.js';
+import { SKIN_CATALOG_VERSION } from '../../shared/canaryPurchase.js';
 
 const opaque = 'A'.repeat(43);
 
@@ -43,6 +44,15 @@ describe('Roadcrosser scoped internal client', () => {
           skins: { equipped: 'default' }, stateVersion: 2, keyVersion: 1,
         }), { status: 200 }));
       }
+      if (url.endsWith('/mutations/purchase-skin')) {
+        return Promise.resolve(new Response(JSON.stringify({
+          version: 'submarine-write-v1', operation: 'purchase_skin', idempotent: false,
+          catalogVersion: SKIN_CATALOG_VERSION,
+          skinId: 'gold', cost: 150, coins: 850,
+          skins: { owned: ['default', 'gold'], equipped: 'default' },
+          stateVersion: 3, keyVersions: { coins: 1, ownedSkins: 1 },
+        }), { status: 200 }));
+      }
       return Promise.resolve(new Response(JSON.stringify({
         version: 'submarine-game-session-v1', externalUserId: 'fixture', loginId: 'fixture',
       }), { status: 200 }));
@@ -52,12 +62,15 @@ describe('Roadcrosser scoped internal client', () => {
     await revokeRoadcrosserSession(opaque);
     await readRoadcrosserCanonicalBootstrap(opaque);
     await equipRoadcrosserCanarySkin(opaque, '97000000-0000-4000-8000-000000000001', 'default');
+    await purchaseRoadcrosserCanarySkin(opaque, '97000000-0000-4000-8000-000000000002', 'gold');
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       'https://www.roadcrosser.com/api/internal/submarine-dash/sessions/resolve',
       'https://www.roadcrosser.com/api/internal/submarine-dash/sessions/revoke',
       'https://www.roadcrosser.com/api/internal/submarine-dash/bootstrap',
       'https://www.roadcrosser.com/api/internal/submarine-dash/mutations/equip-skin',
+      'https://www.roadcrosser.com/api/internal/submarine-dash/mutations/purchase-skin',
     ]);
+    expect(JSON.parse(fetchMock.mock.calls[4][1].body)).toMatchObject({ catalogVersion: SKIN_CATALOG_VERSION });
   });
 
   it('rejects remote overrides and redacts central failures', async () => {

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 const road = vi.hoisted(() => ({
-  consume: vi.fn(), revoke: vi.fn(), bootstrap: vi.fn(), equip: vi.fn(),
+  consume: vi.fn(), revoke: vi.fn(), bootstrap: vi.fn(), equip: vi.fn(), purchase: vi.fn(),
 }));
 const redis = vi.hoisted(() => ({
   get: vi.fn(), set: vi.fn(), del: vi.fn(), incr: vi.fn(), expire: vi.fn(),
@@ -15,6 +15,7 @@ vi.mock('./roadcrosserAuth.js', () => ({
   revokeRoadcrosserSession: road.revoke,
   readRoadcrosserCanonicalBootstrap: road.bootstrap,
   equipRoadcrosserCanarySkin: road.equip,
+  purchaseRoadcrosserCanarySkin: road.purchase,
 }));
 vi.mock('./redis.js', () => ({
   getUpstashRedisClient: redisFactory,
@@ -27,7 +28,9 @@ import { handler as loginHandler } from '../auth/login.js';
 import { handler as logoutHandler } from '../auth/logout.js';
 import { handler as meHandler } from '../auth/me.js';
 import { createEquipSkinRoute, handler as equipSkinHandler, isSyntheticCanaryEquipRequest } from '../inventory/skin/equip.js';
+import { createPurchaseSkinRoute, handler as purchaseSkinHandler, isSyntheticCanaryPurchaseRequest } from '../inventory/skin/purchase.js';
 import { MaintenanceFreezeError } from '../../shared/productionControls.js';
+import { SKIN_CATALOG_VERSION } from '../../shared/canaryPurchase.js';
 
 const opaque = (character: string) => character.repeat(43);
 
@@ -77,6 +80,13 @@ beforeEach(() => {
   road.equip.mockResolvedValue({
     version: 'submarine-write-v1', operation: 'equip_skin', idempotent: false,
     skins: { equipped: 'default' }, stateVersion: 2, keyVersion: 1,
+  });
+  road.purchase.mockResolvedValue({
+    version: 'submarine-write-v1', operation: 'purchase_skin', idempotent: false,
+    catalogVersion: SKIN_CATALOG_VERSION,
+    skinId: 'gold', cost: 150, coins: 850,
+    skins: { owned: ['default', 'gold'], equipped: 'default' },
+    stateVersion: 3, keyVersions: { coins: 1, ownedSkins: 1 },
   });
   redis.del.mockResolvedValue(1);
   redis.set.mockResolvedValue('OK');
@@ -298,6 +308,82 @@ describe('canonical auth handlers', () => {
     }), disabled.res);
     expect(disabled.state.status).toBe(503);
     expect(acquire).toHaveBeenCalledTimes(4);
+  });
+
+  it('routes only exact-origin enabled canonical purchase around the closed Redis gate', async () => {
+    const token = opaque('C');
+    const idempotencyKey = '96000000-0000-4000-8000-000000000003';
+    const disabled = response();
+    await purchaseSkinHandler(request('POST', {
+      cookie: `sd_roadcrosser_session=${token}`, origin: 'https://submarine-dash.roadcrosser.com',
+      idempotencyKey, body: { skinId: 'gold' },
+    }), disabled.res);
+    expect(disabled.state.status).toBe(409);
+    vi.stubEnv('SD_SUPABASE_WRITE_CANARY_ENABLED', 'true');
+    expect(isSyntheticCanaryPurchaseRequest(request('POST', {
+      cookie: `sd_roadcrosser_session=${token}`, origin: 'https://submarine-dash.roadcrosser.com',
+    }))).toBe(true);
+    expect(isSyntheticCanaryPurchaseRequest(request('POST', {
+      cookie: `sd_roadcrosser_session=${token}`, site: 'same-origin',
+    }))).toBe(false);
+    const inheritedCatalogKey = response();
+    await purchaseSkinHandler(request('POST', {
+      cookie: `sd_roadcrosser_session=${token}`, origin: 'https://submarine-dash.roadcrosser.com',
+      idempotencyKey, body: { skinId: 'toString' },
+    }), inheritedCatalogKey.res);
+    expect(inheritedCatalogKey.state.status).toBe(400);
+    expect(road.purchase).not.toHaveBeenCalled();
+    const acquire = vi.fn(async () => { throw new MaintenanceFreezeError(); });
+    const wrapped = createPurchaseSkinRoute({
+      flags: () => ({ admissionGate: true }) as any,
+      adapter: () => ({}) as any, acquire, event: vi.fn(),
+    });
+    const enabled = response();
+    await wrapped(request('POST', {
+      cookie: `sd_roadcrosser_session=${token}`, origin: 'https://submarine-dash.roadcrosser.com',
+      idempotencyKey, body: { skinId: 'gold' },
+    }), enabled.res);
+    expect(enabled.state.status).toBe(200);
+    expect(road.purchase).toHaveBeenCalledWith(token, idempotencyKey, 'gold');
+    expect(redisFactory).not.toHaveBeenCalled();
+    expect(acquire).not.toHaveBeenCalled();
+
+    for (const options of [
+      { cookie: `sd_session=${opaque('L')}`, origin: 'https://submarine-dash.roadcrosser.com' },
+      { cookie: `sd_roadcrosser_session=${token}`, origin: 'https://attacker.example' },
+      { cookie: `sd_roadcrosser_session=${token}`, site: 'same-origin' },
+    ]) {
+      const blocked = response();
+      await wrapped(request('POST', { ...options, idempotencyKey, body: { skinId: 'gold' } }), blocked.res);
+      expect(blocked.state.status).toBe(503);
+    }
+  });
+
+  it('preserves source-compatible purchase domain errors without Redis access', async () => {
+    vi.stubEnv('SD_SUPABASE_WRITE_CANARY_ENABLED', 'true');
+    const options = {
+      cookie: `sd_roadcrosser_session=${opaque('C')}`,
+      origin: 'https://submarine-dash.roadcrosser.com',
+      idempotencyKey: '96000000-0000-4000-8000-000000000004',
+      body: { skinId: 'gold' },
+    };
+    road.purchase.mockResolvedValueOnce({
+      version: 'submarine-write-v1', operation: 'purchase_skin', catalogVersion: SKIN_CATALOG_VERSION,
+      skinId: 'gold', rejected: 'already_owned',
+    });
+    const owned = response();
+    await purchaseSkinHandler(request('POST', options), owned.res);
+    expect(owned.state).toMatchObject({ status: 400, json: { error: 'Already owned' } });
+    road.purchase.mockResolvedValueOnce({
+      version: 'submarine-write-v1', operation: 'purchase_skin', catalogVersion: SKIN_CATALOG_VERSION, skinId: 'gold',
+      rejected: 'insufficient_coins', required: 150, balance: 7,
+    });
+    const insufficient = response();
+    await purchaseSkinHandler(request('POST', options), insufficient.res);
+    expect(insufficient.state).toMatchObject({
+      status: 400, json: { error: 'Insufficient coins', required: 150, balance: 7 },
+    });
+    expect(redisFactory).not.toHaveBeenCalled();
   });
 
   it('cannot reactivate a stale legacy cookie after canonical expiry', async () => {

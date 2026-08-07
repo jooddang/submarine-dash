@@ -68,20 +68,26 @@ describe('canonical read-only client barrier', () => {
   it('allows only the advertised synthetic canary capability and sends an idempotency key', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({
-        canonical: true, readOnly: false, writeCapabilities: ['equip_skin'],
+        canonical: true, readOnly: false, writeCapabilities: ['equip_skin', 'purchase_skin'],
         user: { userId: 'synthetic-canary', loginId: 'Synthetic', refCode: '' },
       }), { status: 200, headers: { 'content-type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         ok: true, skins: { owned: ['default'], equipped: 'default' },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ok: true, skinId: 'gold', cost: 150, coins: 850,
+        skins: { owned: ['default', 'gold'], equipped: 'default' },
       }), { status: 200, headers: { 'content-type': 'application/json' } }));
     vi.stubGlobal('fetch', fetchMock);
     await expect(authAPI.me()).resolves.toMatchObject({ canonical: true, readOnly: false });
     await expect(inventoryAPI.equipSkin('default')).resolves.toMatchObject({ ok: true });
     const equipRequest = fetchMock.mock.calls[1][1] as RequestInit;
     expect((equipRequest.headers as Record<string, string>)['Idempotency-Key']).toMatch(/^[0-9a-f-]{36}$/);
-    await expect(inventoryAPI.purchaseSkin('classic')).rejects.toThrow('read-only');
+    await expect(inventoryAPI.purchaseSkin('gold')).resolves.toMatchObject({ ok: true, coins: 850 });
+    const purchaseRequest = fetchMock.mock.calls[2][1] as RequestInit;
+    expect((purchaseRequest.headers as Record<string, string>)['Idempotency-Key']).toMatch(/^[0-9a-f-]{36}$/);
     await expect(missionsAPI.postEvent({ type: 'run_end', score: 1 })).rejects.toThrow('read-only');
     await expect(leaderboardAPI.submitScore('Synthetic', 1)).rejects.toThrow('read-only');
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });

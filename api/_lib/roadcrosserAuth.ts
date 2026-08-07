@@ -1,4 +1,5 @@
 import { validateCanaryEquipResponse } from '../../shared/canaryEquip.js';
+import { SKIN_CATALOG_VERSION, validateCanaryPurchaseResponse } from '../../shared/canaryPurchase.js';
 
 const productionBaseUrl = 'https://www.roadcrosser.com';
 const opaque256 = /^[A-Za-z0-9_-]{43}$/;
@@ -8,6 +9,7 @@ const allowedPaths = new Set([
   '/api/internal/submarine-dash/sessions/revoke',
   '/api/internal/submarine-dash/bootstrap',
   '/api/internal/submarine-dash/mutations/equip-skin',
+  '/api/internal/submarine-dash/mutations/purchase-skin',
 ]);
 
 export type CanonicalSubmarineUser = {
@@ -116,4 +118,11 @@ export async function readRoadcrosserCanonicalBootstrap(sessionToken: string) {
 export async function equipRoadcrosserCanarySkin(sessionToken: string, idempotencyKey: string, skinId: string) {
   const result = await request('/api/internal/submarine-dash/mutations/equip-skin', { sessionToken, idempotencyKey, skinId });
   return validateCanaryEquipResponse(result, skinId);
+}
+
+export async function purchaseRoadcrosserCanarySkin(sessionToken: string, idempotencyKey: string, skinId: string) {
+  const result = await request('/api/internal/submarine-dash/mutations/purchase-skin', {
+    sessionToken, idempotencyKey, skinId, catalogVersion: SKIN_CATALOG_VERSION,
+  });
+  return validateCanaryPurchaseResponse(result, skinId);
 }

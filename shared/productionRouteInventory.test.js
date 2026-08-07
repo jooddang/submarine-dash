@@ -33,6 +33,11 @@ describe('production route inventory', () => {
           "return withProductionControl('api/inventory/skin/equip.ts', handler, dependencies, isSyntheticCanaryEquipRequest);",
         );
         expect(source.trimEnd().endsWith('export default createEquipSkinRoute();'), file).toBe(true);
+      } else if (file === 'api/inventory/skin/purchase.ts') {
+        expect(source, file).toContain(
+          "return withProductionControl('api/inventory/skin/purchase.ts', handler, dependencies, isSyntheticCanaryPurchaseRequest);",
+        );
+        expect(source.trimEnd().endsWith('export default createPurchaseSkinRoute();'), file).toBe(true);
       } else {
         expect(source.trimEnd().endsWith(`export default withProductionControl('${file}', handler);`), file).toBe(true);
       }

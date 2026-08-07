@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import Redis from 'ioredis';
 import { validateCanaryEquipResponse } from '../../shared/canaryEquip.js';
+import { SKIN_CATALOG_VERSION, SKIN_COSTS, validateCanaryPurchaseResponse } from '../../shared/canaryPurchase.js';
 import dotenv from 'dotenv';
 import { sanitizeLeaderboardName } from '../../shared/profanity.js';
 import { getPstCurrentWeekId, getPrevWeekId, getWeekEndDate } from '../../shared/week.js';
@@ -75,6 +76,7 @@ app.use(cors({
   origin: (origin, cb) => {
     // Allow same-origin and local dev origins
     if (!origin) return cb(null, true);
+    if (origin === 'https://submarine-dash.roadcrosser.com') return cb(null, true);
     if (origin === 'http://localhost:5173') return cb(null, true);
     if (origin.startsWith('http://localhost:')) return cb(null, true);
     return cb(null, false);
@@ -101,23 +103,26 @@ app.use(async (req, res, next) => {
     '/api/auth/roadcrosser/callback',
   ]).has(req.path);
   const mutationMethod = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
-  const canaryEquipRoute = req.method === 'POST' && req.path === '/api/inventory/skin/equip';
+  const canaryMutationRoute = req.method === 'POST' && new Set([
+    '/api/inventory/skin/equip',
+    '/api/inventory/skin/purchase',
+  ]).has(req.path);
   const expectedCanaryOrigin = process.env.SD_SUBMARINE_PUBLIC_ORIGIN || 'https://submarine-dash.roadcrosser.com';
   const canaryEquipOriginAllowed = req.headers.origin === expectedCanaryOrigin && isAllowedSubmarineMutationOrigin(req);
-  if (canonicalToken && canaryEquipRoute && process.env.SD_SUPABASE_WRITE_CANARY_ENABLED === 'true'
+  if (canonicalToken && canaryMutationRoute && process.env.SD_SUPABASE_WRITE_CANARY_ENABLED === 'true'
     && !canaryEquipOriginAllowed) return res.status(403).json({ error: 'Origin not allowed' });
-  const canaryEquipEnabled = canaryEquipRoute
+  const canaryMutationEnabled = canaryMutationRoute
     && process.env.SD_SUPABASE_WRITE_CANARY_ENABLED === 'true'
     && canaryEquipOriginAllowed;
   const leaderboardBootstrapRead = req.method === 'GET'
     && (req.path === '/api/leaderboard' || req.path === '/api/leaderboard/weekly');
-  if (canonicalToken && !transitionRoute && !canaryEquipEnabled && (mutationMethod || leaderboardBootstrapRead)) {
+  if (canonicalToken && !transitionRoute && !canaryMutationEnabled && (mutationMethod || leaderboardBootstrapRead)) {
     return res.status(409).json({
       error: 'Canonical account progress is read-only in Submarine Dash',
       code: 'CANONICAL_READ_ONLY',
     });
   }
-  if (canonicalToken && canaryEquipEnabled) return next();
+  if (canonicalToken && canaryMutationEnabled) return next();
 
   const classification = localRouteClassification(req.path, req.method);
   const flags = productionControlFlags();
@@ -260,6 +265,7 @@ async function roadcrosserRequest(path, body) {
     '/api/internal/submarine-dash/sessions/revoke',
     '/api/internal/submarine-dash/bootstrap',
     '/api/internal/submarine-dash/mutations/equip-skin',
+    '/api/internal/submarine-dash/mutations/purchase-skin',
   ]);
   if (!allowed.has(path)) throw new Error('Roadcrosser internal path is forbidden');
   const credential = process.env.SD_ROADCROSSER_INTERNAL_AUTH_TOKEN;
@@ -510,11 +516,6 @@ async function equipSkin(userId, skinId) {
   await redis.set(keySkinEquipped(userId), skinId);
   return { ok: true, equipped: skinId };
 }
-const SKIN_COSTS = {
-  default: 0, gold: 150, golden: 150, ocean_blue: 150, coral_red: 150, neon_green: 150,
-  royal_purple: 150, whale: 1000, orca: 1000, scary_orca: 5000, mystical_fish: 20000,
-};
-
 // ── Achievement helpers ──
 
 const SKIN_RARITIES = {
@@ -1424,11 +1425,32 @@ app.post('/api/inventory/dolphin/import', async (req, res) => {
 // POST /api/inventory/skin/purchase
 app.post('/api/inventory/skin/purchase', async (req, res) => {
   try {
+    const canonicalToken = parseCookies(req)[CANONICAL_SESSION_COOKIE_NAME];
+    if (canonicalToken) {
+      const idempotencyKey = req.get('idempotency-key') || '';
+      const skinId = typeof req.body?.skinId === 'string' ? req.body.skinId : '';
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(idempotencyKey)) {
+        return res.status(400).json({ error: 'Valid Idempotency-Key required' });
+      }
+      if (!Object.hasOwn(SKIN_COSTS, skinId)) return res.status(400).json({ error: 'Invalid skin ID' });
+      const result = await roadcrosserRequest('/api/internal/submarine-dash/mutations/purchase-skin', {
+        sessionToken: canonicalToken, idempotencyKey, skinId, catalogVersion: SKIN_CATALOG_VERSION,
+      });
+      validateCanaryPurchaseResponse(result, skinId);
+      if (result.rejected === 'already_owned') return res.status(400).json({ error: 'Already owned' });
+      if (result.rejected === 'insufficient_coins') {
+        return res.status(400).json({ error: 'Insufficient coins', required: result.required, balance: result.balance });
+      }
+      return res.json({
+        ok: true, skinId: result.skinId, cost: result.cost, coins: result.coins,
+        skins: result.skins, stateVersion: result.stateVersion, idempotent: result.idempotent,
+      });
+    }
     if (!redis) return res.status(503).json({ error: 'Redis not connected' });
     const userId = await getUserIdForSession(req);
     if (!userId) return res.status(401).json({ error: 'Login required' });
     const skinId = typeof req.body?.skinId === 'string' ? req.body.skinId.trim() : '';
-    if (!skinId || !(skinId in SKIN_COSTS)) return res.status(400).json({ error: 'Invalid skin ID' });
+    if (!skinId || !Object.hasOwn(SKIN_COSTS, skinId)) return res.status(400).json({ error: 'Invalid skin ID' });
     const cost = SKIN_COSTS[skinId];
     const state = await getSkinState(userId);
     if (state.owned.includes(skinId)) return res.status(400).json({ error: 'Already owned' });
