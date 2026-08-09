@@ -351,6 +351,21 @@ function persistVolatileRunAttempts(account: string) {
   runOutboxPersistenceFailures.delete(account);
 }
 
+function preflightDurableRunStorage(account: string) {
+  persistVolatileRunAttempts(account);
+  const key = runOutboxKey(account);
+  try {
+    const existing = localStorage.getItem(key);
+    // setItem is the operation that can fail under quota/private-mode limits;
+    // writing the exact existing bytes (or a valid empty queue) is non-lossy.
+    localStorage.setItem(key, existing ?? '[]');
+    if (existing === null) localStorage.removeItem(key);
+    runOutboxPersistenceFailures.delete(account);
+  } catch (error) {
+    throw persistenceFailure(account, error);
+  }
+}
+
 function enqueueCanonicalRun(account: string, event: Extract<MissionEvent, { type: 'run_end' }>) {
   if (runOutboxPersistenceFailures.has(account) || volatileRunAttempts.get(account)?.length) {
     throw persistenceFailure(account, new Error('A prior run is not durable yet'));
@@ -373,11 +388,12 @@ function assertActiveCanonicalAccount(account: string) {
   if (!isActiveCanonicalAccount(account)) throw new Error('Canonical run flush cancelled after account change');
 }
 
-async function sendCanonicalMissionEvent(event: MissionEvent, idempotencyKey: string, runEvidenceId: string | null) {
+async function sendCanonicalMissionEvent(account: string, event: MissionEvent, idempotencyKey: string, runEvidenceId: string | null) {
   const res = await fetch(`${API_BASE_URL}/api/missions/event`, {
     method: 'POST', credentials: 'include',
     headers: {
       'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey,
+      'Expected-External-User-Id': account,
       ...(runEvidenceId ? { 'Run-Evidence-Id': runEvidenceId } : {}), ...getTimezoneHeaders(),
     },
     body: JSON.stringify(event),
@@ -386,7 +402,11 @@ async function sendCanonicalMissionEvent(event: MissionEvent, idempotencyKey: st
     const text = await res.text().catch(() => '');
     throw new ApiResponseError('Failed to post mission event', res.status, text);
   }
-  return validateCanonicalGameplayResponse(await res.json(), event.type);
+  const result = validateCanonicalGameplayResponse(await res.json(), event.type);
+  if (result.acknowledgement.externalUserId !== account) {
+    throw new Error('Canonical gameplay acknowledgement account mismatch');
+  }
+  return result;
 }
 
 async function flushPendingCanonicalRuns(account: string) {
@@ -399,11 +419,14 @@ async function flushPendingCanonicalRuns(account: string) {
     const pending = readDurableRunQueue(account)[0];
     if (!pending) return result;
     assertActiveCanonicalAccount(account);
-    result = await sendCanonicalMissionEvent(pending.event, pending.idempotencyKey, pending.runEvidenceId);
+    result = await sendCanonicalMissionEvent(account, pending.event, pending.idempotencyKey, pending.runEvidenceId);
     // The server may have acknowledged A while the browser switched to B. Do
     // not mutate A's outbox in that state; replaying the same idempotency key
     // when A returns is safe.
     assertActiveCanonicalAccount(account);
+    if (result.acknowledgement.externalUserId !== pending.account) {
+      throw new Error('Canonical gameplay acknowledgement account mismatch');
+    }
     const current = readDurableRunQueue(account);
     assertActiveCanonicalAccount(account);
     if (current[0]?.idempotencyKey === pending.idempotencyKey
@@ -419,6 +442,12 @@ export const missionsAPI = {
   retryRunOutboxPersistence(account: string): void {
     if (!isActiveCanonicalAccount(account)) throw new Error('Cannot retry a run save for another account');
     persistVolatileRunAttempts(account);
+  },
+
+  preflightCanonicalRunStorage(account: string): void {
+    if (!isActiveCanonicalAccount(account)) throw new Error('Cannot preflight run storage for another account');
+    requireWritableGameSession('settle_run_end');
+    preflightDurableRunStorage(account);
   },
 
   async getDaily(): Promise<DailyMissionsResponse> {
@@ -464,7 +493,7 @@ export const missionsAPI = {
       }
       await flushPendingCanonicalRuns(account);
       assertActiveCanonicalAccount(account);
-      return await sendCanonicalMissionEvent(event, crypto.randomUUID(), null);
+      return await sendCanonicalMissionEvent(account, event, crypto.randomUUID(), null);
     }
     requireWritableGameSession();
     // Legacy mission tracking remains best-effort during the claim window.

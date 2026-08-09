@@ -841,18 +841,19 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
   const startGame = () => {
     initAudio();
     if (!canvasRef.current) return;
-    if (runSaveBlockedRef.current) {
-      const account = authUserRef.current?.canonical ? authUserRef.current.userId : null;
-      if (!account) return;
+    const canonicalAccount = authUserRef.current?.canonical ? authUserRef.current.userId : null;
+    if (canonicalAccount) {
       try {
-        missionsAPI.retryRunOutboxPersistence(account);
+        missionsAPI.preflightCanonicalRunStorage(canonicalAccount);
         runSaveBlockedRef.current = false;
         setRunSaveError(null);
       } catch (error) {
+        runSaveBlockedRef.current = true;
         setRunSaveError(error instanceof Error ? error.message : "Run progress is not safely stored yet.");
         return;
       }
     }
+    if (runSaveBlockedRef.current) return;
 
     // Reset Game State
     setAchievementsOpen(false);

@@ -15,6 +15,10 @@ function safeInteger(value, minimum = 0, maximum = Number.MAX_SAFE_INTEGER) {
   return Number.isSafeInteger(value) && value >= minimum && value <= maximum;
 }
 
+function externalUserId(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128 && !/[\s\u0000-\u001f\u007f]/.test(value);
+}
+
 export function gameplayCapability(eventType) {
   return EVENT_CAPABILITIES[eventType] || null;
 }
@@ -25,8 +29,9 @@ export function isCanonicalGameplayAdmission({ method, path = '/api/missions/eve
     && Boolean(canonicalToken) && origin === expectedOrigin;
 }
 
-export function canonicalGameplayRequest({ canonicalToken, idempotencyKey, runEvidenceId, event }) {
-  if (!canonicalToken || !UUID.test(idempotencyKey || '') || !record(event) || !gameplayCapability(event.type)) {
+export function canonicalGameplayRequest({ canonicalToken, expectedExternalUserId, idempotencyKey, runEvidenceId, event }) {
+  if (!canonicalToken || !externalUserId(expectedExternalUserId) || !UUID.test(idempotencyKey || '')
+    || !record(event) || !gameplayCapability(event.type)) {
     throw new Error('canonical gameplay request is invalid');
   }
   let payload;
@@ -53,15 +58,17 @@ export function canonicalGameplayRequest({ canonicalToken, idempotencyKey, runEv
     payload = { won: event.won };
     runEvidenceId = null;
   }
-  return { sessionToken: canonicalToken, idempotencyKey, runEvidenceId,
+  return { sessionToken: canonicalToken, expectedExternalUserId, idempotencyKey, runEvidenceId,
     eventType: event.type, payload, contractVersion: GAMEPLAY_CONTRACT_VERSION };
 }
 
 export function validateCanonicalGameplayResponse(value, operation) {
   const source = record(value);
   const inventory = record(source?.inventory);
+  const acknowledgement = record(source?.acknowledgement);
   if (!source || source.version !== 'submarine-gameplay-settlement-v1' || source.operation !== operation
-    || typeof source.idempotent !== 'boolean' || !inventory
+    || typeof source.idempotent !== 'boolean' || !inventory || !acknowledgement
+    || !externalUserId(acknowledgement.externalUserId)
     || !safeInteger(inventory.coins) || !safeInteger(inventory.dolphinSaved)
     || !safeInteger(source.stateVersion, 1) || !Array.isArray(source.newAchievements)
     || source.newAchievements.some((id) => typeof id !== 'string' || !/^[a-z0-9][a-z0-9_]{0,63}$/.test(id))) {
@@ -80,8 +87,8 @@ export function validateCanonicalGameplayResponse(value, operation) {
 }
 
 export async function executeExpressCanonicalGameplay({ canonicalToken, idempotencyKey,
-  runEvidenceId, event, roadcrosserRequest }) {
-  const request = canonicalGameplayRequest({ canonicalToken, idempotencyKey, runEvidenceId, event });
+  expectedExternalUserId, runEvidenceId, event, roadcrosserRequest }) {
+  const request = canonicalGameplayRequest({ canonicalToken, expectedExternalUserId, idempotencyKey, runEvidenceId, event });
   return validateCanonicalGameplayResponse(await roadcrosserRequest(
     '/api/internal/submarine-dash/mutations/settle-gameplay', request), event.type);
 }

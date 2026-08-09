@@ -208,6 +208,7 @@ describe('canonical read-only client barrier', () => {
     const me=(id:string)=>new Response(JSON.stringify({canonical:true,readOnly:false,writeCapabilities:['settle_run_end'],
       user:{userId:id,loginId:id,refCode:''}}),{status:200,headers:{'content-type':'application/json'}});
     const settled=(score:number)=>new Response(JSON.stringify({version:'submarine-gameplay-settlement-v1',operation:'run_end',idempotent:false,
+      acknowledgement:{externalUserId:'account-a'},
       date:'2026-08-09',progress:{runs:1,oxygenCollected:0,maxScore:score,completedMissionIds:[],keptAt:null},rewards:null,
       coinsEarned:10,inventory:{coins:10,dolphinSaved:0,tube:{pieces:0,charges:0}},newAchievements:[],stateVersion:2}),
       {status:200,headers:{'content-type':'application/json'}});
@@ -244,6 +245,7 @@ describe('canonical read-only client barrier', () => {
     const me=(id:string)=>new Response(JSON.stringify({canonical:true,readOnly:false,writeCapabilities:['settle_run_end'],
       user:{userId:id,loginId:id,refCode:''}}),{status:200,headers:{'content-type':'application/json'}});
     const settled=(score:number)=>new Response(JSON.stringify({version:'submarine-gameplay-settlement-v1',operation:'run_end',idempotent:false,
+      acknowledgement:{externalUserId:'account-a-switch'},
       date:'2026-08-09',progress:{runs:1,oxygenCollected:0,maxScore:score,completedMissionIds:[],keptAt:null},rewards:null,
       coinsEarned:10,inventory:{coins:10,dolphinSaved:0,tube:{pieces:0,charges:0}},newAchievements:[],stateVersion:2}),
       {status:200,headers:{'content-type':'application/json'}});
@@ -321,11 +323,54 @@ describe('canonical read-only client barrier', () => {
     expect(queue[0].event.score).toBe(321);
   });
 
+  it('rejects a wrong-account acknowledgement and retains the exact run for safe replay', async () => {
+    const values=new Map<string,string>();
+    vi.stubGlobal('localStorage',{
+      getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value),removeItem:(key:string)=>values.delete(key),
+    });
+    const fetchMock=vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({canonical:true,readOnly:false,writeCapabilities:['settle_run_end'],
+        user:{userId:'cross-tab-a',loginId:'A',refCode:''}}),{status:200,headers:{'content-type':'application/json'}}))
+      .mockResolvedValueOnce(new Response(JSON.stringify({version:'submarine-gameplay-settlement-v1',operation:'run_end',idempotent:false,
+        acknowledgement:{externalUserId:'cross-tab-b'},date:'2026-08-09',
+        progress:{runs:1,oxygenCollected:0,maxScore:444,completedMissionIds:[],keptAt:null},rewards:null,coinsEarned:4,
+        inventory:{coins:4,dolphinSaved:0,tube:{pieces:0,charges:0}},newAchievements:[],stateVersion:2}),
+        {status:200,headers:{'content-type':'application/json'}}));
+    vi.stubGlobal('fetch',fetchMock);
+    await authAPI.me();
+    await expect(missionsAPI.postEvent({type:'run_end',score:444,tubePieces:0,tubeCharges:0}))
+      .rejects.toThrow('acknowledgement account mismatch');
+    const retained=JSON.parse(values.get('sd:gameplay-run-outbox:cross-tab-a') || '[]');
+    expect(retained).toHaveLength(1);
+    const headers=fetchMock.mock.calls[1][1]?.headers as Record<string,string>;
+    expect(headers['Expected-External-User-Id']).toBe('cross-tab-a');
+  });
+
+  it('fails the synchronous canonical storage preflight before a run can start', async () => {
+    const values=new Map<string,string>();
+    let rejectWrites=false;
+    vi.stubGlobal('localStorage',{
+      getItem:(key:string)=>values.get(key)??null,
+      setItem:(key:string,value:string)=>{ if (rejectWrites) throw new Error('storage unavailable'); values.set(key,value); },
+      removeItem:(key:string)=>values.delete(key),
+    });
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({canonical:true,readOnly:false,
+      writeCapabilities:['settle_run_end'],user:{userId:'preflight-a',loginId:'A',refCode:''}}),
+      {status:200,headers:{'content-type':'application/json'}})));
+    await authAPI.me();
+    rejectWrites=true;
+    expect(()=>missionsAPI.preflightCanonicalRunStorage('preflight-a'))
+      .toThrow('could not be saved safely');
+    expect(missionsAPI.hasRunSavePersistenceFailure('preflight-a')).toBe(true);
+  });
+
   it('shows and enforces the run-save persistence blocker in Game', () => {
     const game=readFileSync(new URL('./Game.tsx',import.meta.url),'utf8');
     expect(game).toContain('RUN SAVE PAUSED');
-    expect(game).toContain('if (runSaveBlockedRef.current)');
-    expect(game).toContain('missionsAPI.retryRunOutboxPersistence(account)');
+    expect(game).toContain('missionsAPI.preflightCanonicalRunStorage(canonicalAccount)');
+    expect(game.indexOf('missionsAPI.preflightCanonicalRunStorage(canonicalAccount)'))
+      .toBeLessThan(game.indexOf('gameStateRef.current = "PLAYING"'));
+    expect(game).toContain('runSaveBlockedRef.current = true');
     expect(game).toContain('if (isRunOutboxPersistenceError(error))');
   });
 });

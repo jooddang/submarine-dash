@@ -1281,7 +1281,8 @@ app.post('/api/missions/event', async (req, res) => {
     const canonicalToken = parseCookies(req)[CANONICAL_SESSION_COOKIE_NAME];
     if (canonicalToken) {
       const result = await executeExpressCanonicalGameplay({
-        canonicalToken, idempotencyKey:req.get('idempotency-key') || '',
+        canonicalToken, expectedExternalUserId:req.get('expected-external-user-id') || '',
+        idempotencyKey:req.get('idempotency-key') || '',
         runEvidenceId:req.body?.type === 'run_end' ? req.get('run-evidence-id') || '' : null,
         event:req.body || {}, roadcrosserRequest,
       });

@@ -159,9 +159,9 @@ export async function readRoadcrosserDailyMissions(sessionToken: string) {
   return validateCanonicalDailyMissions(await request('/api/internal/submarine-dash/daily-missions', { sessionToken }));
 }
 
-export async function settleRoadcrosserGameplay(sessionToken: string, idempotencyKey: string,
+export async function settleRoadcrosserGameplay(sessionToken: string, expectedExternalUserId: string, idempotencyKey: string,
   runEvidenceId: string | null, event: Record<string, unknown>) {
-  const body = canonicalGameplayRequest({ canonicalToken: sessionToken, idempotencyKey, runEvidenceId, event });
+  const body = canonicalGameplayRequest({ canonicalToken: sessionToken, expectedExternalUserId, idempotencyKey, runEvidenceId, event });
   return validateCanonicalGameplayResponse(
     await request('/api/internal/submarine-dash/mutations/settle-gameplay', body), String(event.type),
   );

@@ -184,7 +184,7 @@ function areAllMissionsCompleted(missions: DailyMission[], completedMissionIds: 
 export async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-TZ-Offset-Min, Idempotency-Key, Run-Evidence-Id');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-TZ-Offset-Min, Idempotency-Key, Run-Evidence-Id, Expected-External-User-Id');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -203,9 +203,12 @@ export async function handler(req: VercelRequest, res: VercelResponse) {
         ? req.headers['idempotency-key'][0] : req.headers['idempotency-key'];
       const runEvidenceId = Array.isArray(req.headers['run-evidence-id'])
         ? req.headers['run-evidence-id'][0] : req.headers['run-evidence-id'];
+      const expectedExternalUserId = Array.isArray(req.headers['expected-external-user-id'])
+        ? req.headers['expected-external-user-id'][0] : req.headers['expected-external-user-id'];
       const event = (req.body || {}) as Record<string, unknown>;
       const result = await settleRoadcrosserGameplay(
-        canonicalToken, idempotencyKey || '', event.type === 'run_end' ? runEvidenceId || '' : null, event,
+        canonicalToken, expectedExternalUserId || '', idempotencyKey || '',
+        event.type === 'run_end' ? runEvidenceId || '' : null, event,
       );
       return res.status(200).json(result);
     }

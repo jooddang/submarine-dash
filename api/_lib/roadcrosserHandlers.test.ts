@@ -45,7 +45,7 @@ import { DOLPHIN_CONTRACT_VERSION } from '../../shared/canaryDolphin.js';
 
 const opaque = (character: string) => character.repeat(43);
 
-function request(method: string, options: { cookie?: string; origin?: string; site?: string; idempotencyKey?: string; runEvidenceId?: string; body?: unknown } = {}) {
+function request(method: string, options: { cookie?: string; origin?: string; site?: string; idempotencyKey?: string; runEvidenceId?: string; expectedExternalUserId?: string; body?: unknown } = {}) {
   return {
     method,
     body: options.body,
@@ -55,6 +55,7 @@ function request(method: string, options: { cookie?: string; origin?: string; si
       ...(options.site ? { 'sec-fetch-site': options.site } : {}),
       ...(options.idempotencyKey ? { 'idempotency-key': options.idempotencyKey } : {}),
       ...(options.runEvidenceId ? { 'run-evidence-id': options.runEvidenceId } : {}),
+      ...(options.expectedExternalUserId ? { 'expected-external-user-id': options.expectedExternalUserId } : {}),
     },
   } as unknown as VercelRequest;
 }
@@ -112,6 +113,7 @@ beforeEach(() => {
     user:{progress:{runs:0,oxygenCollected:0,maxScore:0,completedMissionIds:[]},streak:{},
       inventory:{coins:0,dolphinSaved:0,dolphinPending:0,tube:{pieces:0,charges:0},skins:{owned:[],equipped:null}}}});
   road.settleGameplay.mockResolvedValue({version:'submarine-gameplay-settlement-v1',operation:'run_end',idempotent:false,
+    acknowledgement:{externalUserId:'fixture'},
     date:'2026-08-09',progress:{runs:1,oxygenCollected:0,maxScore:1200,completedMissionIds:[],keptAt:null},
     rewards:null,coinsEarned:10,inventory:{coins:21,dolphinSaved:2,tube:{pieces:2,charges:1}},
     newAchievements:[],stateVersion:2});
@@ -174,9 +176,9 @@ describe('canonical auth handlers', () => {
     const run='97000000-0000-4000-8000-000000000022';
     const body={type:'run_end',score:1200,tubePieces:2,tubeCharges:1};
     const out=response(); await missionEventHandler(request('POST',{cookie:`sd_roadcrosser_session=${token}`,
-      origin:'https://submarine-dash.roadcrosser.com',idempotencyKey:key,runEvidenceId:run,body}),out.res);
+      origin:'https://submarine-dash.roadcrosser.com',expectedExternalUserId:'fixture',idempotencyKey:key,runEvidenceId:run,body}),out.res);
     expect(out.state).toMatchObject({status:200,json:{operation:'run_end',coinsEarned:10}});
-    expect(road.settleGameplay).toHaveBeenCalledWith(token,key,run,body);
+    expect(road.settleGameplay).toHaveBeenCalledWith(token,'fixture',key,run,body);
     expect(redisFactory).not.toHaveBeenCalled();
     const wrong=response(); await missionEventHandler(request('POST',{cookie:`sd_roadcrosser_session=${token}`,
       origin:'https://tiles.roadcrosser.com',idempotencyKey:key,runEvidenceId:run,body}),wrong.res);
