@@ -7,7 +7,7 @@ import { createBubble, spawnBackgroundEntity } from "./entities";
 import { drawSwordfish, drawUrchin, drawBackgroundEntities, drawTurtleShell } from "./drawing";
 import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, DailyMissionsPanel, DolphinStreakRewardOverlay, DolphinWeeklyWinnerRewardOverlay, InventoryPanel, SkinPanel, AchievementsPanel } from "./components/UIOverlays";
 import { getSkinDef, drawSubmarine, updateTrailParticles, drawTrailParticles, isGoldenTubeEligible, GOLDEN_TUBE_EXTRA_CHARGES, GOLDEN_TUBE_EXTRA_SCORE_BONUS, DEFAULT_SKIN_ID, preloadSkinImages, type TrailParticle, type SkinDef } from "./skins";
-import { authAPI, dolphinMutationAccessState, inventoryAPI, isReadOnlyCanary, isRunOutboxPersistenceError, leaderboardAPI, missionsAPI, achievementsAPI, type DailyMissionsResponse, type AuthUser, type UserAchievementSummary } from "./api";
+import { authAPI, dolphinMutationAccessState, inventoryAPI, isReadOnlyCanonicalSession, isRunOutboxPersistenceError, leaderboardAPI, missionsAPI, achievementsAPI, type DailyMissionsResponse, type AuthUser, type UserAchievementSummary } from "./api";
 import { DailyRequestGuard, latestDailyResult } from "./dailyRequestGuard";
 import { runLeaderboardSubmission } from "./leaderboardSubmission";
 import turtleRescueImg from "../turtle.png";
@@ -198,8 +198,8 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
   const [achievementToast, setAchievementToast] = useState<string | null>(null);
   const [userAchievements, setUserAchievements] = useState<Record<string, UserAchievementSummary>>({});
 
-  // Dolphin is sourced from Redis (server is source of truth).
-  // Client state is a cache for UI; it is reconciled via /auth/me, /missions/daily, and consume endpoint.
+  // Dolphin inventory is server-authoritative: Supabase for canonical accounts,
+  // with Redis retained only for legacy sessions. Client state is a UI cache.
   const LEGACY_DOLPHIN_LOCAL_KEY_BASE = "subdash:savedItem:dolphin";
   const clampDolphinCount = (n: number) => Math.max(0, Math.floor(n));
   const DOLPHIN_USES_PER_RUN_MAX = 3;
@@ -367,10 +367,10 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
         ? "Your previous run is not safely stored yet. Free browser storage, then press Start to retry."
         : null);
       dailyRequestGuardRef.current.invalidate();
-      const readOnlyCanary = isReadOnlyCanary(me);
+      const readOnlySession = isReadOnlyCanonicalSession(me);
       const hasPendingConsume = bindDolphinMutationAccess(me);
 
-      // Hydrate dolphin count and coin balance from Redis (source of truth).
+      // Hydrate inventory from the authenticated server authority.
       if (me?.inventory && typeof me.inventory.dolphinSaved === "number") {
         applyDolphinCountSync(me.inventory.dolphinSaved, seq);
       } else {
@@ -380,7 +380,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
         setCoinBalance(me.inventory.coins);
       }
 
-      // Hydrate tube state from Redis (server is source of truth for logged-in users).
+      // Hydrate tube state from the authenticated server authority.
       if (me?.inventory?.tube) {
         setTubePieces(me.inventory.tube.pieces ?? 0);
         setTubeRescueCharges(me.inventory.tube.charges ?? 0);
@@ -394,7 +394,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
 
       // Resolve a prior unknown consume outcome before allowing another spend. The
       // durable account-bound outbox forces the exact same idempotency key.
-      if (me?.canonical && !readOnlyCanary && hasPendingConsume) {
+      if (me?.canonical && !readOnlySession && hasPendingConsume) {
         const reconciled = await inventoryAPI.consumeDolphin();
         if (authUserRef.current?.userId === me.userId && reconciled?.inventory && typeof reconciled.inventory.dolphinSaved === 'number') {
           applyDolphinCountSync(reconciled.inventory.dolphinSaved, nextDolphinSyncSeq());
@@ -405,7 +405,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
       }
 
       // One-time import of legacy localStorage dolphins into Redis (prevents losing old items).
-      if (me?.userId && !me.canonical && !isReadOnlyCanary(me)) {
+      if (me?.userId && !me.canonical && !isReadOnlyCanonicalSession(me)) {
         const legacy = readLegacyLocalDolphinCount(me.userId);
         if (legacy > 0) {
           const importSeq = nextDolphinSyncSeq();
@@ -426,7 +426,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
           setWeeklyDolphinRewardOpen(true);
         }
       }
-      if (!isReadOnlyCanary(me)) await loadLeaderboard();
+      if (!isReadOnlyCanonicalSession(me)) await loadLeaderboard();
       await refreshDailyMissions();
     };
     loadMe();
@@ -454,7 +454,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
   useEffect(() => {
     // Refresh missions and achievements when auth changes (login/logout)
     refreshDailyMissions();
-    if (authUser?.userId && !isReadOnlyCanary(authUser)) {
+    if (authUser?.userId && !isReadOnlyCanonicalSession(authUser)) {
       achievementsAPI.getAll().then(setAchievementsList).catch(() => undefined);
     } else {
       setAchievementsList([]);
@@ -489,7 +489,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
     setWeeklyDolphinRewardOpen(true);
   }, [gameState]);
 
-  // Streak dolphin awards are granted server-side (Redis source of truth).
+  // Streak dolphin awards are granted by the authenticated server authority.
 
   useEffect(() => {
     preloadSkinImages();
@@ -800,7 +800,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
       dolphinUsesThisRunRef.current = beforeUses + 1;
       pendingDolphinConsumeRef.current = true;
       setDolphinSpendSeq((s) => s + 1);
-      // Reconcile with Redis source of truth (best-effort).
+      // Reconcile with the authenticated server authority.
       // If the server rejects (e.g., already 0), restore the local count.
       inventoryAPI
         .consumeDolphin()
@@ -1322,7 +1322,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
     didSubmitRef.current = false;
     setCoinsEarnedLastRun(0);
     const au = authUserRef.current;
-    if (au && !isReadOnlyCanary(au) && !didSendRunEndRef.current) {
+    if (au && !isReadOnlyCanonicalSession(au) && !didSendRunEndRef.current) {
       didSendRunEndRef.current = true;
       const runEndSeq = nextDolphinSyncSeq();
       const reservationId = au.canonical ? runReservationIdRef.current ?? undefined : undefined;
@@ -1413,8 +1413,8 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
   };
 
   const submitLeaderboardScore = async (name: string) => {
-    if (isReadOnlyCanary(authUserRef.current)) {
-      setScoreSubmitError("This protected canary is read-only. Scores are not submitted yet.");
+    if (isReadOnlyCanonicalSession(authUserRef.current)) {
+      setScoreSubmitError("This account session has read-only access. Scores cannot be submitted.");
       return;
     }
     return runLeaderboardSubmission({
@@ -1940,7 +1940,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
           oxygenRef.current = Math.min(Constants.OXYGEN_MAX, oxygenRef.current + Constants.OXYGEN_RESTORE);
           setOxygen(oxygenRef.current);
           playSound('oxygen');
-          if (authUserRef.current && !isReadOnlyCanary(authUserRef.current)) {
+          if (authUserRef.current && !isReadOnlyCanonicalSession(authUserRef.current)) {
             missionsAPI.postEvent({ type: "oxygen_collected", count: 1 });
           }
           return false;
@@ -2219,14 +2219,14 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
         tabIndex={0}
       />
 
-      {isReadOnlyCanary(authUser) && (
+      {isReadOnlyCanonicalSession(authUser) && (
         <div role="status" style={{
           position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)", zIndex: 50,
           maxWidth: "min(92vw, 680px)", border: "1px solid rgba(0,255,255,0.75)", borderRadius: 10,
           background: "rgba(0,20,35,0.94)", color: "#bffcff", padding: "8px 14px", textAlign: "center",
           fontSize: "0.82rem", fontWeight: 700,
         }}>
-          Protected account canary — imported progress is read-only. Scores, missions, items, skins, and online PvP are disabled.
+          This account session has read-only access. Scores, missions, items, skins, and online PvP are unavailable.
         </div>
       )}
 
@@ -2378,7 +2378,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
           }}
           achievementProgress={achievementsList.length > 0 ? `${achievementsList.filter(a => a.unlocked).length}/${achievementsList.length}` : undefined}
           onPvpClick={onPvpClick}
-          onOnlinePvpClick={isReadOnlyCanary(authUser) ? undefined : onOnlinePvpClick}
+          onOnlinePvpClick={isReadOnlyCanonicalSession(authUser) ? undefined : onOnlinePvpClick}
           userAchievements={userAchievements}
         />
       )}

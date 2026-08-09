@@ -392,7 +392,7 @@ function keySession(token) {
   return `${KEY_PREFIX}session:${token}`;
 }
 
-// Dolphin inventory (Redis is source of truth)
+// Legacy-session dolphin inventory keys. Canonical accounts use Supabase.
 function keyDolphinSaved(userId) {
   return `${KEY_PREFIX}user:${userId}:dolphin:saved`;
 }
@@ -456,7 +456,7 @@ async function migratePendingDolphins(userId) {
   return { saved, moved: 0 };
 }
 
-// Coin inventory (Redis is source of truth)
+// Legacy-session coin inventory keys. Canonical accounts use Supabase.
 function keyCoinBalance(userId) {
   return `${KEY_PREFIX}user:${userId}:coins`;
 }
@@ -490,7 +490,7 @@ async function addCoins(userId, amount, meta) {
   return getCoinBalance(userId);
 }
 
-// Tube inventory (Redis is source of truth)
+// Legacy-session tube inventory keys. Canonical accounts use Supabase.
 function keyTubeState(userId) {
   return `${KEY_PREFIX}user:${userId}:tube`;
 }
@@ -1441,7 +1441,7 @@ app.post('/api/missions/event', async (req, res) => {
   }
 });
 
-// Dolphin inventory endpoints (Redis source of truth)
+// Dolphin endpoints dispatch canonical sessions to Supabase and legacy sessions to Redis.
 app.post('/api/inventory/dolphin/consume', async (req, res) => {
   try {
     const canonicalToken=parseCookies(req)[CANONICAL_SESSION_COOKIE_NAME];

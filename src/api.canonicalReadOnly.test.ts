@@ -24,7 +24,7 @@ describe('canonical read-only client barrier', () => {
   });
   it('never auto-imports or clears local dolphin buckets during canonical hydration', () => {
     const game=readFileSync(new URL('./Game.tsx',import.meta.url),'utf8');
-    expect(game).toContain('if (me?.userId && !me.canonical && !isReadOnlyCanary(me))');
+    expect(game).toContain('if (me?.userId && !me.canonical && !isReadOnlyCanonicalSession(me))');
     expect(game.indexOf('if (imported?.inventory && typeof imported.inventory.dolphinSaved === "number")'))
       .toBeLessThan(game.indexOf('clearLegacyLocalDolphinCount(me.userId)'));
     expect(game).toContain('bindDolphinMutationAccess(null);');

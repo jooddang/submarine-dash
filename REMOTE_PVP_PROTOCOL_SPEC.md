@@ -2,7 +2,7 @@
 
 ## Status
 
-Implementation-grade protocol spec for online PvP. This document is intended to follow [REMOTE_PVP_ARCHITECTURE.md](/Users/jooddang/Documents/submarine-dash/REMOTE_PVP_ARCHITECTURE.md) and be concrete enough for parallel frontend and backend work.
+Implementation-grade protocol spec for online PvP. This document is intended to follow [REMOTE_PVP_ARCHITECTURE.md](REMOTE_PVP_ARCHITECTURE.md) and be concrete enough for parallel frontend and backend work.
 
 ## Scope
 
@@ -16,7 +16,7 @@ This spec defines:
 - deterministic match-start contract
 - file-by-file implementation plan
 
-This spec does not redefine the remote PvP product goals or overall topology already documented in [REMOTE_PVP_ARCHITECTURE.md](/Users/jooddang/Documents/submarine-dash/REMOTE_PVP_ARCHITECTURE.md).
+This spec does not redefine the remote PvP product goals or overall topology already documented in [REMOTE_PVP_ARCHITECTURE.md](REMOTE_PVP_ARCHITECTURE.md).
 
 ## Hard Requirements
 
@@ -1305,9 +1305,9 @@ Add:
 
 Adjust:
 
-- [src/pvp/pvpGameLogic.ts](/Users/jooddang/Documents/submarine-dash/src/pvp/pvpGameLogic.ts)
-- [src/pvp/pvpWorld.ts](/Users/jooddang/Documents/submarine-dash/src/pvp/pvpWorld.ts)
-- [src/pvp/PvpGame.tsx](/Users/jooddang/Documents/submarine-dash/src/pvp/PvpGame.tsx)
+- [src/pvp/pvpGameLogic.ts](src/pvp/pvpGameLogic.ts)
+- [src/pvp/pvpWorld.ts](src/pvp/pvpWorld.ts)
+- [src/pvp/PvpGame.tsx](src/pvp/PvpGame.tsx)
 
 Goal:
 
@@ -1327,9 +1327,9 @@ Add:
 
 Adjust:
 
-- [index.tsx](/Users/jooddang/Documents/submarine-dash/index.tsx)
-- [src/components/UIOverlays.tsx](/Users/jooddang/Documents/submarine-dash/src/components/UIOverlays.tsx)
-- [src/api.ts](/Users/jooddang/Documents/submarine-dash/src/api.ts)
+- [index.tsx](index.tsx)
+- [src/components/UIOverlays.tsx](src/components/UIOverlays.tsx)
+- [src/api.ts](src/api.ts)
 
 Goal:
 

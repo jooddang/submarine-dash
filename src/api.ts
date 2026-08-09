@@ -62,13 +62,13 @@ export type AuthUser = {
 
 let activeAuthAccess: Pick<AuthUser, 'userId' | 'canonical' | 'readOnly' | 'readCapabilities' | 'writeCapabilities'> | null = null;
 
-export function isReadOnlyCanary(user: AuthUser | null | undefined): boolean {
+export function isReadOnlyCanonicalSession(user: AuthUser | null | undefined): boolean {
   return user?.canonical === true && user.readOnly === true;
 }
 
 export function dolphinMutationAccessState(user: AuthUser | null, hasPendingConsume: boolean) {
   const pending = Boolean(user?.canonical && hasPendingConsume);
-  return { pending, enabled: !isReadOnlyCanary(user) && !pending };
+  return { pending, enabled: !isReadOnlyCanonicalSession(user) && !pending };
 }
 
 function rememberAuthAccess(user: AuthUser | null) {
@@ -86,27 +86,11 @@ function requireReadableGameSession(capability: string) {
 
 function requireWritableGameSession(capability?: string) {
   if (activeAuthAccess?.canonical && (!capability || !activeAuthAccess.writeCapabilities?.includes(capability))) {
-    throw new Error('This canonical canary session is read-only');
+    throw new Error('This canonical account session is read-only');
   }
 }
 
 export const leaderboardAPI = {
-  // Get current leaderboard
-  async getLeaderboard(): Promise<LeaderboardEntry[]> {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/leaderboard`);
-      if (!response.ok) {
-        const text = await response.text().catch(() => '');
-        throw new Error(`Failed to fetch leaderboard (status=${response.status}) ${text}`);
-      }
-      return await response.json();
-    } catch (error) {
-      console.error('Error fetching leaderboard:', error);
-      // Return empty array as fallback
-      return [];
-    }
-  },
-
   // Get current + historical weekly leaderboards (PST week boundary)
   async getWeeklyLeaderboards(limit?: number): Promise<{
     currentWeekId: string;

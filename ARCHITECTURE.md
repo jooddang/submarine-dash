@@ -2,7 +2,7 @@
 
 ## 아키텍처 개요
 
-React 19 + HTML5 Canvas 기반 브라우저 게임 모놀리스. 프론트엔드는 단일 게임 컴포넌트(`Game.tsx`)가 Canvas 렌더링과 게임 루프를 담당하고, UI 오버레이는 React 컴포넌트로 분리. 백엔드는 Vercel 서버리스 함수(프로덕션)와 Express 로컬 서버(개발)의 이중 구조. Redis는 레거시 저장소이며, 보호 계정용 Roadcrosser/Supabase 읽기 전용 canary 경계가 추가되어 있다.
+React 19 + HTML5 Canvas 기반 브라우저 게임 모놀리스. 프론트엔드는 단일 게임 컴포넌트(`Game.tsx`)가 Canvas 렌더링과 게임 루프를 담당하고, UI 오버레이는 React 컴포넌트로 분리. 백엔드는 Vercel 서버리스 함수(프로덕션)와 Express 로컬 서버(개발)의 이중 구조. Roadcrosser Supabase가 canonical account gameplay의 영구 source of truth이며, Redis는 legacy session 호환과 TTL 기반 PvP coordination에만 남아 있다.
 
 ## 아키텍처 다이어그램
 
@@ -17,18 +17,16 @@ React 19 + HTML5 Canvas 기반 브라우저 게임 모놀리스. 프론트엔드
   ├── Vercel Serverless Functions (production)
   └── Express.js Dev Server (development)
          │
-         ▼ Redis Protocol
-[Upstash Redis / Local Redis]
-
-[Roadcrosser internal API]
-  └── hashed one-time ticket/session authority + read-only protected bootstrap
+         ├── canonical account session ──► [Roadcrosser internal API]
+         │                                  └── Supabase Auth + Postgres durable state
+         └── legacy session / ephemeral PvP ──► [Upstash Redis / Local Redis]
 ```
 
 ### Canonical authentication boundary
 
-- Roadcrosser owns Supabase Auth, ticket/session hashes, and the service-role
-  boundary. Submarine receives neither database credentials nor service-role
-  credentials.
+- Roadcrosser owns Supabase Auth, ticket/session hashes, durable canonical game
+  state, and the service-role boundary. Submarine receives neither database
+  credentials nor service-role credentials.
 - The game exposes one top-right Roadcrosser login entry. For the two protected
   owner-linked accounts, Roadcrosser may also exchange the preserved Submarine
   ID/password for the same Supabase session through the internal read-only

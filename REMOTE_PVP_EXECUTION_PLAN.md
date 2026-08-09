@@ -6,8 +6,8 @@ CTO-level delivery plan for shipping online PvP without regressing the existing 
 
 This document sits on top of:
 
-- [REMOTE_PVP_ARCHITECTURE.md](/Users/jooddang/Documents/submarine-dash/REMOTE_PVP_ARCHITECTURE.md)
-- [REMOTE_PVP_PROTOCOL_SPEC.md](/Users/jooddang/Documents/submarine-dash/REMOTE_PVP_PROTOCOL_SPEC.md)
+- [REMOTE_PVP_ARCHITECTURE.md](REMOTE_PVP_ARCHITECTURE.md)
+- [REMOTE_PVP_PROTOCOL_SPEC.md](REMOTE_PVP_PROTOCOL_SPEC.md)
 
 ## Executive Direction
 

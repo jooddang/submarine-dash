@@ -93,8 +93,10 @@
 | `SD_MIGRATION_RUNTIME_PROBE_URLS` | Comma-separated deployed HTTPS health probes required before freeze | `https://game.example/api/health` | Freeze operator only |
 | `SD_MIGRATION_EXPECTED_DEPLOYED_COMMIT` | Exact commit every runtime probe must report | Git SHA | Freeze operator only |
 
-Canonical canary responses carry both `canonical: true` and `readOnly: true`.
-The browser disables writes for clear UX, while the server enforces the trust
-boundary by refusing legacy Redis session resolution whenever the canonical
-cookie is present. Canonical, legacy, and callback-state cookies are host-only
-and are never interchangeable.
+Canonical responses carry explicit `readOnly`, `readCapabilities`, and
+`writeCapabilities` fields. The browser uses these for UX, while every server
+mutation independently enforces the same capability boundary and refuses
+legacy Redis session resolution whenever the canonical cookie is present.
+Several environment variables retain `CANARY` in their names for deployment
+compatibility; they are rollout gates, not a separate account type. Canonical,
+legacy, and callback-state cookies are host-only and are never interchangeable.

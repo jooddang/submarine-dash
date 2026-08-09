@@ -157,7 +157,7 @@
 - **Per-run limit**: 3 double jumps maximum per run
 - **Smart skip**: Won't consume a Dolphin if landing is imminent (kinematic prediction within 8 frames)
 - **Toggle**: HUD button to enable/disable dolphin usage during a run
-- **Inventory**: Server-side Redis (source of truth) with optimistic client-side updates + sequence-based rollback
+- **Inventory**: Server-authoritative with optimistic client updates and sequence-based rollback. Canonical Roadcrosser accounts persist in Supabase; Redis remains only for legacy sessions.
 - **Legacy migration**: Auto-imports dolphins from localStorage on login
 
 ### 6.6 Tube Pieces — LIVE
@@ -493,9 +493,9 @@ Mobile audio unlock handled via user interaction events.
 
 ---
 
-## 13) Corrections from Outdated Document
+## 13) Historical Design Corrections
 
-The outdated "Game Design Document" contained several discrepancies from the actual implementation:
+Earlier design drafts contained several discrepancies from the actual implementation. Those drafts were removed after the corrections below were incorporated here:
 
 | Topic | Outdated Doc Says | Actual Implementation |
 |-------|-------------------|----------------------|

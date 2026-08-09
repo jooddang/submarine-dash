@@ -11,27 +11,27 @@ Status semantics used here:
 ## Done
 
 - Architecture/design docs are in place:
-  - [REMOTE_PVP_ARCHITECTURE.md](/Users/jooddang/Documents/submarine-dash/REMOTE_PVP_ARCHITECTURE.md)
-  - [REMOTE_PVP_PROTOCOL_SPEC.md](/Users/jooddang/Documents/submarine-dash/REMOTE_PVP_PROTOCOL_SPEC.md)
-  - [REMOTE_PVP_EXECUTION_PLAN.md](/Users/jooddang/Documents/submarine-dash/REMOTE_PVP_EXECUTION_PLAN.md)
+  - [REMOTE_PVP_ARCHITECTURE.md](REMOTE_PVP_ARCHITECTURE.md)
+  - [REMOTE_PVP_PROTOCOL_SPEC.md](REMOTE_PVP_PROTOCOL_SPEC.md)
+  - [REMOTE_PVP_EXECUTION_PLAN.md](REMOTE_PVP_EXECUTION_PLAN.md)
 - App entry points are wired:
-  - [index.tsx](/Users/jooddang/Documents/submarine-dash/index.tsx)
-  - [src/components/UIOverlays.tsx](/Users/jooddang/Documents/submarine-dash/src/components/UIOverlays.tsx)
+  - [index.tsx](index.tsx)
+  - [src/components/UIOverlays.tsx](src/components/UIOverlays.tsx)
 - Initial online REST surface exists:
   - bootstrap, ws-ticket, inbox, lobby, room create/get, invite send/accept/decline/cancel/pending
 - `pvp-core` scaffold exists:
-  - [src/pvp-core/types.ts](/Users/jooddang/Documents/submarine-dash/src/pvp-core/types.ts)
-  - [src/pvp-core/sim.ts](/Users/jooddang/Documents/submarine-dash/src/pvp-core/sim.ts)
-  - [src/pvp-core/checksum.ts](/Users/jooddang/Documents/submarine-dash/src/pvp-core/checksum.ts)
+  - [src/pvp-core/types.ts](src/pvp-core/types.ts)
+  - [src/pvp-core/sim.ts](src/pvp-core/sim.ts)
+  - [src/pvp-core/checksum.ts](src/pvp-core/checksum.ts)
 
 ## In Progress
 
 - Deterministic simulation extraction
   - core exists, but local PvP and authoritative-state separation are not fully complete
 - Online UI shell
-  - [src/pvp-online/OnlinePvpLobby.tsx](/Users/jooddang/Documents/submarine-dash/src/pvp-online/OnlinePvpLobby.tsx)
-  - [src/pvp-online/OnlinePvpRoom.tsx](/Users/jooddang/Documents/submarine-dash/src/pvp-online/OnlinePvpRoom.tsx)
-  - [src/pvp-online/OnlinePvpMatch.tsx](/Users/jooddang/Documents/submarine-dash/src/pvp-online/OnlinePvpMatch.tsx)
+  - [src/pvp-online/OnlinePvpLobby.tsx](src/pvp-online/OnlinePvpLobby.tsx)
+  - [src/pvp-online/OnlinePvpRoom.tsx](src/pvp-online/OnlinePvpRoom.tsx)
+  - [src/pvp-online/OnlinePvpMatch.tsx](src/pvp-online/OnlinePvpMatch.tsx)
 - Polling-based authoritative match alpha
   - split-screen top/bottom online match rendering now exists
   - room -> match -> result -> room loop is wired
