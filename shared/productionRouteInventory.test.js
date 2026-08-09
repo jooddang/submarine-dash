@@ -86,7 +86,7 @@ describe('production route inventory', () => {
       .filter(([, , path]) => path.startsWith('/api/'))
       .map(([, method, path]) => `${method.toUpperCase()} ${path.replace(/:[^/]+/g, ':parameter')}`)
       .sort();
-    const productionRoutes = PRODUCTION_ROUTE_INVENTORY.flatMap((entry) =>
+    const productionRoutes = PRODUCTION_ROUTE_INVENTORY.filter((entry) => entry.local).flatMap((entry) =>
       Object.keys(entry.methods).map((method) => `${method} ${routeFileToPath(entry.file)}`)
     ).sort();
     expect(localRoutes).toEqual(productionRoutes);

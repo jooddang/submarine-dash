@@ -7,7 +7,7 @@ export const ROUTE_CLASS = Object.freeze({
   GET_SIDE_EFFECT: 'get-with-side-effect',
 });
 
-const route = (file, methods, keyFamilies) => ({ file, methods, keyFamilies });
+const route = (file, methods, keyFamilies, local = true) => ({ file, methods, keyFamilies, local });
 
 // Production Vercel functions are authoritative. Keep this list explicit so a new
 // api/** function cannot silently bypass migration controls.
@@ -22,6 +22,7 @@ export const PRODUCTION_ROUTE_INVENTORY = Object.freeze([
   route('api/auth/roadcrosser/callback.ts', { POST: ROUTE_CLASS.EPHEMERAL_MUTATION }, []),
   route('api/auth/roadcrosser/start.ts', { GET: ROUTE_CLASS.EPHEMERAL_MUTATION }, []),
   route('api/health.ts', { GET: ROUTE_CLASS.READ_ONLY }, []),
+  route('api/internal/roadcrosser/verify-legacy-password.ts', { POST: ROUTE_CLASS.READ_ONLY }, ['sd:loginId:*', 'sd:user:*'], false),
   route('api/inventory/dolphin/consume.ts', { POST: ROUTE_CLASS.DURABLE_MUTATION }, ['sd:user:*:dolphin:*']),
   route('api/inventory/dolphin/import.ts', { POST: ROUTE_CLASS.DURABLE_MUTATION }, ['sd:user:*:dolphin:*']),
   route('api/inventory/skin/equip.ts', { POST: ROUTE_CLASS.DURABLE_MUTATION }, ['sd:user:*:skins:*']),
@@ -59,7 +60,7 @@ export const PRODUCTION_ROUTE_INVENTORY = Object.freeze([
   route('api/pvp/settle-bet.ts', { POST: ROUTE_CLASS.DURABLE_MUTATION }, ['sd:user:*:coins', 'sd:user:*:dolphin:*', 'sd:user:*:tube']),
 ]);
 
-export const ROUTE_INVENTORY_VERSION = 2;
+export const ROUTE_INVENTORY_VERSION = 3;
 export const PRODUCTION_KEY_FAMILIES = Object.freeze([...new Set(
   PRODUCTION_ROUTE_INVENTORY.flatMap((entry) => entry.keyFamilies),
 )].sort());
@@ -131,7 +132,9 @@ function pathPattern(file) {
   return new RegExp('^' + escaped.replace(/:parameter/g, '[^/]+') + '$');
 }
 
-const LOCAL_ROUTE_PATTERNS = PRODUCTION_ROUTE_INVENTORY.map((entry) => ({ entry, pattern: pathPattern(entry.file) }));
+const LOCAL_ROUTE_PATTERNS = PRODUCTION_ROUTE_INVENTORY
+  .filter((entry) => entry.local)
+  .map((entry) => ({ entry, pattern: pathPattern(entry.file) }));
 
 export function localRouteClassification(path, method) {
   const normalizedMethod = String(method || '').toUpperCase();

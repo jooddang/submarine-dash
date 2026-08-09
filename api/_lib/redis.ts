@@ -2,6 +2,7 @@ import { Redis } from '@upstash/redis';
 import { createControlledRedis, productionControlFlags } from '../../shared/productionControls.js';
 
 let redisReadOnly: Redis | null = null;
+let redisStrictReadOnly: Redis | null = null;
 let redisReadWrite: Redis | null = null;
 let redisControlledReadWrite: Redis | null = null;
 
@@ -46,6 +47,15 @@ export function getUpstashRedisClient(readOnly: boolean): Redis {
   return redisControlledReadWrite;
 }
 
+export function getStrictUpstashRedisReadOnlyClient(): Redis {
+  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.KV_REST_API_READ_ONLY_TOKEN || process.env.UPSTASH_REDIS_REST_READ_ONLY_TOKEN;
+  if (!url) throw new RedisConfigError('Missing Redis URL for legacy verification.');
+  if (!token) throw new RedisConfigError('Missing dedicated read-only Redis token for legacy verification.');
+  if (!redisStrictReadOnly) redisStrictReadOnly = new Redis({ url, token });
+  return redisStrictReadOnly;
+}
+
 export function getRawUpstashRedisClient(): Redis {
   const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -53,4 +63,3 @@ export function getRawUpstashRedisClient(): Redis {
   if (!redisReadWrite) redisReadWrite = new Redis({ url, token });
   return redisReadWrite;
 }
-
