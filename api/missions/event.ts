@@ -1,6 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { withProductionControl } from './../_lib/productionControls.js';
-import { getCanonicalSessionToken, getUserIdForSession, KEY_PREFIX } from '../_lib/auth.js';
+import { getCanonicalSessionToken, getUserIdForSession, isAllowedSubmarineMutationOrigin, KEY_PREFIX } from '../_lib/auth.js';
+import { settleRoadcrosserGameplay } from '../_lib/roadcrosserAuth.js';
+import { isCanonicalGameplayAdmission } from '../../shared/canonicalGameplay.js';
 import { getUpstashRedisClient } from '../_lib/redis.js';
 import {
   addSavedDolphins,
@@ -58,7 +60,8 @@ type StreakRecord = {
 
 type MissionEvent =
   | { type: 'run_end'; score: number; tubePieces?: number; tubeCharges?: number; deathCause?: string | null; perfectPlatformer?: boolean; allOxygenCollected?: boolean }
-  | { type: 'oxygen_collected'; count?: number };
+  | { type: 'oxygen_collected'; count?: number }
+  | { type: 'pvp_result'; won: boolean };
 
 function todayKeyUTC(d = new Date()): string {
   return d.toISOString().slice(0, 10);
@@ -181,14 +184,30 @@ function areAllMissionsCompleted(missions: DailyMission[], completedMissionIds: 
 export async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-TZ-Offset-Min');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-TZ-Offset-Min, Idempotency-Key, Run-Evidence-Id');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
 
   try {
-    if (getCanonicalSessionToken(req)) {
-      return res.status(409).json({ error: 'Canonical mission rewards require trusted gameplay settlement' });
+    const canonicalToken = getCanonicalSessionToken(req);
+    if (canonicalToken) {
+      const expectedOrigin = process.env.SD_SUBMARINE_PUBLIC_ORIGIN || 'https://submarine-dash.roadcrosser.com';
+      const origin = Array.isArray(req.headers.origin) ? req.headers.origin[0] : req.headers.origin;
+      if (!isCanonicalGameplayAdmission({ method: req.method, origin, expectedOrigin, canonicalToken,
+        enabled: process.env.SD_SUPABASE_GAMEPLAY_WRITES_ENABLED === 'true',
+        allowedOrigin: isAllowedSubmarineMutationOrigin(req) })) {
+        return res.status(origin !== expectedOrigin ? 403 : 409).json({ error: 'Canonical gameplay settlement is not enabled' });
+      }
+      const idempotencyKey = Array.isArray(req.headers['idempotency-key'])
+        ? req.headers['idempotency-key'][0] : req.headers['idempotency-key'];
+      const runEvidenceId = Array.isArray(req.headers['run-evidence-id'])
+        ? req.headers['run-evidence-id'][0] : req.headers['run-evidence-id'];
+      const event = (req.body || {}) as Record<string, unknown>;
+      const result = await settleRoadcrosserGameplay(
+        canonicalToken, idempotencyKey || '', event.type === 'run_end' ? runEvidenceId || '' : null, event,
+      );
+      return res.status(200).json(result);
     }
     const userId = await getUserIdForSession(req);
     if (!userId) return res.status(401).json({ error: 'Login required' });
@@ -407,10 +426,10 @@ export async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-export function isCanonicalMissionEventRejection(req: VercelRequest) {
+export function isCanonicalMissionEventBoundary(req: VercelRequest) {
   return req.method === 'POST' && Boolean(getCanonicalSessionToken(req));
 }
 
 export const createMissionEventRoute = (dependencies: Parameters<typeof withProductionControl>[2] = {}) =>
-  withProductionControl('api/missions/event.ts', handler, dependencies, isCanonicalMissionEventRejection);
+  withProductionControl('api/missions/event.ts', handler, dependencies, isCanonicalMissionEventBoundary);
 export default createMissionEventRoute();

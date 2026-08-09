@@ -229,6 +229,7 @@ export function productionControlFlags(env = process.env) {
     supabaseShadowVerification: env.SD_SUPABASE_SHADOW_VERIFY === 'true',
     admissionGate: env.SD_MIGRATION_ADMISSION_GATE_ENABLED === 'true',
     canonicalAuthTickets: env.SD_CANONICAL_AUTH_TICKETS_ENABLED === 'true',
+    supabaseGameplayWrites: env.SD_SUPABASE_GAMEPLAY_WRITES_ENABLED === 'true',
     protectedAccountCanary: env.SD_PROTECTED_ACCOUNT_CANARY_ENABLED === 'true',
     rollbackMode: env.SD_MIGRATION_ROLLBACK_MODE === 'true',
   });

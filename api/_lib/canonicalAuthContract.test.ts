@@ -66,6 +66,9 @@ describe('canonical Submarine auth contract', () => {
     expect(server).toContain("'/api/internal/submarine-dash/mutations/purchase-skin'");
     expect(server).toContain("process.env.SD_SUPABASE_DOLPHIN_WRITE_CANARY_ENABLED === 'true'");
     expect(server).toContain('isExpressDolphinCanaryAdmission({');
+    expect(server).toContain("process.env.SD_SUPABASE_GAMEPLAY_WRITES_ENABLED === 'true'");
+    expect(server).toContain('executeExpressCanonicalGameplay({');
+    expect(server).toContain("'/api/internal/submarine-dash/mutations/settle-gameplay'");
     expect(server).toContain("executeExpressCanonicalDolphin({operation:'consume_dolphin'");
     expect(server).toContain("executeExpressCanonicalDolphin({operation:'import_dolphin'");
     expect(server).toContain('validateCanaryPurchaseResponse(result, skinId)');

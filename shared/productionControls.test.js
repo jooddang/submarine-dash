@@ -455,6 +455,7 @@ describe('distributed production controls', () => {
       supabaseShadowVerification: false,
       admissionGate: false,
       canonicalAuthTickets: false,
+      supabaseGameplayWrites: false,
       protectedAccountCanary: false,
       rollbackMode: false,
     });

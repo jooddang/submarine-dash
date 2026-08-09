@@ -2,6 +2,7 @@ import { validateCanaryEquipResponse } from '../../shared/canaryEquip.js';
 import { SKIN_CATALOG_VERSION, validateCanaryPurchaseResponse } from '../../shared/canaryPurchase.js';
 import { DOLPHIN_CONTRACT_VERSION, validateCanaryDolphinResponse } from '../../shared/canaryDolphin.js';
 import { validateCanonicalDailyMissions } from '../../shared/canonicalDailyMissions.js';
+import { canonicalGameplayRequest, validateCanonicalGameplayResponse } from '../../shared/canonicalGameplay.js';
 
 const productionBaseUrl = 'https://www.roadcrosser.com';
 const opaque256 = /^[A-Za-z0-9_-]{43}$/;
@@ -15,6 +16,7 @@ const allowedPaths = new Set([
   '/api/internal/submarine-dash/mutations/consume-dolphin',
   '/api/internal/submarine-dash/mutations/import-dolphin',
   '/api/internal/submarine-dash/daily-missions',
+  '/api/internal/submarine-dash/mutations/settle-gameplay',
 ]);
 
 export type CanonicalSubmarineUser = {
@@ -114,6 +116,10 @@ export async function readRoadcrosserCanonicalBootstrap(sessionToken: string) {
     || !Array.isArray(result.readCapabilities)
     || result.readCapabilities.some((capability) => capability !== 'read_daily_missions')
     || !Array.isArray(result.writeCapabilities)
+    || result.writeCapabilities.some((capability) => ![
+      'equip_skin', 'purchase_skin', 'consume_dolphin', 'import_dolphin',
+      'settle_run_end', 'settle_oxygen_collected', 'settle_pvp_result',
+    ].includes(String(capability)))
     || !user
     || typeof user.externalUserId !== 'string'
     || typeof user.loginId !== 'string'
@@ -151,4 +157,12 @@ export async function importRoadcrosserCanaryDolphin(sessionToken: string, idemp
 
 export async function readRoadcrosserDailyMissions(sessionToken: string) {
   return validateCanonicalDailyMissions(await request('/api/internal/submarine-dash/daily-missions', { sessionToken }));
+}
+
+export async function settleRoadcrosserGameplay(sessionToken: string, idempotencyKey: string,
+  runEvidenceId: string | null, event: Record<string, unknown>) {
+  const body = canonicalGameplayRequest({ canonicalToken: sessionToken, idempotencyKey, runEvidenceId, event });
+  return validateCanonicalGameplayResponse(
+    await request('/api/internal/submarine-dash/mutations/settle-gameplay', body), String(event.type),
+  );
 }

@@ -55,7 +55,7 @@ describe('production route inventory', () => {
         expect(source.trimEnd().endsWith('export default createDailyMissionsRoute();'), file).toBe(true);
       } else if (file === 'api/missions/event.ts') {
         expect(source, file).toContain(
-          "withProductionControl('api/missions/event.ts', handler, dependencies, isCanonicalMissionEventRejection)",
+          "withProductionControl('api/missions/event.ts', handler, dependencies, isCanonicalMissionEventBoundary)",
         );
         expect(source.trimEnd().endsWith('export default createMissionEventRoute();'), file).toBe(true);
       } else {

@@ -84,6 +84,7 @@
 | `SD_PROTECTED_ACCOUNT_CANARY_ENABLED` | Restrict later cutover to protected canaries | `false` | No |
 | `SD_LEGACY_ROAD_LOGIN_ENABLED` | Permit the internal read-only legacy verifier for protected Roadcrosser login | `false` | No |
 | `SD_MIGRATION_ROLLBACK_MODE` | Route later storage access through rollback mode | `false` | No |
+| `SD_SUPABASE_GAMEPLAY_WRITES_ENABLED` | Route canonical mission gameplay settlement to Roadcrosser Supabase; legacy sessions remain on Redis | `false` | Canonical auth only |
 | `SD_SUBMARINE_PUBLIC_ORIGIN` | Exact same-origin boundary for canonical logout | `https://submarine-dash.roadcrosser.com` | Canonical auth only |
 | `SD_ROADCROSSER_PUBLIC_ORIGIN` | Exact Roadcrosser ticket issuer origin | `https://www.roadcrosser.com` | Canonical auth only |
 | `SD_ROADCROSSER_INTERNAL_BASE_URL` | Fixed server-to-server Roadcrosser base URL; localhost is accepted only outside production | `https://www.roadcrosser.com` | Canonical auth only |

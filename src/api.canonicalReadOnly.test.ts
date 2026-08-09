@@ -199,4 +199,40 @@ describe('canonical read-only client barrier', () => {
     const replayKey=(fetchMock.mock.calls[5][1]?.headers as Record<string,string>)['Idempotency-Key'];
     expect(replay?.acknowledgement?.account).toBe('account-a'); expect(replayKey).toBe(aKey);
   });
+
+  it('queues every canonical run before I/O and flushes only its owning account in order', async () => {
+    const values=new Map<string,string>();
+    vi.stubGlobal('localStorage',{
+      getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value),removeItem:(key:string)=>values.delete(key),
+    });
+    const me=(id:string)=>new Response(JSON.stringify({canonical:true,readOnly:false,writeCapabilities:['settle_run_end'],
+      user:{userId:id,loginId:id,refCode:''}}),{status:200,headers:{'content-type':'application/json'}});
+    const settled=(score:number)=>new Response(JSON.stringify({version:'submarine-gameplay-settlement-v1',operation:'run_end',idempotent:false,
+      date:'2026-08-09',progress:{runs:1,oxygenCollected:0,maxScore:score,completedMissionIds:[],keptAt:null},rewards:null,
+      coinsEarned:10,inventory:{coins:10,dolphinSaved:0,tube:{pieces:0,charges:0}},newAchievements:[],stateVersion:2}),
+      {status:200,headers:{'content-type':'application/json'}});
+    const fetchMock=vi.fn().mockResolvedValueOnce(me('account-a'))
+      .mockRejectedValueOnce(new Error('offline first run')).mockRejectedValueOnce(new Error('still offline'))
+      .mockResolvedValueOnce(me('account-b')).mockResolvedValueOnce(me('account-a'))
+      .mockResolvedValueOnce(settled(1000)).mockResolvedValueOnce(settled(2000));
+    vi.stubGlobal('fetch',fetchMock);
+    await authAPI.me();
+    await expect(missionsAPI.postEvent({type:'run_end',score:1000,tubePieces:0,tubeCharges:0})).rejects.toThrow('offline');
+    await expect(missionsAPI.postEvent({type:'run_end',score:2000,tubePieces:0,tubeCharges:0})).rejects.toThrow('offline');
+    const queued=JSON.parse(values.get('sd:gameplay-run-outbox:account-a') || '[]');
+    expect(queued).toHaveLength(2);
+    expect(queued.map((item:{event:{score:number}})=>item.event.score)).toEqual([1000,2000]);
+    const originalIds=queued.map((item:{idempotencyKey:string,runEvidenceId:string})=>[item.idempotencyKey,item.runEvidenceId]);
+    await authAPI.me();
+    expect(values.has('sd:gameplay-run-outbox:account-a')).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    await authAPI.me();
+    await vi.waitFor(()=>expect(values.has('sd:gameplay-run-outbox:account-a')).toBe(false));
+    const flushed=fetchMock.mock.calls.slice(5,7).map((call)=>{
+      const headers=call[1]?.headers as Record<string,string>;
+      return [headers['Idempotency-Key'],headers['Run-Evidence-Id']];
+    });
+    expect(flushed).toEqual(originalIds);
+    expect(values.has('sd:gameplay-run-outbox:account-b')).toBe(false);
+  });
 });

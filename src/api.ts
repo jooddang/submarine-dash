@@ -1,4 +1,5 @@
 import type { LeaderboardEntry, WeeklyLeaderboard } from "./types";
+import { validateCanonicalGameplayResponse } from '../shared/canonicalGameplay.js';
 
 // Use environment variable if available, otherwise auto-detect
 // In production (Vercel), use relative path which will hit Vercel serverless functions
@@ -180,6 +181,9 @@ export const authAPI = {
         writeCapabilities: Array.isArray(data.writeCapabilities) ? data.writeCapabilities : [],
       } as AuthUser;
       rememberAuthAccess(user);
+      if (user.canonical && user.writeCapabilities?.includes('settle_run_end')) {
+        void flushPendingCanonicalRuns(user.userId).catch(() => undefined);
+      }
       return user;
     } catch {
       rememberAuthAccess(null);
@@ -270,6 +274,69 @@ export type DailyMissionsResponse =
       };
     };
 
+type MissionEvent =
+  | { type: 'run_end'; score: number; tubePieces?: number; tubeCharges?: number; deathCause?: string | null; perfectPlatformer?: boolean; allOxygenCollected?: boolean; urchinDodges?: number; swordfishCollected?: boolean; swordfishDodged?: boolean }
+  | { type: 'oxygen_collected'; count?: number }
+  | { type: 'pvp_result'; won: boolean };
+
+type RunOutbox = { account: string; idempotencyKey: string; runEvidenceId: string; event: Extract<MissionEvent, { type: 'run_end' }> };
+const MAX_RUN_OUTBOX_ITEMS = 16;
+
+function runOutboxKey(account: string) { return `sd:gameplay-run-outbox:${account}`; }
+
+function validRunAttempt(value: RunOutbox | null, account: string): value is RunOutbox {
+  return value?.account === account && MUTATION_UUID_RE.test(value.idempotencyKey)
+    && MUTATION_UUID_RE.test(value.runEvidenceId) && value.event?.type === 'run_end';
+}
+
+function readRunQueue(account: string): RunOutbox[] {
+  const key = runOutboxKey(account);
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || '[]') as RunOutbox[] | RunOutbox;
+    const queue = Array.isArray(value) ? value : [value];
+    if (queue.length <= MAX_RUN_OUTBOX_ITEMS && queue.every((attempt) => validRunAttempt(attempt, account))) return queue;
+    localStorage.removeItem(key);
+    return [];
+  } catch {
+    try { localStorage.removeItem(key); } catch { /* unavailable storage */ }
+    return [];
+  }
+}
+
+function writeRunQueue(account: string, queue: RunOutbox[]) {
+  if (queue.length === 0) localStorage.removeItem(runOutboxKey(account));
+  else localStorage.setItem(runOutboxKey(account), JSON.stringify(queue));
+}
+
+async function sendCanonicalMissionEvent(event: MissionEvent, idempotencyKey: string, runEvidenceId: string | null) {
+  const res = await fetch(`${API_BASE_URL}/api/missions/event`, {
+    method: 'POST', credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey,
+      ...(runEvidenceId ? { 'Run-Evidence-Id': runEvidenceId } : {}), ...getTimezoneHeaders(),
+    },
+    body: JSON.stringify(event),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new ApiResponseError('Failed to post mission event', res.status, text);
+  }
+  return validateCanonicalGameplayResponse(await res.json(), event.type);
+}
+
+async function flushPendingCanonicalRuns(account: string) {
+  requireWritableGameSession('settle_run_end');
+  let result = null;
+  while (true) {
+    const pending = readRunQueue(account)[0];
+    if (!pending) return result;
+    result = await sendCanonicalMissionEvent(pending.event, pending.idempotencyKey, pending.runEvidenceId);
+    const current = readRunQueue(account);
+    if (current[0]?.idempotencyKey === pending.idempotencyKey
+      && current[0]?.runEvidenceId === pending.runEvidenceId) writeRunQueue(account, current.slice(1));
+  }
+}
+
 export const missionsAPI = {
   async getDaily(): Promise<DailyMissionsResponse> {
     requireReadableGameSession('read_daily_missions');
@@ -285,10 +352,7 @@ export const missionsAPI = {
   },
 
   async postEvent(
-    event:
-      | { type: 'run_end'; score: number; tubePieces?: number; tubeCharges?: number; deathCause?: string | null; perfectPlatformer?: boolean; allOxygenCollected?: boolean; urchinDodges?: number; swordfishCollected?: boolean; swordfishDodged?: boolean }
-      | { type: 'oxygen_collected'; count?: number }
-      | { type: 'pvp_result'; won: boolean }
+    event: MissionEvent
   ): Promise<
     | {
         date: string;
@@ -306,8 +370,23 @@ export const missionsAPI = {
       }
     | null
   > {
+    if (activeAuthAccess?.canonical) {
+      const account = activeAuthAccess.userId;
+      const capability = event.type === 'run_end' ? 'settle_run_end'
+        : event.type === 'oxygen_collected' ? 'settle_oxygen_collected' : 'settle_pvp_result';
+      requireWritableGameSession(capability);
+      if (event.type === 'run_end') {
+        const queue = readRunQueue(account);
+        if (queue.length >= MAX_RUN_OUTBOX_ITEMS) throw new Error('Canonical run save queue is full');
+        queue.push({ account, idempotencyKey: crypto.randomUUID(), runEvidenceId: crypto.randomUUID(), event });
+        writeRunQueue(account, queue);
+        return await flushPendingCanonicalRuns(account);
+      }
+      await flushPendingCanonicalRuns(account);
+      return await sendCanonicalMissionEvent(event, crypto.randomUUID(), null);
+    }
     requireWritableGameSession();
-    // Best-effort; mission tracking should not block gameplay.
+    // Legacy mission tracking remains best-effort during the claim window.
     return await fetch(`${API_BASE_URL}/api/missions/event`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...getTimezoneHeaders() },

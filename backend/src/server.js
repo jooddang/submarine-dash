@@ -5,6 +5,7 @@ import { validateCanaryEquipResponse } from '../../shared/canaryEquip.js';
 import { SKIN_CATALOG_VERSION, SKIN_COSTS, validateCanaryPurchaseResponse } from '../../shared/canaryPurchase.js';
 import { executeExpressCanonicalDolphin, isExpressDolphinCanaryAdmission } from '../../shared/canaryDolphinExpress.js';
 import { executeExpressCanonicalDaily, isCanonicalDailyReadAdmission } from '../../shared/canonicalDailyMissions.js';
+import { executeExpressCanonicalGameplay, isCanonicalGameplayAdmission } from '../../shared/canonicalGameplay.js';
 import dotenv from 'dotenv';
 import { sanitizeLeaderboardName } from '../../shared/profanity.js';
 import { getPstCurrentWeekId, getPrevWeekId, getWeekEndDate } from '../../shared/week.js';
@@ -126,10 +127,21 @@ app.use(async (req, res, next) => {
     method:req.method,origin:req.headers.origin,expectedOrigin:expectedCanaryOrigin,canonicalToken,
     enabled:process.env.SD_SUPABASE_DAILY_READ_ENABLED === 'true',allowedOrigin:isAllowedSubmarineMutationOrigin(req),
   });
+  const gameplayWriteEnabled = isCanonicalGameplayAdmission({
+    method:req.method,path:req.path,origin:req.headers.origin,expectedOrigin:expectedCanaryOrigin,canonicalToken,
+    enabled:process.env.SD_SUPABASE_GAMEPLAY_WRITES_ENABLED === 'true',allowedOrigin:isAllowedSubmarineMutationOrigin(req),
+  });
   const canonicalDailyBoundary = Boolean(canonicalToken) && req.method === 'GET' && req.path === '/api/missions/daily';
+  const canonicalGameplayBoundary = Boolean(canonicalToken) && req.method === 'POST' && req.path === '/api/missions/event';
   const leaderboardBootstrapRead = req.method === 'GET'
     && (req.path === '/api/leaderboard' || req.path === '/api/leaderboard/weekly');
-  if (canonicalToken && !transitionRoute && !canaryMutationEnabled && !dolphinCanaryEnabled && (mutationMethod || leaderboardBootstrapRead)) {
+  if (canonicalGameplayBoundary) {
+    if (gameplayWriteEnabled) return next();
+    return res.status(req.headers.origin !== expectedCanaryOrigin ? 403 : 409)
+      .json({ error: 'Canonical gameplay settlement is not enabled' });
+  }
+  if (canonicalToken && !transitionRoute && !canaryMutationEnabled && !dolphinCanaryEnabled && !gameplayWriteEnabled
+    && (mutationMethod || leaderboardBootstrapRead)) {
     return res.status(409).json({
       error: 'Canonical account progress is read-only in Submarine Dash',
       code: 'CANONICAL_READ_ONLY',
@@ -139,7 +151,7 @@ app.use(async (req, res, next) => {
     if (dailyReadEnabled) return next();
     return res.status(409).json({ error: 'Canonical daily missions are not enabled' });
   }
-  if (canonicalToken && (canaryMutationEnabled || dolphinCanaryEnabled)) return next();
+  if (canonicalToken && (canaryMutationEnabled || dolphinCanaryEnabled || gameplayWriteEnabled)) return next();
 
   const classification = localRouteClassification(req.path, req.method);
   const flags = productionControlFlags();
@@ -286,6 +298,7 @@ async function roadcrosserRequest(path, body) {
     '/api/internal/submarine-dash/mutations/consume-dolphin',
     '/api/internal/submarine-dash/mutations/import-dolphin',
     '/api/internal/submarine-dash/daily-missions',
+    '/api/internal/submarine-dash/mutations/settle-gameplay',
   ]);
   if (!allowed.has(path)) throw new Error('Roadcrosser internal path is forbidden');
   const credential = process.env.SD_ROADCROSSER_INTERNAL_AUTH_TOKEN;
@@ -1265,6 +1278,15 @@ app.get('/api/missions/daily', async (req, res) => {
 
 app.post('/api/missions/event', async (req, res) => {
   try {
+    const canonicalToken = parseCookies(req)[CANONICAL_SESSION_COOKIE_NAME];
+    if (canonicalToken) {
+      const result = await executeExpressCanonicalGameplay({
+        canonicalToken, idempotencyKey:req.get('idempotency-key') || '',
+        runEvidenceId:req.body?.type === 'run_end' ? req.get('run-evidence-id') || '' : null,
+        event:req.body || {}, roadcrosserRequest,
+      });
+      return res.json(result);
+    }
     if (!redis) return res.status(503).json({ error: 'Redis not connected' });
 
     const userId = await getUserIdForSession(req);
