@@ -82,6 +82,7 @@
 | `SD_MIGRATION_ADMISSION_GATE_ENABLED` | Enforce Redis-backed fenced mutation admission | `false` | No |
 | `SD_CANONICAL_AUTH_TICKETS_ENABLED` | Enable later canonical auth ticket flow | `false` | No |
 | `SD_PROTECTED_ACCOUNT_CANARY_ENABLED` | Restrict later cutover to protected canaries | `false` | No |
+| `SD_LEGACY_ROAD_LOGIN_ENABLED` | Permit the internal read-only legacy verifier for protected Roadcrosser login | `false` | No |
 | `SD_MIGRATION_ROLLBACK_MODE` | Route later storage access through rollback mode | `false` | No |
 | `SD_SUBMARINE_PUBLIC_ORIGIN` | Exact same-origin boundary for canonical logout | `https://submarine-dash.roadcrosser.com` | Canonical auth only |
 | `SD_ROADCROSSER_PUBLIC_ORIGIN` | Exact Roadcrosser ticket issuer origin | `https://www.roadcrosser.com` | Canonical auth only |

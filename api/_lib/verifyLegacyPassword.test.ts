@@ -23,6 +23,7 @@ function response() {
 
 beforeEach(()=>{
   vi.stubEnv('SD_LEGACY_CLAIM_ENABLED','true');
+  vi.stubEnv('SD_LEGACY_ROAD_LOGIN_ENABLED','false');
   vi.stubEnv('SD_LEGACY_CLAIM_EXPIRES_AT','2999-01-01T00:00:00.000Z');
   vi.stubEnv('SD_ROADCROSSER_INTERNAL_AUTH_TOKEN','v'.repeat(32));
 });
@@ -57,8 +58,24 @@ describe('read-only legacy password verifier',()=>{
     }
   });
 
+  it('permits the same read-only verifier for Roadcrosser login while generic claim stays off',async()=>{
+    vi.stubEnv('SD_LEGACY_CLAIM_ENABLED','false');
+    vi.stubEnv('SD_LEGACY_ROAD_LOGIN_ENABLED','true');
+    const salt=Buffer.alloc(16,9); const password='protected-password';
+    const hash=crypto.scryptSync(password,salt,64,{N:16384,r:8,p:1});
+    redis.get.mockResolvedValueOnce('user-jooddang').mockResolvedValueOnce({
+      userId:'user-jooddang',loginId:'JoodDang',loginIdLower:'jooddang',
+      passwordSalt:salt.toString('base64'),passwordHash:hash.toString('base64'),createdAt:1,refCode:'ref',
+    });
+    const output=response(); await handler(request({loginId:'jooddang',password}),output.res);
+    expect(output.state).toEqual({status:200,json:{verified:true,externalUserId:'user-jooddang'}});
+    expect(redis.get).toHaveBeenCalledTimes(2);
+    expect(redis.set).not.toHaveBeenCalled(); expect(redis.del).not.toHaveBeenCalled();
+  });
+
   it('rejects disabled, unauthenticated, and non-POST requests before Redis access',async()=>{
     vi.stubEnv('SD_LEGACY_CLAIM_ENABLED','false');
+    vi.stubEnv('SD_LEGACY_ROAD_LOGIN_ENABLED','false');
     let output=response(); await handler(request({loginId:'x',password:'y'}),output.res); expect(output.state.status).toBe(401);
     vi.stubEnv('SD_LEGACY_CLAIM_ENABLED','true');
     output=response(); await handler(request({loginId:'x',password:'y'},'wrong'),output.res); expect(output.state.status).toBe(401);

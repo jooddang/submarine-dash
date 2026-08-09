@@ -32,9 +32,13 @@ function legacyClaimEnabled() {
     && new Date(expiresAt).toISOString()===configuredExpiry && expiresAt>Date.now();
 }
 
+function legacyCredentialVerificationEnabled() {
+  return process.env.SD_LEGACY_ROAD_LOGIN_ENABLED==='true' || legacyClaimEnabled();
+}
+
 export async function handler(req:VercelRequest,res:VercelResponse) {
   if (req.method!=='POST') return response(res,405,{error:'Method not allowed'});
-  if (!legacyClaimEnabled() || !authorized(req)) return response(res,401,{error:'Unauthorized'});
+  if (!legacyCredentialVerificationEnabled() || !authorized(req)) return response(res,401,{error:'Unauthorized'});
   const body=(req.body??{}) as {loginId?:unknown;password?:unknown};
   const loginId=typeof body.loginId==='string'?body.loginId.trim():'';
   const password=typeof body.password==='string'?body.password:'';

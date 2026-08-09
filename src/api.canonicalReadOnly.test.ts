@@ -28,7 +28,7 @@ describe('canonical read-only client barrier', () => {
     expect(game.indexOf('if (imported?.inventory && typeof imported.inventory.dolphinSaved === "number")'))
       .toBeLessThan(game.indexOf('clearLegacyLocalDolphinCount(me.userId)'));
     expect(game).toContain('bindDolphinMutationAccess(null);');
-    expect(game).toContain('bindDolphinMutationAccess(user);');
+    expect(game).toContain('bindDolphinMutationAccess(me);');
     expect(game).toContain("authUserRef.current?.userId !== out.acknowledgement.account");
   });
   it('rejects every game mutation helper without issuing a request', async () => {

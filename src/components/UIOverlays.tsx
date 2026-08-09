@@ -370,7 +370,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               opacity: isBusy ? 0.7 : 1,
             }}
           >
-            {isBusy ? "PLEASE WAIT..." : (mode === "login" ? "LEGACY LOGIN" : mode === "signup" ? "CONTINUE WITH ROADCROSSER" : "CHANGE PASSWORD")}
+            {isBusy ? "PLEASE WAIT..." : (mode === "changePassword" ? "CHANGE PASSWORD" : "CONTINUE WITH ROADCROSSER")}
           </button>
 
           <div style={{ marginTop: 6, fontSize: "0.95rem", color: "rgba(255,255,255,0.8)" }}>

@@ -29,6 +29,10 @@ React 19 + HTML5 Canvas 기반 브라우저 게임 모놀리스. 프론트엔드
 - Roadcrosser owns Supabase Auth, ticket/session hashes, and the service-role
   boundary. Submarine receives neither database credentials nor service-role
   credentials.
+- The game exposes one top-right Roadcrosser login entry. For the two protected
+  owner-linked accounts, Roadcrosser may also exchange the preserved Submarine
+  ID/password for the same Supabase session through the internal read-only
+  verifier; neither password is copied or replaced.
 - Submarine owns the host-only callback-state secret and the raw opaque
   `sd_roadcrosser_session` cookie. Its server calls only four fixed internal
   Roadcrosser paths with an audience-scoped credential.

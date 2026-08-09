@@ -5,7 +5,7 @@ import { initAudio, playSound } from "./audio";
 import { interpolateColor } from "./graphics";
 import { createBubble, spawnBackgroundEntity } from "./entities";
 import { drawSwordfish, drawUrchin, drawBackgroundEntities, drawTurtleShell } from "./drawing";
-import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, AuthModal, DailyMissionsPanel, DolphinStreakRewardOverlay, DolphinWeeklyWinnerRewardOverlay, InventoryPanel, SkinPanel, AchievementsPanel } from "./components/UIOverlays";
+import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, DailyMissionsPanel, DolphinStreakRewardOverlay, DolphinWeeklyWinnerRewardOverlay, InventoryPanel, SkinPanel, AchievementsPanel } from "./components/UIOverlays";
 import { getSkinDef, drawSubmarine, updateTrailParticles, drawTrailParticles, isGoldenTubeEligible, GOLDEN_TUBE_EXTRA_CHARGES, GOLDEN_TUBE_EXTRA_SCORE_BONUS, DEFAULT_SKIN_ID, preloadSkinImages, type TrailParticle, type SkinDef } from "./skins";
 import { authAPI, dolphinMutationAccessState, inventoryAPI, isReadOnlyCanary, leaderboardAPI, missionsAPI, achievementsAPI, type DailyMissionsResponse, type AuthUser, type UserAchievementSummary } from "./api";
 import { DailyRequestGuard, latestDailyResult } from "./dailyRequestGuard";
@@ -147,15 +147,6 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
   // Important: the game loop + global event listeners are registered once and can capture stale state.
   // Mirror auth state into a ref so gameplay-side logic always sees the latest auth status.
   const authUserRef = useRef<AuthUser | null>(null);
-  const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authMode, setAuthMode] = useState<"login" | "signup" | "changePassword">("login");
-  const [authLoginId, setAuthLoginId] = useState("");
-  const [authPassword, setAuthPassword] = useState("");
-  const [authNewPassword, setAuthNewPassword] = useState("");
-  const [authNewPasswordConfirm, setAuthNewPasswordConfirm] = useState("");
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [authBusy, setAuthBusy] = useState(false);
-  const pendingSubmitRef = useRef<boolean>(false);
   const [streakOpen, setStreakOpen] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [skinsOpen, setSkinsOpen] = useState(false);
@@ -1410,86 +1401,11 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
     const name = playerName.trim();
 
     if (!authUser) {
-      pendingSubmitRef.current = true;
-      setAuthMode("login");
-      setAuthModalOpen(true);
-      return;
-    }
-
-    await submitLeaderboardScore(name);
-  };
-
-  const handleAuthSubmit = async () => {
-    setAuthError(null);
-
-    if (authMode === "signup") {
       authAPI.beginRoadcrosserConnect();
       return;
     }
 
-    const loginId = authLoginId.trim();
-    if (!loginId) {
-      setAuthError("Login ID is required");
-      return;
-    }
-
-    if (authMode === "changePassword") {
-      const currentPassword = authPassword;
-      const newPassword = authNewPassword;
-      const newPasswordConfirm = authNewPasswordConfirm;
-
-      if (!currentPassword) {
-        setAuthError("Current password is required");
-        return;
-      }
-      if (!newPassword || newPassword.length < 8) {
-        setAuthError("New password must be at least 8 characters");
-        return;
-      }
-      if (newPassword !== newPasswordConfirm) {
-        setAuthError("New password confirmation does not match");
-        return;
-      }
-    } else {
-      const password = authPassword;
-      if (!password || password.length < 8) {
-        setAuthError("Password must be at least 8 characters");
-        return;
-      }
-    }
-
-    setAuthBusy(true);
-    try {
-      let user: AuthUser;
-      if (authMode === "changePassword") {
-        user = await authAPI.changePassword(loginId, authPassword, authNewPassword);
-      } else {
-        user = await authAPI.login(loginId, authPassword);
-      }
-
-      setAuthUser(user);
-      // Keep the auth ref in sync immediately (streak rewards + saved items use this for per-user storage keys).
-      authUserRef.current = user;
-      bindDolphinMutationAccess(user);
-      if (user?.inventory && typeof user.inventory.coins === "number") {
-        setCoinBalance(user.inventory.coins);
-      }
-      setAuthModalOpen(false);
-      setAuthLoginId("");
-      setAuthPassword("");
-      setAuthNewPassword("");
-      setAuthNewPasswordConfirm("");
-      refreshDailyMissions();
-      if (pendingSubmitRef.current) {
-        pendingSubmitRef.current = false;
-        // Retry submit (now authenticated). Keep the same score + chosen name.
-        await submitLeaderboardScore(playerName.trim());
-      }
-    } catch (err) {
-      setAuthError(err instanceof Error ? err.message : "Auth failed");
-    } finally {
-      setAuthBusy(false);
-    }
+    await submitLeaderboardScore(name);
   };
 
   // --- Main Game Loop ---
@@ -2249,6 +2165,24 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
         </div>
       )}
 
+      {!authUser && (
+        <button
+          type="button"
+          aria-label="Log in with Roadcrosser"
+          onClick={() => authAPI.beginRoadcrosserConnect()}
+          style={{
+            position: "absolute", top: 14, right: 14, zIndex: 60,
+            padding: "10px 16px", borderRadius: 10,
+            border: "1px solid rgba(0,255,255,0.85)",
+            background: "rgba(0,20,35,0.94)", color: "#00ffff",
+            fontFamily: "monospace", fontSize: "0.9rem", fontWeight: 900,
+            cursor: "pointer", boxShadow: "0 0 18px rgba(0,255,255,0.18)",
+          }}
+        >
+          ROADCROSSER LOGIN
+        </button>
+      )}
+
       {gameState === "PLAYING" && (
         <HUD
           score={score}
@@ -2344,11 +2278,6 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
             await authAPI.logout();
             resetAuthenticatedUserState();
           }}
-          onLoginClick={() => {
-            setAuthError(null);
-            setAuthMode("login");
-            setAuthModalOpen(true);
-          }}
           onStreakClick={() => {
             setStreakOpen(true);
             refreshDailyMissions();
@@ -2373,13 +2302,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
           setPlayerName={setPlayerName}
           isLoggedIn={!!authUser}
           loginId={authUser?.loginId ?? null}
-          onOpenLogin={() => {
-            setAuthError(null);
-            setScoreSubmitError(null);
-            pendingSubmitRef.current = true;
-            setAuthMode("login");
-            setAuthModalOpen(true);
-          }}
+          onOpenLogin={() => authAPI.beginRoadcrosserConnect()}
           error={scoreSubmitError}
           isSubmitting={scoreSubmitBusy}
           onSubmit={submitHighScore}
@@ -2399,27 +2322,6 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
           userAchievements={userAchievements}
         />
       )}
-
-      <AuthModal
-        open={authModalOpen}
-        mode={authMode}
-        setMode={setAuthMode}
-        loginId={authLoginId}
-        setLoginId={setAuthLoginId}
-        password={authPassword}
-        setPassword={setAuthPassword}
-        newPassword={authNewPassword}
-        setNewPassword={setAuthNewPassword}
-        newPasswordConfirm={authNewPasswordConfirm}
-        setNewPasswordConfirm={setAuthNewPasswordConfirm}
-        error={authError}
-        isBusy={authBusy}
-        onClose={() => {
-          pendingSubmitRef.current = false;
-          setAuthModalOpen(false);
-        }}
-        onSubmit={handleAuthSubmit}
-      />
 
       <DailyMissionsPanel
         open={streakOpen}
