@@ -16,6 +16,7 @@ const allowedPaths = new Set([
   '/api/internal/submarine-dash/mutations/consume-dolphin',
   '/api/internal/submarine-dash/mutations/import-dolphin',
   '/api/internal/submarine-dash/daily-missions',
+  '/api/internal/submarine-dash/leaderboard/weekly',
   '/api/internal/submarine-dash/mutations/settle-gameplay',
 ]);
 
@@ -44,6 +45,17 @@ export type CanonicalSubmarineBootstrap = {
   readOnly: boolean;
   readCapabilities: string[];
   writeCapabilities: string[];
+};
+
+export type CanonicalWeeklyLeaderboard = {
+  version: 'submarine-weekly-leaderboard-v1';
+  currentWeekId: string;
+  current: Array<{ id: number; name: string; userId: string; skinId?: string; score: number }>;
+  weeks: Array<{
+    weekId: string; startDate: string; endDate: string;
+    entries: Array<{ id: number; name: string; userId: string; skinId?: string; score: number }>;
+    createdAt: number; updatedAt: number;
+  }>;
 };
 
 function baseUrl() {
@@ -157,6 +169,15 @@ export async function importRoadcrosserCanaryDolphin(sessionToken: string, idemp
 
 export async function readRoadcrosserDailyMissions(sessionToken: string) {
   return validateCanonicalDailyMissions(await request('/api/internal/submarine-dash/daily-missions', { sessionToken }));
+}
+
+export async function readRoadcrosserWeeklyLeaderboard(sessionToken: string, limit: number) {
+  const result = await request('/api/internal/submarine-dash/leaderboard/weekly', { sessionToken, limit });
+  if (result.version !== 'submarine-weekly-leaderboard-v1'
+    || typeof result.currentWeekId !== 'string' || !Array.isArray(result.current) || !Array.isArray(result.weeks)) {
+    throw new Error('Roadcrosser canonical leaderboard response is invalid');
+  }
+  return result as CanonicalWeeklyLeaderboard;
 }
 
 export async function settleRoadcrosserGameplay(sessionToken: string, expectedExternalUserId: string, idempotencyKey: string,

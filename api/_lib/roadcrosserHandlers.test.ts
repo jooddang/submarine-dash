@@ -5,7 +5,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 const road = vi.hoisted(() => ({
   consume: vi.fn(), revoke: vi.fn(), bootstrap: vi.fn(), equip: vi.fn(), purchase: vi.fn(),
   consumeDolphin: vi.fn(), importDolphin: vi.fn(),
-  daily: vi.fn(), settleGameplay: vi.fn(),
+  daily: vi.fn(), leaderboard: vi.fn(), settleGameplay: vi.fn(),
 }));
 const redis = vi.hoisted(() => ({
   get: vi.fn(), set: vi.fn(), del: vi.fn(), incr: vi.fn(), expire: vi.fn(),
@@ -21,6 +21,7 @@ vi.mock('./roadcrosserAuth.js', () => ({
   consumeRoadcrosserCanaryDolphin: road.consumeDolphin,
   importRoadcrosserCanaryDolphin: road.importDolphin,
   readRoadcrosserDailyMissions: road.daily,
+  readRoadcrosserWeeklyLeaderboard: road.leaderboard,
   settleRoadcrosserGameplay: road.settleGameplay,
 }));
 vi.mock('./redis.js', () => ({
@@ -39,6 +40,7 @@ import { handler as consumeDolphinHandler, isSyntheticCanaryDolphinConsumeReques
 import { handler as importDolphinHandler, isSyntheticCanaryDolphinImportRequest } from '../inventory/dolphin/import.js';
 import { createDailyMissionsRoute, handler as dailyMissionsHandler, isCanonicalDailyMissionsRequest } from '../missions/daily.js';
 import { createMissionEventRoute, handler as missionEventHandler } from '../missions/event.js';
+import { createWeeklyLeaderboardRoute, handler as weeklyLeaderboardHandler } from '../leaderboard/weekly.js';
 import { MaintenanceFreezeError } from '../../shared/productionControls.js';
 import { SKIN_CATALOG_VERSION } from '../../shared/canaryPurchase.js';
 import { DOLPHIN_CONTRACT_VERSION } from '../../shared/canaryDolphin.js';
@@ -112,6 +114,11 @@ beforeEach(() => {
   road.daily.mockResolvedValue({version:'submarine-daily-missions-v1',readOnly:true,date:'2026-08-06',missions:[],
     user:{progress:{runs:0,oxygenCollected:0,maxScore:0,completedMissionIds:[]},streak:{},
       inventory:{coins:0,dolphinSaved:0,dolphinPending:0,tube:{pieces:0,charges:0},skins:{owned:[],equipped:null}}}});
+  road.leaderboard.mockResolvedValue({version:'submarine-weekly-leaderboard-v1',currentWeekId:'2026-08-03',
+    current:[{id:1,name:'Diver',userId:'diver',score:4321}],weeks:[{
+      weekId:'2026-08-03',startDate:'2026-08-03',endDate:'2026-08-09',
+      entries:[{id:1,name:'Diver',userId:'diver',score:4321}],createdAt:1,updatedAt:2,
+    }]});
   road.settleGameplay.mockResolvedValue({version:'submarine-gameplay-settlement-v1',operation:'run_end',idempotent:false,
     acknowledgement:{externalUserId:'fixture'},
     date:'2026-08-09',progress:{runs:1,oxygenCollected:0,maxScore:1200,completedMissionIds:[],keptAt:null},
@@ -169,6 +176,20 @@ describe('canonical auth handlers', () => {
     const legacy=response(); await createDailyMissionsRoute(dependencies)(request('GET',{cookie:`sd_session=${opaque('L')}`,origin:exact.origin}),legacy.res);
     expect(legacy.state.status).toBe(503);
     expect(acquire).toHaveBeenCalledTimes(1);
+  });
+  it('reads the Supabase weekly leaderboard for canonical sessions without opening Redis', async () => {
+    const token=opaque('W');
+    const out=response(); await weeklyLeaderboardHandler(request('GET',{cookie:`sd_roadcrosser_session=${token}`}),out.res);
+    expect(out.state).toMatchObject({status:200,json:{currentWeekId:'2026-08-03',current:[{name:'Diver',score:4321}]}});
+    expect(road.leaderboard).toHaveBeenCalledWith(token,52);
+    expect(redisFactory).not.toHaveBeenCalled();
+
+    const acquire=vi.fn(async()=>{throw new MaintenanceFreezeError();});
+    const dependencies={flags:()=>({admissionGate:true}) as any,adapter:()=>({}) as any,acquire,event:vi.fn()};
+    const bypassed=response(); await createWeeklyLeaderboardRoute(dependencies)(
+      request('GET',{cookie:`sd_roadcrosser_session=${token}`}),bypassed.res);
+    expect(bypassed.state.status).toBe(200);
+    expect(acquire).not.toHaveBeenCalled();
   });
   it('settles enabled canonical gameplay with exact headers and never opens Redis', async () => {
     vi.stubEnv('SD_SUPABASE_GAMEPLAY_WRITES_ENABLED','true');
@@ -228,7 +249,7 @@ describe('canonical auth handlers', () => {
       body: { ticket: opaque('T') },
     }), out.res);
     expect(events).toEqual(['delete-legacy', 'revoke-O']);
-    expect(out.state).toMatchObject({ status: 303, redirect: '/' });
+    expect(out.state).toMatchObject({ status: 303, redirect: 'https://www.roadcrosser.com/submarine-dash' });
     const cookies = out.headers.get('Set-Cookie') as string[];
     expect(cookies.some((value) => value.startsWith(`sd_roadcrosser_session=${opaque('N')}`))).toBe(true);
     expect(cookies.some((value) => value.startsWith('sd_session=;'))).toBe(true);

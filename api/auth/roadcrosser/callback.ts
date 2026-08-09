@@ -17,6 +17,10 @@ function roadcrosserOrigin() {
   return origin;
 }
 
+function roadcrosserGameUrl() {
+  return `${roadcrosserOrigin()}/submarine-dash`;
+}
+
 export async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Referrer-Policy', 'no-referrer');
@@ -46,7 +50,7 @@ export async function handler(req: VercelRequest, res: VercelResponse) {
     setCanonicalSessionCookie(res, canonical.sessionToken);
     if (existingLegacy) clearSessionCookie(res);
     clearRoadcrosserStateCookie(res);
-    return res.redirect(303, '/');
+    return res.redirect(303, roadcrosserGameUrl());
   } catch {
     return res.status(401).json({ error: 'Account handoff is invalid or expired' });
   }

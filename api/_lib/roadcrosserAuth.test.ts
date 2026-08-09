@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   consumeRoadcrosserTicket, consumeRoadcrosserCanaryDolphin, importRoadcrosserCanaryDolphin,
   equipRoadcrosserCanarySkin, purchaseRoadcrosserCanarySkin, readRoadcrosserCanonicalBootstrap,
-  resolveRoadcrosserSession, revokeRoadcrosserSession, settleRoadcrosserGameplay,
+  readRoadcrosserWeeklyLeaderboard, resolveRoadcrosserSession, revokeRoadcrosserSession, settleRoadcrosserGameplay,
 } from './roadcrosserAuth.js';
 import { SKIN_CATALOG_VERSION } from '../../shared/canaryPurchase.js';
 import { DOLPHIN_CONTRACT_VERSION } from '../../shared/canaryDolphin.js';
@@ -69,6 +69,9 @@ describe('Roadcrosser scoped internal client', () => {
         progress:{runs:1,oxygenCollected:0,maxScore:1200,completedMissionIds:[],keptAt:null},rewards:null,coinsEarned:10,
         inventory:{coins:10,dolphinSaved:0,tube:{pieces:2,charges:1}},newAchievements:[],stateVersion:2,
       }),{status:200}));
+      if (url.endsWith('/leaderboard/weekly')) return Promise.resolve(new Response(JSON.stringify({
+        version:'submarine-weekly-leaderboard-v1',currentWeekId:'2026-08-03',current:[],weeks:[],
+      }),{status:200}));
       return Promise.resolve(new Response(JSON.stringify({
         version: 'submarine-game-session-v1', externalUserId: 'fixture', loginId: 'fixture',
       }), { status: 200 }));
@@ -81,6 +84,7 @@ describe('Roadcrosser scoped internal client', () => {
     await purchaseRoadcrosserCanarySkin(opaque, '97000000-0000-4000-8000-000000000002', 'gold');
     await consumeRoadcrosserCanaryDolphin(opaque, '97000000-0000-4000-8000-000000000003');
     await importRoadcrosserCanaryDolphin(opaque, '97000000-0000-4000-8000-000000000004', 2);
+    await readRoadcrosserWeeklyLeaderboard(opaque,52);
     await settleRoadcrosserGameplay(opaque,'fixture','97000000-0000-4000-8000-000000000005',
       '97000000-0000-4000-8000-000000000006',{type:'run_end',score:1200,tubePieces:2,tubeCharges:1});
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
@@ -91,6 +95,7 @@ describe('Roadcrosser scoped internal client', () => {
       'https://www.roadcrosser.com/api/internal/submarine-dash/mutations/purchase-skin',
       'https://www.roadcrosser.com/api/internal/submarine-dash/mutations/consume-dolphin',
       'https://www.roadcrosser.com/api/internal/submarine-dash/mutations/import-dolphin',
+      'https://www.roadcrosser.com/api/internal/submarine-dash/leaderboard/weekly',
       'https://www.roadcrosser.com/api/internal/submarine-dash/mutations/settle-gameplay',
     ]);
     expect(JSON.parse(fetchMock.mock.calls[4][1].body)).toMatchObject({ catalogVersion: SKIN_CATALOG_VERSION });
@@ -101,7 +106,8 @@ describe('Roadcrosser scoped internal client', () => {
       sessionToken: opaque, idempotencyKey: '97000000-0000-4000-8000-000000000004', count: 2,
       contractVersion: DOLPHIN_CONTRACT_VERSION,
     });
-    expect(JSON.parse(fetchMock.mock.calls[7][1].body)).toMatchObject({
+    expect(JSON.parse(fetchMock.mock.calls[7][1].body)).toEqual({sessionToken:opaque,limit:52});
+    expect(JSON.parse(fetchMock.mock.calls[8][1].body)).toMatchObject({
       expectedExternalUserId:'fixture',idempotencyKey:'97000000-0000-4000-8000-000000000005',
     });
   });

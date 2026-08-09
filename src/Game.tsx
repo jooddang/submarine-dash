@@ -2203,7 +2203,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
       {!authUser && (
         <button
           type="button"
-          aria-label="Log in with Roadcrosser"
+          aria-label="Login"
           onClick={() => authAPI.beginRoadcrosserConnect()}
           style={{
             position: "absolute", top: 14, right: 14, zIndex: 60,
@@ -2214,7 +2214,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
             cursor: "pointer", boxShadow: "0 0 18px rgba(0,255,255,0.18)",
           }}
         >
-          ROADCROSSER LOGIN
+          LOGIN
         </button>
       )}
 

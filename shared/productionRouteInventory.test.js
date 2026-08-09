@@ -58,6 +58,11 @@ describe('production route inventory', () => {
           "withProductionControl('api/missions/event.ts', handler, dependencies, isCanonicalMissionEventBoundary)",
         );
         expect(source.trimEnd().endsWith('export default createMissionEventRoute();'), file).toBe(true);
+      } else if (file === 'api/leaderboard/weekly.ts') {
+        expect(source, file).toContain(
+          "withProductionControl('api/leaderboard/weekly.ts', handler, dependencies, isCanonicalWeeklyLeaderboardBoundary)",
+        );
+        expect(source.trimEnd().endsWith('export default createWeeklyLeaderboardRoute();'), file).toBe(true);
       } else {
         expect(source.trimEnd().endsWith(`export default withProductionControl('${file}', handler);`), file).toBe(true);
       }
