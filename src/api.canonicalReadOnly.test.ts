@@ -218,8 +218,10 @@ describe('canonical read-only client barrier', () => {
       .mockResolvedValueOnce(settled(1000)).mockResolvedValueOnce(settled(2000));
     vi.stubGlobal('fetch',fetchMock);
     await authAPI.me();
-    await expect(missionsAPI.postEvent({type:'run_end',score:1000,tubePieces:0,tubeCharges:0})).rejects.toThrow('offline');
-    await expect(missionsAPI.postEvent({type:'run_end',score:2000,tubePieces:0,tubeCharges:0})).rejects.toThrow('offline');
+    const reservation1=missionsAPI.preflightCanonicalRunStorage('account-a');
+    await expect(missionsAPI.postEvent({type:'run_end',score:1000,tubePieces:0,tubeCharges:0},{reservationId:reservation1})).rejects.toThrow('offline');
+    const reservation2=missionsAPI.preflightCanonicalRunStorage('account-a');
+    await expect(missionsAPI.postEvent({type:'run_end',score:2000,tubePieces:0,tubeCharges:0},{reservationId:reservation2})).rejects.toThrow('offline');
     const queued=JSON.parse(values.get('sd:gameplay-run-outbox:account-a') || '[]');
     expect(queued).toHaveLength(2);
     expect(queued.map((item:{event:{score:number}})=>item.event.score)).toEqual([1000,2000]);
@@ -290,7 +292,8 @@ describe('canonical read-only client barrier', () => {
     const existing=Array.from({length:20},(_,index)=>({account:'large-queue',idempotencyKey:crypto.randomUUID(),
       runEvidenceId:crypto.randomUUID(),event:{type:'run_end',score:index,tubePieces:0,tubeCharges:0}}));
     values.set('sd:gameplay-run-outbox:large-queue',JSON.stringify(existing));
-    await expect(missionsAPI.postEvent({type:'run_end',score:999,tubePieces:0,tubeCharges:0})).rejects.toThrow('offline');
+    const reservation=missionsAPI.preflightCanonicalRunStorage('large-queue');
+    await expect(missionsAPI.postEvent({type:'run_end',score:999,tubePieces:0,tubeCharges:0},{reservationId:reservation})).rejects.toThrow('offline');
     const preserved=JSON.parse(values.get('sd:gameplay-run-outbox:large-queue') || '[]');
     expect(preserved).toHaveLength(21);
     expect(preserved.at(-1).event.score).toBe(999);
@@ -298,7 +301,7 @@ describe('canonical read-only client barrier', () => {
 
   it('retains an unpersisted run in memory and exposes a blocking retry state', async () => {
     const values=new Map<string,string>();
-    let storageAvailable=false;
+    let storageAvailable=true;
     vi.stubGlobal('localStorage',{
       getItem:(key:string)=>values.get(key)??null,
       setItem:(key:string,value:string)=>{ if (!storageAvailable) throw new Error('quota exceeded'); values.set(key,value); },
@@ -309,10 +312,12 @@ describe('canonical read-only client barrier', () => {
       {status:200,headers:{'content-type':'application/json'}}));
     vi.stubGlobal('fetch',fetchMock);
     await authAPI.me();
-    await expect(missionsAPI.postEvent({type:'run_end',score:321,tubePieces:0,tubeCharges:0}))
+    const reservation=missionsAPI.preflightCanonicalRunStorage('storage-failure');
+    storageAvailable=false;
+    await expect(missionsAPI.postEvent({type:'run_end',score:321,tubePieces:0,tubeCharges:0},{reservationId:reservation}))
       .rejects.toMatchObject({code:'RUN_OUTBOX_PERSISTENCE_FAILED'});
     expect(missionsAPI.hasRunSavePersistenceFailure('storage-failure')).toBe(true);
-    await expect(missionsAPI.postEvent({type:'run_end',score:654,tubePieces:0,tubeCharges:0}))
+    await expect(missionsAPI.postEvent({type:'run_end',score:654,tubePieces:0,tubeCharges:0},{reservationId:reservation}))
       .rejects.toMatchObject({code:'RUN_OUTBOX_PERSISTENCE_FAILED'});
     expect(fetchMock).toHaveBeenCalledTimes(1);
     storageAvailable=true;
@@ -338,7 +343,8 @@ describe('canonical read-only client barrier', () => {
         {status:200,headers:{'content-type':'application/json'}}));
     vi.stubGlobal('fetch',fetchMock);
     await authAPI.me();
-    await expect(missionsAPI.postEvent({type:'run_end',score:444,tubePieces:0,tubeCharges:0}))
+    const reservation=missionsAPI.preflightCanonicalRunStorage('cross-tab-a');
+    await expect(missionsAPI.postEvent({type:'run_end',score:444,tubePieces:0,tubeCharges:0},{reservationId:reservation}))
       .rejects.toThrow('acknowledgement account mismatch');
     const retained=JSON.parse(values.get('sd:gameplay-run-outbox:cross-tab-a') || '[]');
     expect(retained).toHaveLength(1);
@@ -346,28 +352,76 @@ describe('canonical read-only client barrier', () => {
     expect(headers['Expected-External-User-Id']).toBe('cross-tab-a');
   });
 
-  it('fails the synchronous canonical storage preflight before a run can start', async () => {
+  it('blocks start when a small probe fits near quota but a maximum run reservation does not', async () => {
     const values=new Map<string,string>();
-    let rejectWrites=false;
-    vi.stubGlobal('localStorage',{
+    const storage={
       getItem:(key:string)=>values.get(key)??null,
-      setItem:(key:string,value:string)=>{ if (rejectWrites) throw new Error('storage unavailable'); values.set(key,value); },
+      setItem:(key:string,value:string)=>{ if (value.length > 256) throw new Error('quota reached'); values.set(key,value); },
       removeItem:(key:string)=>values.delete(key),
-    });
+    };
+    vi.stubGlobal('localStorage',storage);
     vi.stubGlobal('fetch',vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({canonical:true,readOnly:false,
       writeCapabilities:['settle_run_end'],user:{userId:'preflight-a',loginId:'A',refCode:''}}),
       {status:200,headers:{'content-type':'application/json'}})));
     await authAPI.me();
-    rejectWrites=true;
+    expect(()=>storage.setItem('old-small-preflight','[]')).not.toThrow();
     expect(()=>missionsAPI.preflightCanonicalRunStorage('preflight-a'))
       .toThrow('could not be saved safely');
     expect(missionsAPI.hasRunSavePersistenceFailure('preflight-a')).toBe(true);
+  });
+
+  it('replaces reserved capacity without growth and flushes the real attempt', async () => {
+    const values=new Map<string,string>(); const outboxWrites:number[]=[];
+    vi.stubGlobal('localStorage',{
+      getItem:(key:string)=>values.get(key)??null,
+      setItem:(key:string,value:string)=>{ values.set(key,value); if (key.includes('reservation-success')) outboxWrites.push(value.length); },
+      removeItem:(key:string)=>values.delete(key),
+    });
+    const fetchMock=vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({canonical:true,readOnly:false,writeCapabilities:['settle_run_end'],
+        user:{userId:'reservation-success',loginId:'A',refCode:''}}),{status:200,headers:{'content-type':'application/json'}}))
+      .mockResolvedValueOnce(new Response(JSON.stringify({version:'submarine-gameplay-settlement-v1',operation:'run_end',idempotent:false,
+        acknowledgement:{externalUserId:'reservation-success'},date:'2026-08-09',
+        progress:{runs:1,oxygenCollected:0,maxScore:777,completedMissionIds:[],keptAt:null},rewards:null,coinsEarned:7,
+        inventory:{coins:7,dolphinSaved:0,tube:{pieces:0,charges:0}},newAchievements:[],stateVersion:2}),
+        {status:200,headers:{'content-type':'application/json'}}));
+    vi.stubGlobal('fetch',fetchMock);
+    await authAPI.me();
+    const reservationId=missionsAPI.preflightCanonicalRunStorage('reservation-success');
+    await expect(missionsAPI.postEvent({type:'run_end',score:777,tubePieces:0,tubeCharges:0},{reservationId}))
+      .resolves.toMatchObject({coinsEarned:7});
+    expect(outboxWrites).toHaveLength(2);
+    expect(outboxWrites[1]).toBeLessThanOrEqual(outboxWrites[0]);
+    expect(values.has('sd:gameplay-run-outbox:reservation-success')).toBe(false);
+  });
+
+  it('never removes a real attempt during stale reservation cleanup', async () => {
+    const values=new Map<string,string>();
+    vi.stubGlobal('localStorage',{
+      getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value),removeItem:(key:string)=>values.delete(key),
+    });
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({canonical:true,readOnly:false,
+      writeCapabilities:['settle_run_end'],user:{userId:'stale-cleanup',loginId:'A',refCode:''}}),
+      {status:200,headers:{'content-type':'application/json'}})));
+    await authAPI.me();
+    const staleReservationId=missionsAPI.preflightCanonicalRunStorage('stale-cleanup');
+    const realAttempt={kind:'run_attempt_v1',account:'stale-cleanup',reservationId:crypto.randomUUID(),createdAt:0,
+      idempotencyKey:crypto.randomUUID(),runEvidenceId:crypto.randomUUID(),event:{type:'run_end',score:5,tubePieces:0,tubeCharges:0}};
+    const staleReservation=JSON.parse(values.get('sd:gameplay-run-outbox:stale-cleanup') || '[]')[0];
+    staleReservation.reservedAt=0;
+    values.set('sd:gameplay-run-outbox:stale-cleanup',JSON.stringify([staleReservation,realAttempt]));
+    missionsAPI.preflightCanonicalRunStorage('stale-cleanup');
+    const queue=JSON.parse(values.get('sd:gameplay-run-outbox:stale-cleanup') || '[]');
+    expect(queue.some((item:{idempotencyKey?:string})=>item.idempotencyKey===realAttempt.idempotencyKey)).toBe(true);
+    expect(queue.some((item:{reservationId?:string})=>item.reservationId===staleReservationId)).toBe(false);
+    expect(queue.some((item:{kind?:string})=>item.kind==='run_capacity_reservation_v1')).toBe(true);
   });
 
   it('shows and enforces the run-save persistence blocker in Game', () => {
     const game=readFileSync(new URL('./Game.tsx',import.meta.url),'utf8');
     expect(game).toContain('RUN SAVE PAUSED');
     expect(game).toContain('missionsAPI.preflightCanonicalRunStorage(canonicalAccount)');
+    expect(game).toContain('runReservationIdRef.current = missionsAPI.preflightCanonicalRunStorage(canonicalAccount)');
     expect(game.indexOf('missionsAPI.preflightCanonicalRunStorage(canonicalAccount)'))
       .toBeLessThan(game.indexOf('gameStateRef.current = "PLAYING"'));
     expect(game).toContain('runSaveBlockedRef.current = true');

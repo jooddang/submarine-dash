@@ -148,6 +148,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
   // Mirror auth state into a ref so gameplay-side logic always sees the latest auth status.
   const authUserRef = useRef<AuthUser | null>(null);
   const runSaveBlockedRef = useRef(false);
+  const runReservationIdRef = useRef<string | null>(null);
   const [runSaveError, setRunSaveError] = useState<string | null>(null);
   const [streakOpen, setStreakOpen] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
@@ -313,6 +314,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
     setAuthUser(null);
     authUserRef.current = null;
     runSaveBlockedRef.current = false;
+    runReservationIdRef.current = null;
     setRunSaveError(null);
     bindDolphinMutationAccess(null);
     setCoinBalance(0);
@@ -844,7 +846,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
     const canonicalAccount = authUserRef.current?.canonical ? authUserRef.current.userId : null;
     if (canonicalAccount) {
       try {
-        missionsAPI.preflightCanonicalRunStorage(canonicalAccount);
+        runReservationIdRef.current = missionsAPI.preflightCanonicalRunStorage(canonicalAccount);
         runSaveBlockedRef.current = false;
         setRunSaveError(null);
       } catch (error) {
@@ -1319,6 +1321,8 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
     if (au && !isReadOnlyCanary(au) && !didSendRunEndRef.current) {
       didSendRunEndRef.current = true;
       const runEndSeq = nextDolphinSyncSeq();
+      const reservationId = au.canonical ? runReservationIdRef.current ?? undefined : undefined;
+      runReservationIdRef.current = null;
       missionsAPI
         .postEvent({
           type: "run_end",
@@ -1331,7 +1335,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
           urchinDodges: urchinDodgesRef.current,
           swordfishCollected: swordfishCollectedRef.current,
           swordfishDodged: swordfishDodgedRef.current,
-        })
+        }, { reservationId })
         .then((out) => {
           if (out?.inventory && typeof out.inventory.dolphinSaved === "number") {
             applyDolphinCountSync(out.inventory.dolphinSaved, runEndSeq);

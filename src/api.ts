@@ -285,7 +285,14 @@ type MissionEvent =
   | { type: 'oxygen_collected'; count?: number }
   | { type: 'pvp_result'; won: boolean };
 
-type RunOutbox = { account: string; idempotencyKey: string; runEvidenceId: string; event: Extract<MissionEvent, { type: 'run_end' }> };
+type RunOutbox = { kind?: 'run_attempt_v1'; account: string; reservationId?: string; createdAt?: number;
+  idempotencyKey: string; runEvidenceId: string; event: Extract<MissionEvent, { type: 'run_end' }> };
+type RunReservation = { kind: 'run_capacity_reservation_v1'; account: string; reservationId: string;
+  reservedAt: number; padding: string };
+type RunOutboxItem = RunOutbox | RunReservation;
+const MAX_RUN_ATTEMPT_SERIALIZED_BYTES = 2048;
+const RUN_RESERVATION_SERIALIZED_BYTES = MAX_RUN_ATTEMPT_SERIALIZED_BYTES + 128;
+const RUN_RESERVATION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
 const volatileRunAttempts = new Map<string, RunOutbox[]>();
 const runOutboxPersistenceFailures = new Set<string>();
 
@@ -304,9 +311,21 @@ export function isRunOutboxPersistenceError(error: unknown): error is RunOutboxP
 
 function runOutboxKey(account: string) { return `sd:gameplay-run-outbox:${account}`; }
 
-function validRunAttempt(value: RunOutbox | null, account: string): value is RunOutbox {
-  return value?.account === account && MUTATION_UUID_RE.test(value.idempotencyKey)
-    && MUTATION_UUID_RE.test(value.runEvidenceId) && value.event?.type === 'run_end';
+function serializedBytes(value: unknown) {
+  return new TextEncoder().encode(typeof value === 'string' ? value : JSON.stringify(value)).byteLength;
+}
+
+function validRunAttempt(value: RunOutboxItem | null, account: string): value is RunOutbox {
+  return Boolean(value && value.kind !== 'run_capacity_reservation_v1' && value.account === account
+    && MUTATION_UUID_RE.test(value.idempotencyKey) && MUTATION_UUID_RE.test(value.runEvidenceId)
+    && value.event?.type === 'run_end');
+}
+
+function validRunReservation(value: RunOutboxItem | null, account: string): value is RunReservation {
+  return value?.kind === 'run_capacity_reservation_v1' && value.account === account
+    && MUTATION_UUID_RE.test(value.reservationId) && Number.isSafeInteger(value.reservedAt)
+    && typeof value.padding === 'string' && !('event' in value)
+    && serializedBytes(value) >= MAX_RUN_ATTEMPT_SERIALIZED_BYTES;
 }
 
 function persistenceFailure(account: string, cause?: unknown): RunOutboxPersistenceError {
@@ -314,12 +333,12 @@ function persistenceFailure(account: string, cause?: unknown): RunOutboxPersiste
   return new RunOutboxPersistenceError(account, cause);
 }
 
-function readDurableRunQueue(account: string): RunOutbox[] {
+function readDurableRunQueue(account: string): RunOutboxItem[] {
   const key = runOutboxKey(account);
   try {
-    const value = JSON.parse(localStorage.getItem(key) || '[]') as RunOutbox[] | RunOutbox;
+    const value = JSON.parse(localStorage.getItem(key) || '[]') as RunOutboxItem[] | RunOutboxItem;
     const queue = Array.isArray(value) ? value : [value];
-    if (queue.every((attempt) => validRunAttempt(attempt, account))) return queue;
+    if (queue.every((item) => validRunAttempt(item, account) || validRunReservation(item, account))) return queue;
     throw persistenceFailure(account, new Error('Stored run outbox is invalid'));
   } catch (error) {
     if (isRunOutboxPersistenceError(error)) throw error;
@@ -327,7 +346,7 @@ function readDurableRunQueue(account: string): RunOutbox[] {
   }
 }
 
-function writeDurableRunQueue(account: string, queue: RunOutbox[]) {
+function writeDurableRunQueue(account: string, queue: RunOutboxItem[]) {
   try {
     if (queue.length === 0) localStorage.removeItem(runOutboxKey(account));
     else localStorage.setItem(runOutboxKey(account), JSON.stringify(queue));
@@ -341,42 +360,70 @@ function persistVolatileRunAttempts(account: string) {
   const volatile = volatileRunAttempts.get(account) || [];
   const durable = readDurableRunQueue(account);
   if (volatile.length) {
-    writeDurableRunQueue(account, [...durable, ...volatile]);
+    const next = [...durable];
+    for (const attempt of volatile) {
+      const index = next.findIndex((item) => validRunReservation(item, account)
+        && item.reservationId === attempt.reservationId);
+      if (index < 0) throw persistenceFailure(account, new Error('Reserved run capacity is missing'));
+      if (serializedBytes(attempt) > serializedBytes(next[index])) {
+        throw persistenceFailure(account, new Error('Run attempt exceeds reserved capacity'));
+      }
+      next[index] = attempt;
+    }
+    writeDurableRunQueue(account, next);
     volatileRunAttempts.delete(account);
-  } else {
-    // A failed acknowledgement removal also blocks new runs. Rewriting the
-    // unchanged queue proves storage is writable without risking data loss.
-    writeDurableRunQueue(account, durable);
-  }
-  runOutboxPersistenceFailures.delete(account);
-}
-
-function preflightDurableRunStorage(account: string) {
-  persistVolatileRunAttempts(account);
-  const key = runOutboxKey(account);
-  try {
-    const existing = localStorage.getItem(key);
-    // setItem is the operation that can fail under quota/private-mode limits;
-    // writing the exact existing bytes (or a valid empty queue) is non-lossy.
-    localStorage.setItem(key, existing ?? '[]');
-    if (existing === null) localStorage.removeItem(key);
     runOutboxPersistenceFailures.delete(account);
-  } catch (error) {
-    throw persistenceFailure(account, error);
   }
 }
 
-function enqueueCanonicalRun(account: string, event: Extract<MissionEvent, { type: 'run_end' }>) {
+function createRunReservation(account: string): RunReservation {
+  const reservation: RunReservation = {
+    kind: 'run_capacity_reservation_v1', account, reservationId: crypto.randomUUID(),
+    reservedAt: Date.now(), padding: '',
+  };
+  const missing = RUN_RESERVATION_SERIALIZED_BYTES - serializedBytes(reservation);
+  if (missing > 0) reservation.padding = 'x'.repeat(missing);
+  return reservation;
+}
+
+function reserveDurableRunStorage(account: string): string {
+  persistVolatileRunAttempts(account);
+  const now = Date.now();
+  const queue = readDurableRunQueue(account);
+  const withoutExpiredReservations = queue.filter((item) => !(
+    validRunReservation(item, account) && item.reservedAt <= now - RUN_RESERVATION_EXPIRY_MS
+  ));
+  const reservation = createRunReservation(account);
+  writeDurableRunQueue(account, [...withoutExpiredReservations, reservation]);
+  return reservation.reservationId;
+}
+
+function replaceRunReservation(account: string, reservationId: string,
+  event: Extract<MissionEvent, { type: 'run_end' }>) {
+  if (!MUTATION_UUID_RE.test(reservationId)) {
+    throw persistenceFailure(account, new Error('Canonical run capacity reservation is required'));
+  }
   if (runOutboxPersistenceFailures.has(account) || volatileRunAttempts.get(account)?.length) {
     throw persistenceFailure(account, new Error('A prior run is not durable yet'));
   }
-  const attempt = { account, idempotencyKey: crypto.randomUUID(), runEvidenceId: crypto.randomUUID(), event };
+  const attempt: RunOutbox = { kind: 'run_attempt_v1', account, reservationId, createdAt: Date.now(),
+    idempotencyKey: crypto.randomUUID(), runEvidenceId: crypto.randomUUID(), event };
   try {
     const queue = readDurableRunQueue(account);
-    writeDurableRunQueue(account, [...queue, attempt]);
+    const index = queue.findIndex((item) => validRunReservation(item, account) && item.reservationId === reservationId);
+    if (index < 0) throw new Error('Reserved run capacity is missing');
+    if (serializedBytes(attempt) > MAX_RUN_ATTEMPT_SERIALIZED_BYTES
+      || serializedBytes(attempt) > serializedBytes(queue[index])) {
+      throw new Error('Run attempt exceeds reserved capacity');
+    }
+    const next = [...queue];
+    next[index] = attempt;
+    if (serializedBytes(next) > serializedBytes(queue)) throw new Error('Run replacement grew the durable outbox');
+    // Exactly one storage write replaces the reserved bytes with the attempt.
+    writeDurableRunQueue(account, next);
   } catch (error) {
     volatileRunAttempts.set(account, [...(volatileRunAttempts.get(account) || []), attempt]);
-    throw isRunOutboxPersistenceError(error) ? error : persistenceFailure(account, error);
+    throw persistenceFailure(account, error);
   }
 }
 
@@ -416,8 +463,9 @@ async function flushPendingCanonicalRuns(account: string) {
   let result = null;
   while (true) {
     assertActiveCanonicalAccount(account);
-    const pending = readDurableRunQueue(account)[0];
-    if (!pending) return result;
+    const queue = readDurableRunQueue(account);
+    const pending = queue.find((item): item is RunOutbox => validRunAttempt(item, account));
+    if (!pending) return result; // Capacity reservations are never sent.
     assertActiveCanonicalAccount(account);
     result = await sendCanonicalMissionEvent(account, pending.event, pending.idempotencyKey, pending.runEvidenceId);
     // The server may have acknowledged A while the browser switched to B. Do
@@ -429,8 +477,9 @@ async function flushPendingCanonicalRuns(account: string) {
     }
     const current = readDurableRunQueue(account);
     assertActiveCanonicalAccount(account);
-    if (current[0]?.idempotencyKey === pending.idempotencyKey
-      && current[0]?.runEvidenceId === pending.runEvidenceId) writeDurableRunQueue(account, current.slice(1));
+    const index = current.findIndex((item) => validRunAttempt(item, account)
+      && item.idempotencyKey === pending.idempotencyKey && item.runEvidenceId === pending.runEvidenceId);
+    if (index >= 0) writeDurableRunQueue(account, [...current.slice(0, index), ...current.slice(index + 1)]);
   }
 }
 
@@ -442,12 +491,15 @@ export const missionsAPI = {
   retryRunOutboxPersistence(account: string): void {
     if (!isActiveCanonicalAccount(account)) throw new Error('Cannot retry a run save for another account');
     persistVolatileRunAttempts(account);
+    if (!volatileRunAttempts.get(account)?.length && runOutboxPersistenceFailures.has(account)) {
+      writeDurableRunQueue(account, readDurableRunQueue(account));
+    }
   },
 
-  preflightCanonicalRunStorage(account: string): void {
+  preflightCanonicalRunStorage(account: string): string {
     if (!isActiveCanonicalAccount(account)) throw new Error('Cannot preflight run storage for another account');
     requireWritableGameSession('settle_run_end');
-    preflightDurableRunStorage(account);
+    return reserveDurableRunStorage(account);
   },
 
   async getDaily(): Promise<DailyMissionsResponse> {
@@ -464,7 +516,8 @@ export const missionsAPI = {
   },
 
   async postEvent(
-    event: MissionEvent
+    event: MissionEvent,
+    options: { reservationId?: string } = {},
   ): Promise<
     | {
         date: string;
@@ -488,7 +541,7 @@ export const missionsAPI = {
         : event.type === 'oxygen_collected' ? 'settle_oxygen_collected' : 'settle_pvp_result';
       requireWritableGameSession(capability);
       if (event.type === 'run_end') {
-        enqueueCanonicalRun(account, event);
+        replaceRunReservation(account, options.reservationId || '', event);
         return await flushPendingCanonicalRuns(account);
       }
       await flushPendingCanonicalRuns(account);
