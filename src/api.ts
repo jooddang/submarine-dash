@@ -182,7 +182,13 @@ export const authAPI = {
       } as AuthUser;
       rememberAuthAccess(user);
       if (user.canonical && user.writeCapabilities?.includes('settle_run_end')) {
-        void flushPendingCanonicalRuns(user.userId).catch(() => undefined);
+        try {
+          await flushPendingCanonicalRuns(user.userId);
+        } catch (error) {
+          // Network failures are safe because the durable outbox remains. A
+          // persistence failure is retained as blocking state for Game to show.
+          if (isRunOutboxPersistenceError(error)) console.error('Canonical run outbox persistence failed:', error);
+        }
       }
       return user;
     } catch {
@@ -280,7 +286,21 @@ type MissionEvent =
   | { type: 'pvp_result'; won: boolean };
 
 type RunOutbox = { account: string; idempotencyKey: string; runEvidenceId: string; event: Extract<MissionEvent, { type: 'run_end' }> };
-const MAX_RUN_OUTBOX_ITEMS = 16;
+const volatileRunAttempts = new Map<string, RunOutbox[]>();
+const runOutboxPersistenceFailures = new Set<string>();
+
+export class RunOutboxPersistenceError extends Error {
+  readonly code = 'RUN_OUTBOX_PERSISTENCE_FAILED';
+  constructor(readonly account: string, cause?: unknown) {
+    super('Run progress could not be saved safely on this device. Free browser storage and retry before starting another run.', { cause });
+    this.name = 'RunOutboxPersistenceError';
+  }
+}
+
+export function isRunOutboxPersistenceError(error: unknown): error is RunOutboxPersistenceError {
+  return error instanceof RunOutboxPersistenceError
+    || (error instanceof Error && (error as Error & { code?: string }).code === 'RUN_OUTBOX_PERSISTENCE_FAILED');
+}
 
 function runOutboxKey(account: string) { return `sd:gameplay-run-outbox:${account}`; }
 
@@ -289,23 +309,68 @@ function validRunAttempt(value: RunOutbox | null, account: string): value is Run
     && MUTATION_UUID_RE.test(value.runEvidenceId) && value.event?.type === 'run_end';
 }
 
-function readRunQueue(account: string): RunOutbox[] {
+function persistenceFailure(account: string, cause?: unknown): RunOutboxPersistenceError {
+  runOutboxPersistenceFailures.add(account);
+  return new RunOutboxPersistenceError(account, cause);
+}
+
+function readDurableRunQueue(account: string): RunOutbox[] {
   const key = runOutboxKey(account);
   try {
     const value = JSON.parse(localStorage.getItem(key) || '[]') as RunOutbox[] | RunOutbox;
     const queue = Array.isArray(value) ? value : [value];
-    if (queue.length <= MAX_RUN_OUTBOX_ITEMS && queue.every((attempt) => validRunAttempt(attempt, account))) return queue;
-    localStorage.removeItem(key);
-    return [];
-  } catch {
-    try { localStorage.removeItem(key); } catch { /* unavailable storage */ }
-    return [];
+    if (queue.every((attempt) => validRunAttempt(attempt, account))) return queue;
+    throw persistenceFailure(account, new Error('Stored run outbox is invalid'));
+  } catch (error) {
+    if (isRunOutboxPersistenceError(error)) throw error;
+    throw persistenceFailure(account, error);
   }
 }
 
-function writeRunQueue(account: string, queue: RunOutbox[]) {
-  if (queue.length === 0) localStorage.removeItem(runOutboxKey(account));
-  else localStorage.setItem(runOutboxKey(account), JSON.stringify(queue));
+function writeDurableRunQueue(account: string, queue: RunOutbox[]) {
+  try {
+    if (queue.length === 0) localStorage.removeItem(runOutboxKey(account));
+    else localStorage.setItem(runOutboxKey(account), JSON.stringify(queue));
+    if (!volatileRunAttempts.get(account)?.length) runOutboxPersistenceFailures.delete(account);
+  } catch (error) {
+    throw persistenceFailure(account, error);
+  }
+}
+
+function persistVolatileRunAttempts(account: string) {
+  const volatile = volatileRunAttempts.get(account) || [];
+  const durable = readDurableRunQueue(account);
+  if (volatile.length) {
+    writeDurableRunQueue(account, [...durable, ...volatile]);
+    volatileRunAttempts.delete(account);
+  } else {
+    // A failed acknowledgement removal also blocks new runs. Rewriting the
+    // unchanged queue proves storage is writable without risking data loss.
+    writeDurableRunQueue(account, durable);
+  }
+  runOutboxPersistenceFailures.delete(account);
+}
+
+function enqueueCanonicalRun(account: string, event: Extract<MissionEvent, { type: 'run_end' }>) {
+  if (runOutboxPersistenceFailures.has(account) || volatileRunAttempts.get(account)?.length) {
+    throw persistenceFailure(account, new Error('A prior run is not durable yet'));
+  }
+  const attempt = { account, idempotencyKey: crypto.randomUUID(), runEvidenceId: crypto.randomUUID(), event };
+  try {
+    const queue = readDurableRunQueue(account);
+    writeDurableRunQueue(account, [...queue, attempt]);
+  } catch (error) {
+    volatileRunAttempts.set(account, [...(volatileRunAttempts.get(account) || []), attempt]);
+    throw isRunOutboxPersistenceError(error) ? error : persistenceFailure(account, error);
+  }
+}
+
+function isActiveCanonicalAccount(account: string) {
+  return activeAuthAccess?.canonical === true && activeAuthAccess.userId === account;
+}
+
+function assertActiveCanonicalAccount(account: string) {
+  if (!isActiveCanonicalAccount(account)) throw new Error('Canonical run flush cancelled after account change');
 }
 
 async function sendCanonicalMissionEvent(event: MissionEvent, idempotencyKey: string, runEvidenceId: string | null) {
@@ -325,19 +390,37 @@ async function sendCanonicalMissionEvent(event: MissionEvent, idempotencyKey: st
 }
 
 async function flushPendingCanonicalRuns(account: string) {
+  assertActiveCanonicalAccount(account);
   requireWritableGameSession('settle_run_end');
+  persistVolatileRunAttempts(account);
   let result = null;
   while (true) {
-    const pending = readRunQueue(account)[0];
+    assertActiveCanonicalAccount(account);
+    const pending = readDurableRunQueue(account)[0];
     if (!pending) return result;
+    assertActiveCanonicalAccount(account);
     result = await sendCanonicalMissionEvent(pending.event, pending.idempotencyKey, pending.runEvidenceId);
-    const current = readRunQueue(account);
+    // The server may have acknowledged A while the browser switched to B. Do
+    // not mutate A's outbox in that state; replaying the same idempotency key
+    // when A returns is safe.
+    assertActiveCanonicalAccount(account);
+    const current = readDurableRunQueue(account);
+    assertActiveCanonicalAccount(account);
     if (current[0]?.idempotencyKey === pending.idempotencyKey
-      && current[0]?.runEvidenceId === pending.runEvidenceId) writeRunQueue(account, current.slice(1));
+      && current[0]?.runEvidenceId === pending.runEvidenceId) writeDurableRunQueue(account, current.slice(1));
   }
 }
 
 export const missionsAPI = {
+  hasRunSavePersistenceFailure(account: string): boolean {
+    return runOutboxPersistenceFailures.has(account) || Boolean(volatileRunAttempts.get(account)?.length);
+  },
+
+  retryRunOutboxPersistence(account: string): void {
+    if (!isActiveCanonicalAccount(account)) throw new Error('Cannot retry a run save for another account');
+    persistVolatileRunAttempts(account);
+  },
+
   async getDaily(): Promise<DailyMissionsResponse> {
     requireReadableGameSession('read_daily_missions');
     const res = await fetch(`${API_BASE_URL}/api/missions/daily`, {
@@ -376,13 +459,11 @@ export const missionsAPI = {
         : event.type === 'oxygen_collected' ? 'settle_oxygen_collected' : 'settle_pvp_result';
       requireWritableGameSession(capability);
       if (event.type === 'run_end') {
-        const queue = readRunQueue(account);
-        if (queue.length >= MAX_RUN_OUTBOX_ITEMS) throw new Error('Canonical run save queue is full');
-        queue.push({ account, idempotencyKey: crypto.randomUUID(), runEvidenceId: crypto.randomUUID(), event });
-        writeRunQueue(account, queue);
+        enqueueCanonicalRun(account, event);
         return await flushPendingCanonicalRuns(account);
       }
       await flushPendingCanonicalRuns(account);
+      assertActiveCanonicalAccount(account);
       return await sendCanonicalMissionEvent(event, crypto.randomUUID(), null);
     }
     requireWritableGameSession();

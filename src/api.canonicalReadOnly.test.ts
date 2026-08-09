@@ -235,4 +235,97 @@ describe('canonical read-only client barrier', () => {
     expect(flushed).toEqual(originalIds);
     expect(values.has('sd:gameplay-run-outbox:account-b')).toBe(false);
   });
+
+  it('cancels an A flusher when auth switches to B during the first settlement response', async () => {
+    const values=new Map<string,string>();
+    vi.stubGlobal('localStorage',{
+      getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value),removeItem:(key:string)=>values.delete(key),
+    });
+    const me=(id:string)=>new Response(JSON.stringify({canonical:true,readOnly:false,writeCapabilities:['settle_run_end'],
+      user:{userId:id,loginId:id,refCode:''}}),{status:200,headers:{'content-type':'application/json'}});
+    const settled=(score:number)=>new Response(JSON.stringify({version:'submarine-gameplay-settlement-v1',operation:'run_end',idempotent:false,
+      date:'2026-08-09',progress:{runs:1,oxygenCollected:0,maxScore:score,completedMissionIds:[],keptAt:null},rewards:null,
+      coinsEarned:10,inventory:{coins:10,dolphinSaved:0,tube:{pieces:0,charges:0}},newAchievements:[],stateVersion:2}),
+      {status:200,headers:{'content-type':'application/json'}});
+    let resolveFirst!: (response:Response)=>void;
+    const firstSettlement=new Promise<Response>((resolve)=>{ resolveFirst=resolve; });
+    const meResponses=[me('account-a-switch'),me('account-a-switch'),me('account-b-switch')];
+    const gameplayBodies:number[]=[];
+    const fetchMock=vi.fn((url:string,init?:RequestInit)=>{
+      if (url.endsWith('/api/auth/me')) return Promise.resolve(meResponses.shift()!);
+      gameplayBodies.push(JSON.parse(String(init?.body)).score);
+      if (gameplayBodies.length > 1) throw new Error('A second run must not send after the account switch');
+      return firstSettlement;
+    });
+    vi.stubGlobal('fetch',fetchMock);
+    await authAPI.me();
+    const ids=['11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222'];
+    values.set('sd:gameplay-run-outbox:account-a-switch',JSON.stringify(ids.map((id,index)=>({
+      account:'account-a-switch',idempotencyKey:id,runEvidenceId:id,event:{type:'run_end',score:(index+1)*100,tubePieces:0,tubeCharges:0},
+    }))));
+    const staleA=authAPI.me();
+    await vi.waitFor(()=>expect(gameplayBodies).toEqual([100]));
+    await expect(authAPI.me()).resolves.toMatchObject({userId:'account-b-switch'});
+    resolveFirst(settled(100));
+    await staleA;
+    expect(gameplayBodies).toEqual([100]);
+    const retained=JSON.parse(values.get('sd:gameplay-run-outbox:account-a-switch') || '[]');
+    expect(retained.map((item:{event:{score:number}})=>item.event.score)).toEqual([100,200]);
+    expect(values.has('sd:gameplay-run-outbox:account-b-switch')).toBe(false);
+  });
+
+  it('preserves queues larger than the former fixed cap', async () => {
+    const values=new Map<string,string>();
+    vi.stubGlobal('localStorage',{
+      getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value),removeItem:(key:string)=>values.delete(key),
+    });
+    const fetchMock=vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({canonical:true,readOnly:false,writeCapabilities:['settle_run_end'],
+        user:{userId:'large-queue',loginId:'large',refCode:''}}),{status:200,headers:{'content-type':'application/json'}}))
+      .mockRejectedValueOnce(new Error('offline'));
+    vi.stubGlobal('fetch',fetchMock);
+    await authAPI.me();
+    const existing=Array.from({length:20},(_,index)=>({account:'large-queue',idempotencyKey:crypto.randomUUID(),
+      runEvidenceId:crypto.randomUUID(),event:{type:'run_end',score:index,tubePieces:0,tubeCharges:0}}));
+    values.set('sd:gameplay-run-outbox:large-queue',JSON.stringify(existing));
+    await expect(missionsAPI.postEvent({type:'run_end',score:999,tubePieces:0,tubeCharges:0})).rejects.toThrow('offline');
+    const preserved=JSON.parse(values.get('sd:gameplay-run-outbox:large-queue') || '[]');
+    expect(preserved).toHaveLength(21);
+    expect(preserved.at(-1).event.score).toBe(999);
+  });
+
+  it('retains an unpersisted run in memory and exposes a blocking retry state', async () => {
+    const values=new Map<string,string>();
+    let storageAvailable=false;
+    vi.stubGlobal('localStorage',{
+      getItem:(key:string)=>values.get(key)??null,
+      setItem:(key:string,value:string)=>{ if (!storageAvailable) throw new Error('quota exceeded'); values.set(key,value); },
+      removeItem:(key:string)=>values.delete(key),
+    });
+    const fetchMock=vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({canonical:true,readOnly:false,
+      writeCapabilities:['settle_run_end'],user:{userId:'storage-failure',loginId:'storage',refCode:''}}),
+      {status:200,headers:{'content-type':'application/json'}}));
+    vi.stubGlobal('fetch',fetchMock);
+    await authAPI.me();
+    await expect(missionsAPI.postEvent({type:'run_end',score:321,tubePieces:0,tubeCharges:0}))
+      .rejects.toMatchObject({code:'RUN_OUTBOX_PERSISTENCE_FAILED'});
+    expect(missionsAPI.hasRunSavePersistenceFailure('storage-failure')).toBe(true);
+    await expect(missionsAPI.postEvent({type:'run_end',score:654,tubePieces:0,tubeCharges:0}))
+      .rejects.toMatchObject({code:'RUN_OUTBOX_PERSISTENCE_FAILED'});
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    storageAvailable=true;
+    missionsAPI.retryRunOutboxPersistence('storage-failure');
+    expect(missionsAPI.hasRunSavePersistenceFailure('storage-failure')).toBe(false);
+    const queue=JSON.parse(values.get('sd:gameplay-run-outbox:storage-failure') || '[]');
+    expect(queue).toHaveLength(1);
+    expect(queue[0].event.score).toBe(321);
+  });
+
+  it('shows and enforces the run-save persistence blocker in Game', () => {
+    const game=readFileSync(new URL('./Game.tsx',import.meta.url),'utf8');
+    expect(game).toContain('RUN SAVE PAUSED');
+    expect(game).toContain('if (runSaveBlockedRef.current)');
+    expect(game).toContain('missionsAPI.retryRunOutboxPersistence(account)');
+    expect(game).toContain('if (isRunOutboxPersistenceError(error))');
+  });
 });

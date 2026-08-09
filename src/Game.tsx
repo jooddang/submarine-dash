@@ -7,7 +7,7 @@ import { createBubble, spawnBackgroundEntity } from "./entities";
 import { drawSwordfish, drawUrchin, drawBackgroundEntities, drawTurtleShell } from "./drawing";
 import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, DailyMissionsPanel, DolphinStreakRewardOverlay, DolphinWeeklyWinnerRewardOverlay, InventoryPanel, SkinPanel, AchievementsPanel } from "./components/UIOverlays";
 import { getSkinDef, drawSubmarine, updateTrailParticles, drawTrailParticles, isGoldenTubeEligible, GOLDEN_TUBE_EXTRA_CHARGES, GOLDEN_TUBE_EXTRA_SCORE_BONUS, DEFAULT_SKIN_ID, preloadSkinImages, type TrailParticle, type SkinDef } from "./skins";
-import { authAPI, dolphinMutationAccessState, inventoryAPI, isReadOnlyCanary, leaderboardAPI, missionsAPI, achievementsAPI, type DailyMissionsResponse, type AuthUser, type UserAchievementSummary } from "./api";
+import { authAPI, dolphinMutationAccessState, inventoryAPI, isReadOnlyCanary, isRunOutboxPersistenceError, leaderboardAPI, missionsAPI, achievementsAPI, type DailyMissionsResponse, type AuthUser, type UserAchievementSummary } from "./api";
 import { DailyRequestGuard, latestDailyResult } from "./dailyRequestGuard";
 import { runLeaderboardSubmission } from "./leaderboardSubmission";
 import turtleRescueImg from "../turtle.png";
@@ -147,6 +147,8 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
   // Important: the game loop + global event listeners are registered once and can capture stale state.
   // Mirror auth state into a ref so gameplay-side logic always sees the latest auth status.
   const authUserRef = useRef<AuthUser | null>(null);
+  const runSaveBlockedRef = useRef(false);
+  const [runSaveError, setRunSaveError] = useState<string | null>(null);
   const [streakOpen, setStreakOpen] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [skinsOpen, setSkinsOpen] = useState(false);
@@ -310,6 +312,8 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
     dailyRequestGuardRef.current.invalidate();
     setAuthUser(null);
     authUserRef.current = null;
+    runSaveBlockedRef.current = false;
+    setRunSaveError(null);
     bindDolphinMutationAccess(null);
     setCoinBalance(0);
     setOwnedSkins([DEFAULT_SKIN_ID]);
@@ -354,6 +358,11 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
       setAuthUser(me);
       // Keep the auth ref in sync immediately (used by gameplay-side auth checks).
       authUserRef.current = me;
+      const runSaveBlocked = Boolean(me?.canonical && missionsAPI.hasRunSavePersistenceFailure(me.userId));
+      runSaveBlockedRef.current = runSaveBlocked;
+      setRunSaveError(runSaveBlocked
+        ? "Your previous run is not safely stored yet. Free browser storage, then press Start to retry."
+        : null);
       dailyRequestGuardRef.current.invalidate();
       const readOnlyCanary = isReadOnlyCanary(me);
       const hasPendingConsume = bindDolphinMutationAccess(me);
@@ -832,6 +841,18 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
   const startGame = () => {
     initAudio();
     if (!canvasRef.current) return;
+    if (runSaveBlockedRef.current) {
+      const account = authUserRef.current?.canonical ? authUserRef.current.userId : null;
+      if (!account) return;
+      try {
+        missionsAPI.retryRunOutboxPersistence(account);
+        runSaveBlockedRef.current = false;
+        setRunSaveError(null);
+      } catch (error) {
+        setRunSaveError(error instanceof Error ? error.message : "Run progress is not safely stored yet.");
+        return;
+      }
+    }
 
     // Reset Game State
     setAchievementsOpen(false);
@@ -1351,7 +1372,16 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
           }
           refreshDailyMissions();
         })
-        .catch(() => undefined);
+        .catch((error) => {
+          if (isRunOutboxPersistenceError(error)) {
+            runSaveBlockedRef.current = true;
+            setRunSaveError(error.message);
+            return;
+          }
+          // Network/server failures keep the run in the durable outbox and are
+          // retried on return or before the next canonical event.
+          console.warn("Run settlement deferred:", error);
+        });
     }
 
     const lb = leaderboardRef.current;
@@ -2219,6 +2249,18 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
           }}
         >
           {tubeToast}
+        </div>
+      )}
+
+      {runSaveError && gameState !== "PLAYING" && (
+        <div role="alert" style={{
+          position: "absolute", top: 84, left: "50%", transform: "translateX(-50%)",
+          zIndex: 40, width: "min(620px, calc(100vw - 32px))", padding: "12px 16px",
+          borderRadius: 12, border: "2px solid #ffb347", background: "rgba(45, 18, 0, 0.96)",
+          color: "#fff", fontFamily: "monospace", fontWeight: 800, textAlign: "center",
+          boxSizing: "border-box",
+        }}>
+          RUN SAVE PAUSED — {runSaveError} Starting another run is blocked until retry succeeds.
         </div>
       )}
 
