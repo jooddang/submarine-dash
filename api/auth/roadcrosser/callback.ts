@@ -18,7 +18,7 @@ function roadcrosserOrigin() {
 }
 
 function roadcrosserGameUrl() {
-  return `${roadcrosserOrigin()}/submarine-dash`;
+  return `${roadcrosserOrigin()}/submarine-dash?connected=1`;
 }
 
 export async function handler(req: VercelRequest, res: VercelResponse) {

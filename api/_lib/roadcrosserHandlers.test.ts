@@ -249,7 +249,7 @@ describe('canonical auth handlers', () => {
       body: { ticket: opaque('T') },
     }), out.res);
     expect(events).toEqual(['delete-legacy', 'revoke-O']);
-    expect(out.state).toMatchObject({ status: 303, redirect: 'https://www.roadcrosser.com/submarine-dash' });
+    expect(out.state).toMatchObject({ status: 303, redirect: 'https://www.roadcrosser.com/submarine-dash?connected=1' });
     const cookies = out.headers.get('Set-Cookie') as string[];
     expect(cookies.some((value) => value.startsWith(`sd_roadcrosser_session=${opaque('N')}`))).toBe(true);
     expect(cookies.some((value) => value.startsWith('sd_session=;'))).toBe(true);
