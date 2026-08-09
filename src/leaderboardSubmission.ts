@@ -11,6 +11,7 @@ type SubmissionCallbacks<TResult> = {
   onError: (message: string | null) => void;
   onSuccess: (result: TResult) => void;
   onUnauthorized: () => void;
+  failureMessage?: string;
 };
 
 export async function runLeaderboardSubmission<TResult>({
@@ -20,6 +21,7 @@ export async function runLeaderboardSubmission<TResult>({
   onError,
   onSuccess,
   onUnauthorized,
+  failureMessage = 'Score submission failed. Please try again.',
 }: SubmissionCallbacks<TResult>): Promise<boolean> {
   if (lock.current) return false;
 
@@ -36,7 +38,7 @@ export async function runLeaderboardSubmission<TResult>({
       onUnauthorized();
       onError('Your session expired. Log in again to submit this score.');
     } else {
-      onError('Score submission failed. Please try again.');
+      onError(failureMessage);
     }
     return false;
   } finally {

@@ -63,6 +63,16 @@ describe('production route inventory', () => {
           "withProductionControl('api/leaderboard/weekly.ts', handler, dependencies, isCanonicalWeeklyLeaderboardBoundary)",
         );
         expect(source.trimEnd().endsWith('export default createWeeklyLeaderboardRoute();'), file).toBe(true);
+      } else if (file === 'api/leaderboard.ts') {
+        expect(source, file).toContain(
+          "withProductionControl('api/leaderboard.ts', handler, dependencies, isCanonicalLeaderboardBoundary)",
+        );
+        expect(source.trimEnd().endsWith('export default createLeaderboardRoute();'), file).toBe(true);
+      } else if (file === 'api/achievements/users.ts') {
+        expect(source, file).toContain(
+          "withProductionControl('api/achievements/users.ts', handler, dependencies, isCanonicalAchievementSummariesBoundary)",
+        );
+        expect(source.trimEnd().endsWith('export default createAchievementSummariesRoute();'), file).toBe(true);
       } else {
         expect(source.trimEnd().endsWith(`export default withProductionControl('${file}', handler);`), file).toBe(true);
       }

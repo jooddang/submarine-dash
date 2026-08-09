@@ -138,6 +138,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
   const [lastSubmittedId, setLastSubmittedId] = useState<number | null>(null);
   const [weeklyLeaderboards, setWeeklyLeaderboards] = useState<WeeklyLeaderboard[]>([]);
   const [currentWeekId, setCurrentWeekId] = useState<string | null>(null);
+  const [leaderboardLoadError, setLeaderboardLoadError] = useState<string | null>(null);
 
   const [playerName, setPlayerName] = useState("");
   const [scoreSubmitError, setScoreSubmitError] = useState<string | null>(null);
@@ -149,6 +150,9 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
   const authUserRef = useRef<AuthUser | null>(null);
   const runSaveBlockedRef = useRef(false);
   const runReservationIdRef = useRef<string | null>(null);
+  const runSettlementPromiseRef = useRef<Promise<any> | null>(null);
+  const settledRunEvidenceIdRef = useRef<string | null>(null);
+  const scorePublicationKeyRef = useRef<string | null>(null);
   const [runSaveError, setRunSaveError] = useState<string | null>(null);
   const [streakOpen, setStreakOpen] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
@@ -334,22 +338,19 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
     // Load leaderboard from backend API
     const loadLeaderboard = async () => {
       try {
-        // Prefer weekly API (current + history). Fall back to legacy endpoint.
-        try {
-          const data = await leaderboardAPI.getWeeklyLeaderboards(52);
-          setCurrentWeekId(data.currentWeekId);
-          setWeeklyLeaderboards(data.weeks || []);
-          setLeaderboard(data.current || []);
-          leaderboardRef.current = data.current || [];
-          fetchUserAchievements(data.current || []);
-        } catch {
-          const data = await leaderboardAPI.getLeaderboard();
-          setLeaderboard(data);
-          leaderboardRef.current = data;
-          fetchUserAchievements(data);
-        }
+        // Weekly is the single read contract for both canonical and legacy
+        // sessions. Never disguise an authoritative read failure as an empty
+        // Redis leaderboard.
+        const data = await leaderboardAPI.getWeeklyLeaderboards(52);
+        setCurrentWeekId(data.currentWeekId);
+        setWeeklyLeaderboards(data.weeks || []);
+        setLeaderboard(data.current || []);
+        leaderboardRef.current = data.current || [];
+        fetchUserAchievements(data.current || []);
+        setLeaderboardLoadError(null);
       } catch (e) {
         console.error("Failed to load leaderboard", e);
+        setLeaderboardLoadError("Leaderboard is temporarily unavailable. Your saved runs are not affected.");
       }
     };
 
@@ -847,6 +848,9 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
     if (canonicalAccount) {
       try {
         runReservationIdRef.current = missionsAPI.preflightCanonicalRunStorage(canonicalAccount);
+        runSettlementPromiseRef.current = null;
+        settledRunEvidenceIdRef.current = null;
+        scorePublicationKeyRef.current = null;
         runSaveBlockedRef.current = false;
         setRunSaveError(null);
       } catch (error) {
@@ -1323,8 +1327,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
       const runEndSeq = nextDolphinSyncSeq();
       const reservationId = au.canonical ? runReservationIdRef.current ?? undefined : undefined;
       runReservationIdRef.current = null;
-      missionsAPI
-        .postEvent({
+      const settlementPromise = missionsAPI.postEvent({
           type: "run_end",
           score: finalScore,
           tubePieces: tubePiecesRef.current,
@@ -1335,8 +1338,13 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
           urchinDodges: urchinDodgesRef.current,
           swordfishCollected: swordfishCollectedRef.current,
           swordfishDodged: swordfishDodgedRef.current,
-        }, { reservationId })
+        }, { reservationId });
+      if (au.canonical) runSettlementPromiseRef.current = settlementPromise;
+      settlementPromise
         .then((out) => {
+          if (au.canonical && typeof out?.runEvidenceId === "string") {
+            settledRunEvidenceIdRef.current = out.runEvidenceId;
+          }
           if (out?.inventory && typeof out.inventory.dolphinSaved === "number") {
             applyDolphinCountSync(out.inventory.dolphinSaved, runEndSeq);
           }
@@ -1411,9 +1419,31 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
     }
     return runLeaderboardSubmission({
       lock: scoreSubmitLockRef,
-      submit: () => leaderboardAPI.submitScore(name, scoreRef.current, equippedSkinId),
+      submit: async () => {
+        const currentUser = authUserRef.current;
+        let runEvidenceId = settledRunEvidenceIdRef.current;
+        if (currentUser?.canonical && !runEvidenceId) {
+          try {
+            const settled = await runSettlementPromiseRef.current;
+            runEvidenceId = settled?.runEvidenceId ?? null;
+          } catch {
+            const retried = await missionsAPI.retryPendingCanonicalRuns(currentUser.userId);
+            runEvidenceId = retried?.runEvidenceId ?? null;
+          }
+          if (!runEvidenceId) throw new Error("The settled run evidence is unavailable");
+          settledRunEvidenceIdRef.current = runEvidenceId;
+        }
+        if (currentUser?.canonical && !scorePublicationKeyRef.current) {
+          scorePublicationKeyRef.current = crypto.randomUUID();
+        }
+        return leaderboardAPI.submitScore(name, scoreRef.current, equippedSkinId, runEvidenceId ?? undefined,
+          scorePublicationKeyRef.current ?? undefined);
+      },
       onBusyChange: setScoreSubmitBusy,
       onError: setScoreSubmitError,
+      failureMessage: authUserRef.current?.canonical
+        ? "Your run is preserved for retry. Its leaderboard name could not be published yet; retry."
+        : undefined,
       onUnauthorized: resetAuthenticatedUserState,
       onSuccess: (result) => {
         setLeaderboard(result.leaderboard);
@@ -2266,6 +2296,17 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
           boxSizing: "border-box",
         }}>
           RUN SAVE PAUSED — {runSaveError} Starting another run is blocked until retry succeeds.
+        </div>
+      )}
+
+      {leaderboardLoadError && gameState !== "PLAYING" && (
+        <div role="alert" style={{
+          position: "absolute", top: runSaveError ? 150 : 84, left: "50%", transform: "translateX(-50%)",
+          zIndex: 39, width: "min(620px, calc(100vw - 32px))", padding: "10px 14px",
+          borderRadius: 12, border: "2px solid #ff9f9f", background: "rgba(45, 8, 18, 0.96)",
+          color: "#fff", fontFamily: "monospace", fontWeight: 800, textAlign: "center", boxSizing: "border-box",
+        }}>
+          {leaderboardLoadError}
         </div>
       )}
 

@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   consumeRoadcrosserTicket, consumeRoadcrosserCanaryDolphin, importRoadcrosserCanaryDolphin,
   equipRoadcrosserCanarySkin, purchaseRoadcrosserCanarySkin, readRoadcrosserCanonicalBootstrap,
-  readRoadcrosserWeeklyLeaderboard, resolveRoadcrosserSession, revokeRoadcrosserSession, settleRoadcrosserGameplay,
+  publishRoadcrosserScore, readRoadcrosserAchievementSummaries, readRoadcrosserWeeklyLeaderboard,
+  resolveRoadcrosserSession, revokeRoadcrosserSession,
+  settleRoadcrosserGameplay,
 } from './roadcrosserAuth.js';
 import { SKIN_CATALOG_VERSION } from '../../shared/canaryPurchase.js';
 import { DOLPHIN_CONTRACT_VERSION } from '../../shared/canaryDolphin.js';
@@ -69,6 +71,13 @@ describe('Roadcrosser scoped internal client', () => {
         progress:{runs:1,oxygenCollected:0,maxScore:1200,completedMissionIds:[],keptAt:null},rewards:null,coinsEarned:10,
         inventory:{coins:10,dolphinSaved:0,tube:{pieces:2,charges:1}},newAchievements:[],stateVersion:2,
       }),{status:200}));
+      if (url.endsWith('/mutations/publish-score')) return Promise.resolve(new Response(JSON.stringify({
+        version:'submarine-score-publication-v1',idempotent:false,
+        entry:{id:9,name:'Diver',userId:'fixture',score:1200,skinId:'default'},
+      }),{status:200}));
+      if (url.endsWith('/achievements/users')) return Promise.resolve(new Response(JSON.stringify({
+        version:'submarine-achievement-summaries-v1',users:{fixture:{count:1,unlockedIds:['oxygen_master']}},
+      }),{status:200}));
       if (url.endsWith('/leaderboard/weekly')) return Promise.resolve(new Response(JSON.stringify({
         version:'submarine-weekly-leaderboard-v1',currentWeekId:'2026-08-03',current:[],weeks:[],
       }),{status:200}));
@@ -87,6 +96,9 @@ describe('Roadcrosser scoped internal client', () => {
     await readRoadcrosserWeeklyLeaderboard(opaque,52);
     await settleRoadcrosserGameplay(opaque,'fixture','97000000-0000-4000-8000-000000000005',
       '97000000-0000-4000-8000-000000000006',{type:'run_end',score:1200,tubePieces:2,tubeCharges:1});
+    await publishRoadcrosserScore(opaque,'fixture','97000000-0000-4000-8000-000000000007',
+      '97000000-0000-4000-8000-000000000006','Diver');
+    await readRoadcrosserAchievementSummaries(opaque,['fixture']);
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       'https://www.roadcrosser.com/api/internal/submarine-dash/sessions/resolve',
       'https://www.roadcrosser.com/api/internal/submarine-dash/sessions/revoke',
@@ -97,6 +109,8 @@ describe('Roadcrosser scoped internal client', () => {
       'https://www.roadcrosser.com/api/internal/submarine-dash/mutations/import-dolphin',
       'https://www.roadcrosser.com/api/internal/submarine-dash/leaderboard/weekly',
       'https://www.roadcrosser.com/api/internal/submarine-dash/mutations/settle-gameplay',
+      'https://www.roadcrosser.com/api/internal/submarine-dash/mutations/publish-score',
+      'https://www.roadcrosser.com/api/internal/submarine-dash/achievements/users',
     ]);
     expect(JSON.parse(fetchMock.mock.calls[4][1].body)).toMatchObject({ catalogVersion: SKIN_CATALOG_VERSION });
     expect(JSON.parse(fetchMock.mock.calls[5][1].body)).toEqual({
@@ -110,6 +124,10 @@ describe('Roadcrosser scoped internal client', () => {
     expect(JSON.parse(fetchMock.mock.calls[8][1].body)).toMatchObject({
       expectedExternalUserId:'fixture',idempotencyKey:'97000000-0000-4000-8000-000000000005',
     });
+    expect(JSON.parse(fetchMock.mock.calls[9][1].body)).toEqual({sessionToken:opaque,expectedExternalUserId:'fixture',
+      idempotencyKey:'97000000-0000-4000-8000-000000000007',runEvidenceId:'97000000-0000-4000-8000-000000000006',
+      displayName:'Diver',contractVersion:'submarine-score-publication-v1'});
+    expect(JSON.parse(fetchMock.mock.calls[10][1].body)).toEqual({sessionToken:opaque,loginIds:['fixture']});
   });
 
   it('rejects remote overrides and redacts central failures', async () => {

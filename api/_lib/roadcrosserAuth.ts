@@ -18,6 +18,8 @@ const allowedPaths = new Set([
   '/api/internal/submarine-dash/daily-missions',
   '/api/internal/submarine-dash/leaderboard/weekly',
   '/api/internal/submarine-dash/mutations/settle-gameplay',
+  '/api/internal/submarine-dash/mutations/publish-score',
+  '/api/internal/submarine-dash/achievements/users',
 ]);
 
 export type CanonicalSubmarineUser = {
@@ -56,6 +58,12 @@ export type CanonicalWeeklyLeaderboard = {
     entries: Array<{ id: number; name: string; userId: string; skinId?: string; score: number }>;
     createdAt: number; updatedAt: number;
   }>;
+};
+
+export type CanonicalScorePublication = {
+  version: 'submarine-score-publication-v1';
+  idempotent: boolean;
+  entry: { id: number; name: string; userId: string; skinId?: string; score: number };
 };
 
 function baseUrl() {
@@ -130,7 +138,7 @@ export async function readRoadcrosserCanonicalBootstrap(sessionToken: string) {
     || !Array.isArray(result.writeCapabilities)
     || result.writeCapabilities.some((capability) => ![
       'equip_skin', 'purchase_skin', 'consume_dolphin', 'import_dolphin',
-      'settle_run_end', 'settle_oxygen_collected', 'settle_pvp_result',
+      'settle_run_end', 'settle_oxygen_collected', 'settle_pvp_result', 'publish_score',
     ].includes(String(capability)))
     || !user
     || typeof user.externalUserId !== 'string'
@@ -186,4 +194,41 @@ export async function settleRoadcrosserGameplay(sessionToken: string, expectedEx
   return validateCanonicalGameplayResponse(
     await request('/api/internal/submarine-dash/mutations/settle-gameplay', body), String(event.type),
   );
+}
+
+export async function publishRoadcrosserScore(sessionToken: string, expectedExternalUserId: string,
+  idempotencyKey: string, runEvidenceId: string, displayName: string) {
+  const result = await request('/api/internal/submarine-dash/mutations/publish-score', {
+    sessionToken, expectedExternalUserId, idempotencyKey, runEvidenceId, displayName,
+    contractVersion: 'submarine-score-publication-v1',
+  });
+  const entry = result.entry as Record<string, unknown> | undefined;
+  if (result.version !== 'submarine-score-publication-v1' || typeof result.idempotent !== 'boolean' || !entry
+    || !Number.isSafeInteger(entry.id) || typeof entry.name !== 'string' || entry.name.length < 1 || entry.name.length > 64
+    || typeof entry.userId !== 'string' || entry.userId.length < 1 || entry.userId.length > 200
+    || !Number.isSafeInteger(entry.score) || Number(entry.score) < 0
+    || (entry.skinId !== undefined && (typeof entry.skinId !== 'string' || entry.skinId.length < 1 || entry.skinId.length > 64))) {
+    throw new Error('Roadcrosser canonical score publication response is invalid');
+  }
+  return result as CanonicalScorePublication;
+}
+
+export async function readRoadcrosserAchievementSummaries(sessionToken: string, loginIds: string[]) {
+  const result = await request('/api/internal/submarine-dash/achievements/users', { sessionToken, loginIds });
+  if (result.version !== 'submarine-achievement-summaries-v1' || !result.users
+    || typeof result.users !== 'object' || Array.isArray(result.users)) {
+    throw new Error('Roadcrosser canonical achievement summaries response is invalid');
+  }
+  const users = result.users as Record<string, unknown>;
+  if (Object.keys(users).length > 20 || Object.entries(users).some(([loginId, value]) => {
+    const summary = value as Record<string, unknown> | null;
+    return loginId.length < 1 || loginId.length > 200 || !summary || typeof summary !== 'object'
+      || !Number.isSafeInteger(summary.count) || Number(summary.count) < 0
+      || !Array.isArray(summary.unlockedIds) || summary.unlockedIds.length > 32
+      || summary.count !== summary.unlockedIds.length
+      || summary.unlockedIds.some((id) => typeof id !== 'string' || !/^[a-z0-9][a-z0-9_]{0,63}$/.test(id));
+  })) {
+    throw new Error('Roadcrosser canonical achievement summaries response is invalid');
+  }
+  return users as Record<string, { count: number; unlockedIds: string[] }>;
 }

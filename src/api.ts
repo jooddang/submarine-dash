@@ -123,19 +123,20 @@ export const leaderboardAPI = {
   },
 
   // Submit a new score
-  async submitScore(name: string, score: number, skinId?: string): Promise<{
+  async submitScore(name: string, score: number, skinId?: string, runEvidenceId?: string, idempotencyKey?: string): Promise<{
     entry: LeaderboardEntry;
     leaderboard: LeaderboardEntry[];
     rank: number;
   }> {
-    requireWritableGameSession();
+    requireWritableGameSession(activeAuthAccess?.canonical ? 'publish_score' : undefined);
     const response = await fetch(`${API_BASE_URL}/api/leaderboard`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       credentials: 'include',
-      body: JSON.stringify({ name, score, skinId }),
+      body: JSON.stringify({ name, score, skinId,
+        ...(runEvidenceId ? { runEvidenceId } : {}), ...(idempotencyKey ? { idempotencyKey } : {}) }),
     });
 
     if (!response.ok) {
@@ -421,6 +422,7 @@ function replaceRunReservation(account: string, reservationId: string,
     if (serializedBytes(next) > serializedBytes(queue)) throw new Error('Run replacement grew the durable outbox');
     // Exactly one storage write replaces the reserved bytes with the attempt.
     writeDurableRunQueue(account, next);
+    return attempt;
   } catch (error) {
     volatileRunAttempts.set(account, [...(volatileRunAttempts.get(account) || []), attempt]);
     throw persistenceFailure(account, error);
@@ -467,7 +469,8 @@ async function flushPendingCanonicalRuns(account: string) {
     const pending = queue.find((item): item is RunOutbox => validRunAttempt(item, account));
     if (!pending) return result; // Capacity reservations are never sent.
     assertActiveCanonicalAccount(account);
-    result = await sendCanonicalMissionEvent(account, pending.event, pending.idempotencyKey, pending.runEvidenceId);
+    const settled = await sendCanonicalMissionEvent(account, pending.event, pending.idempotencyKey, pending.runEvidenceId);
+    result = { ...settled, runEvidenceId: pending.runEvidenceId };
     // The server may have acknowledged A while the browser switched to B. Do
     // not mutate A's outbox in that state; replaying the same idempotency key
     // when A returns is safe.
@@ -494,6 +497,11 @@ export const missionsAPI = {
     if (!volatileRunAttempts.get(account)?.length && runOutboxPersistenceFailures.has(account)) {
       writeDurableRunQueue(account, readDurableRunQueue(account));
     }
+  },
+
+  async retryPendingCanonicalRuns(account: string) {
+    if (!isActiveCanonicalAccount(account)) throw new Error('Cannot retry a run save for another account');
+    return await flushPendingCanonicalRuns(account);
   },
 
   preflightCanonicalRunStorage(account: string): string {
@@ -532,6 +540,7 @@ export const missionsAPI = {
         coinsEarned?: number;
         inventory?: { dolphinSaved: number; coins: number; tube?: TubeState; skins?: SkinState };
         newAchievements?: string[];
+        runEvidenceId?: string;
       }
     | null
   > {
@@ -715,6 +724,7 @@ export const achievementsAPI = {
     try {
       const res = await fetch(
         `${API_BASE_URL}/api/achievements/users?loginIds=${encodeURIComponent(loginIds.join(','))}`,
+        { credentials: 'include' },
       );
       if (!res.ok) return {};
       const data = await res.json();

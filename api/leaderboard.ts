@@ -1,7 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { withProductionControl } from './_lib/productionControls.js';
 import { sanitizeLeaderboardName } from '../shared/profanity.js';
-import { getCanonicalSessionToken, getUser, getUserIdForSession } from './_lib/auth.js';
+import { getCanonicalSessionToken, getUser, getUserIdForSession, isAllowedSubmarineMutationOrigin } from './_lib/auth.js';
+import { publishRoadcrosserScore, readRoadcrosserWeeklyLeaderboard, resolveRoadcrosserSession } from './_lib/roadcrosserAuth.js';
 import { getUpstashRedisClient } from './_lib/redis.js';
 import {
   LEGACY_LEADERBOARD_KEY,
@@ -17,8 +18,9 @@ import {
 export const config = { runtime: 'nodejs' };
 
 const CLEAR_ALLOWED = process.env.ALLOW_LEADERBOARD_CLEAR === 'true';
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-async function handler(req: VercelRequest, res: VercelResponse) {
+export async function handler(req: VercelRequest, res: VercelResponse) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
@@ -27,9 +29,34 @@ async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
-  if (getCanonicalSessionToken(req)) return res.status(409).json({ error: 'Canonical canary is read-only' });
+  const canonicalToken = getCanonicalSessionToken(req);
 
   try {
+    if (canonicalToken) {
+      if (req.method === 'GET') {
+        const weekly = await readRoadcrosserWeeklyLeaderboard(canonicalToken, 1);
+        return res.status(200).json(weekly.current);
+      }
+      if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+      if (process.env.SD_SUPABASE_GAMEPLAY_WRITES_ENABLED !== 'true') {
+        return res.status(409).json({ error: 'Canonical score publication is not enabled' });
+      }
+      if (!isAllowedSubmarineMutationOrigin(req)) return res.status(403).json({ error: 'Forbidden' });
+      const body = (req.body || {}) as Record<string, unknown>;
+      const runEvidenceId = typeof body.runEvidenceId === 'string' && UUID.test(body.runEvidenceId) ? body.runEvidenceId : null;
+      const idempotencyKey = typeof body.idempotencyKey === 'string' && UUID.test(body.idempotencyKey) ? body.idempotencyKey : null;
+      const requestedName = typeof body.name === 'string' ? body.name.trim() : '';
+      if (!runEvidenceId || !idempotencyKey || requestedName.length > 64) {
+        return res.status(400).json({ error: 'Score publication request is invalid' });
+      }
+      const session = await resolveRoadcrosserSession(canonicalToken);
+      const displayName = (await sanitizeLeaderboardName(requestedName || session.loginId)).slice(0, 64);
+      const publication = await publishRoadcrosserScore(canonicalToken, session.externalUserId,
+        idempotencyKey, runEvidenceId, displayName);
+      const weekly = await readRoadcrosserWeeklyLeaderboard(canonicalToken, 1);
+      const rank = weekly.current.findIndex((entry) => entry.id === publication.entry.id) + 1;
+      return res.status(200).json({ entry: publication.entry, leaderboard: weekly.current, rank });
+    }
     if (req.method === 'GET') {
       // Get leaderboard (current PST week)
       await ensureWeeklyStoreBootstrapped();
@@ -126,4 +153,11 @@ async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-export default withProductionControl('api/leaderboard.ts', handler);
+export function isCanonicalLeaderboardBoundary(req: VercelRequest) {
+  return (req.method === 'GET' || req.method === 'POST') && Boolean(getCanonicalSessionToken(req));
+}
+
+export const createLeaderboardRoute = (dependencies: Parameters<typeof withProductionControl>[2] = {}) =>
+  withProductionControl('api/leaderboard.ts', handler, dependencies, isCanonicalLeaderboardBoundary);
+
+export default createLeaderboardRoute();

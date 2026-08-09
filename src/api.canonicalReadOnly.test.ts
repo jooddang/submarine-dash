@@ -388,8 +388,10 @@ describe('canonical read-only client barrier', () => {
     vi.stubGlobal('fetch',fetchMock);
     await authAPI.me();
     const reservationId=missionsAPI.preflightCanonicalRunStorage('reservation-success');
-    await expect(missionsAPI.postEvent({type:'run_end',score:777,tubePieces:0,tubeCharges:0},{reservationId}))
-      .resolves.toMatchObject({coinsEarned:7});
+    const settled=await missionsAPI.postEvent({type:'run_end',score:777,tubePieces:0,tubeCharges:0},{reservationId});
+    expect(settled).toMatchObject({coinsEarned:7,runEvidenceId:expect.stringMatching(/^[0-9a-f-]{36}$/)});
+    expect((fetchMock.mock.calls[1][1]?.headers as Record<string,string>)['Run-Evidence-Id'])
+      .toBe(settled?.runEvidenceId);
     expect(outboxWrites).toHaveLength(2);
     expect(outboxWrites[1]).toBeLessThanOrEqual(outboxWrites[0]);
     expect(values.has('sd:gameplay-run-outbox:reservation-success')).toBe(false);

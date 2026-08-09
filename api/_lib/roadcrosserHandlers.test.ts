@@ -3,9 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 const road = vi.hoisted(() => ({
-  consume: vi.fn(), revoke: vi.fn(), bootstrap: vi.fn(), equip: vi.fn(), purchase: vi.fn(),
+  consume: vi.fn(), resolve: vi.fn(), revoke: vi.fn(), bootstrap: vi.fn(), equip: vi.fn(), purchase: vi.fn(),
   consumeDolphin: vi.fn(), importDolphin: vi.fn(),
-  daily: vi.fn(), leaderboard: vi.fn(), settleGameplay: vi.fn(),
+  daily: vi.fn(), leaderboard: vi.fn(), achievementSummaries: vi.fn(), publishScore: vi.fn(), settleGameplay: vi.fn(),
 }));
 const redis = vi.hoisted(() => ({
   get: vi.fn(), set: vi.fn(), del: vi.fn(), incr: vi.fn(), expire: vi.fn(),
@@ -14,6 +14,7 @@ const redisFactory = vi.hoisted(() => vi.fn(() => redis));
 
 vi.mock('./roadcrosserAuth.js', () => ({
   consumeRoadcrosserTicket: road.consume,
+  resolveRoadcrosserSession: road.resolve,
   revokeRoadcrosserSession: road.revoke,
   readRoadcrosserCanonicalBootstrap: road.bootstrap,
   equipRoadcrosserCanarySkin: road.equip,
@@ -22,6 +23,8 @@ vi.mock('./roadcrosserAuth.js', () => ({
   importRoadcrosserCanaryDolphin: road.importDolphin,
   readRoadcrosserDailyMissions: road.daily,
   readRoadcrosserWeeklyLeaderboard: road.leaderboard,
+  readRoadcrosserAchievementSummaries: road.achievementSummaries,
+  publishRoadcrosserScore: road.publishScore,
   settleRoadcrosserGameplay: road.settleGameplay,
 }));
 vi.mock('./redis.js', () => ({
@@ -35,6 +38,7 @@ import { handler as loginHandler } from '../auth/login.js';
 import { handler as logoutHandler } from '../auth/logout.js';
 import { handler as meHandler } from '../auth/me.js';
 import { default as achievementsHandler } from '../achievements/index.js';
+import { handler as achievementUsersHandler } from '../achievements/users.js';
 import { createEquipSkinRoute, handler as equipSkinHandler, isSyntheticCanaryEquipRequest } from '../inventory/skin/equip.js';
 import { createPurchaseSkinRoute, handler as purchaseSkinHandler, isSyntheticCanaryPurchaseRequest } from '../inventory/skin/purchase.js';
 import { handler as consumeDolphinHandler, isSyntheticCanaryDolphinConsumeRequest } from '../inventory/dolphin/consume.js';
@@ -42,6 +46,7 @@ import { handler as importDolphinHandler, isSyntheticCanaryDolphinImportRequest 
 import { createDailyMissionsRoute, handler as dailyMissionsHandler, isCanonicalDailyMissionsRequest } from '../missions/daily.js';
 import { createMissionEventRoute, handler as missionEventHandler } from '../missions/event.js';
 import { createWeeklyLeaderboardRoute, handler as weeklyLeaderboardHandler } from '../leaderboard/weekly.js';
+import { handler as leaderboardHandler } from '../leaderboard.js';
 import { MaintenanceFreezeError } from '../../shared/productionControls.js';
 import { SKIN_CATALOG_VERSION } from '../../shared/canaryPurchase.js';
 import { DOLPHIN_CONTRACT_VERSION } from '../../shared/canaryDolphin.js';
@@ -92,6 +97,7 @@ beforeEach(() => {
   vi.stubEnv('SD_CANONICAL_AUTH_TICKETS_ENABLED', 'true');
   vi.stubEnv('SD_ROADCROSSER_INTERNAL_AUTH_TOKEN', 'fixture-internal-token-with-32-characters');
   road.consume.mockResolvedValue({ sessionToken: opaque('N') });
+  road.resolve.mockResolvedValue({version:'submarine-game-session-v1',externalUserId:'fixture',loginId:'fixture'});
   road.revoke.mockResolvedValue(undefined);
   road.equip.mockResolvedValue({
     version: 'submarine-write-v1', operation: 'equip_skin', idempotent: false,
@@ -120,6 +126,9 @@ beforeEach(() => {
       weekId:'2026-08-03',startDate:'2026-08-03',endDate:'2026-08-09',
       entries:[{id:1,name:'Diver',userId:'diver',score:4321}],createdAt:1,updatedAt:2,
     }]});
+  road.publishScore.mockResolvedValue({version:'submarine-score-publication-v1',idempotent:false,
+    entry:{id:7,name:'Diver',userId:'fixture',score:6404}});
+  road.achievementSummaries.mockResolvedValue({fixture:{count:1,unlockedIds:['oxygen_master']}});
   road.settleGameplay.mockResolvedValue({version:'submarine-gameplay-settlement-v1',operation:'run_end',idempotent:false,
     acknowledgement:{externalUserId:'fixture'},
     date:'2026-08-09',progress:{runs:1,oxygenCollected:0,maxScore:1200,completedMissionIds:[],keptAt:null},
@@ -152,6 +161,19 @@ describe('canonical auth handlers', () => {
       unlocked:true,unlockedAt:1700000000000,
     });
     expect(road.bootstrap).toHaveBeenCalledWith(token);
+    expect(redisFactory).not.toHaveBeenCalled();
+  });
+  it('hydrates canonical leaderboard achievement badges from Supabase without opening Redis', async () => {
+    const token=opaque('H'); const out=response();
+    await achievementUsersHandler(request('GET',{cookie:`sd_roadcrosser_session=${token}`}),out.res);
+    expect(out.state.status).toBe(400);
+    const req=request('GET',{cookie:`sd_roadcrosser_session=${token}`}) as any;
+    req.query={loginIds:'fixture,FIXTURE'};
+    const success=response(); await achievementUsersHandler(req,success.res);
+    expect(success.state).toMatchObject({status:200,json:{users:{fixture:{count:1,
+      achievements:[{id:'oxygen_master'}]}}}});
+    expect(success.state.json.users.FIXTURE).toMatchObject({count:1,achievements:[{id:'oxygen_master'}]});
+    expect(road.achievementSummaries).toHaveBeenCalledWith(token,['fixture','FIXTURE']);
     expect(redisFactory).not.toHaveBeenCalled();
   });
   it('routes canonical daily reads only under the exact default-off tuple and rejects mission mints without Redis', async () => {
@@ -208,6 +230,20 @@ describe('canonical auth handlers', () => {
       request('GET',{cookie:`sd_roadcrosser_session=${token}`}),bypassed.res);
     expect(bypassed.state.status).toBe(200);
     expect(acquire).not.toHaveBeenCalled();
+  });
+  it('publishes a canonical settled score by run evidence and never opens Redis', async () => {
+    vi.stubEnv('SD_SUPABASE_GAMEPLAY_WRITES_ENABLED','true');
+    const token=opaque('Q'); const idempotencyKey='97000000-0000-4000-8000-000000000031';
+    const runEvidenceId='97000000-0000-4000-8000-000000000032';
+    road.leaderboard.mockResolvedValueOnce({version:'submarine-weekly-leaderboard-v1',currentWeekId:'2026-08-03',
+      current:[{id:7,name:'Diver',userId:'fixture',score:6404}],weeks:[]});
+    const out=response(); await leaderboardHandler(request('POST',{cookie:`sd_roadcrosser_session=${token}`,
+      origin:'https://submarine-dash.roadcrosser.com',body:{name:'Diver',score:1,skinId:'fake',idempotencyKey,runEvidenceId}}),out.res);
+    expect(out.state).toMatchObject({status:200,json:{entry:{id:7,score:6404},rank:1}});
+    expect(road.resolve).toHaveBeenCalledWith(token);
+    expect(road.publishScore).toHaveBeenCalledWith(token,'fixture',idempotencyKey,runEvidenceId,'Diver');
+    expect(road.leaderboard).toHaveBeenCalledWith(token,1);
+    expect(redisFactory).not.toHaveBeenCalled();
   });
   it('settles enabled canonical gameplay with exact headers and never opens Redis', async () => {
     vi.stubEnv('SD_SUPABASE_GAMEPLAY_WRITES_ENABLED','true');
