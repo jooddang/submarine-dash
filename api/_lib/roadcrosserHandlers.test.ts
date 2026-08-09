@@ -34,6 +34,7 @@ import { handler as callbackHandler } from '../auth/roadcrosser/callback.js';
 import { handler as loginHandler } from '../auth/login.js';
 import { handler as logoutHandler } from '../auth/logout.js';
 import { handler as meHandler } from '../auth/me.js';
+import { default as achievementsHandler } from '../achievements/index.js';
 import { createEquipSkinRoute, handler as equipSkinHandler, isSyntheticCanaryEquipRequest } from '../inventory/skin/equip.js';
 import { createPurchaseSkinRoute, handler as purchaseSkinHandler, isSyntheticCanaryPurchaseRequest } from '../inventory/skin/purchase.js';
 import { handler as consumeDolphinHandler, isSyntheticCanaryDolphinConsumeRequest } from '../inventory/dolphin/consume.js';
@@ -136,6 +137,23 @@ afterEach(() => {
 });
 
 describe('canonical auth handlers', () => {
+  it('reads canonical achievement unlocks from Supabase bootstrap without opening Redis', async () => {
+    const token=opaque('A');
+    road.bootstrap.mockResolvedValue({
+      version:'submarine-canonical-bootstrap-v2',user:{externalUserId:'user-fixture',loginId:'fixture'},
+      inventory:{coins:0,dolphinSaved:0,dolphinPending:0,tube:{pieces:0,charges:0},skins:{owned:['default'],equipped:'default'}},
+      streak:{},achievements:{unlocked:{perfect_platformer:1700000000000},progress:{}},unreadInboxCount:0,
+      stateVersion:1,readOnly:false,readCapabilities:[],writeCapabilities:[],
+    });
+    const out=response();
+    await achievementsHandler(request('GET',{cookie:`sd_roadcrosser_session=${token}`}),out.res);
+    expect(out.state.status).toBe(200);
+    expect(out.state.json.achievements.find((entry:any)=>entry.id==='perfect_platformer')).toMatchObject({
+      unlocked:true,unlockedAt:1700000000000,
+    });
+    expect(road.bootstrap).toHaveBeenCalledWith(token);
+    expect(redisFactory).not.toHaveBeenCalled();
+  });
   it('routes canonical daily reads only under the exact default-off tuple and rejects mission mints without Redis', async () => {
     const token=opaque('M'); const exact={cookie:`sd_roadcrosser_session=${token}`,origin:'https://submarine-dash.roadcrosser.com'};
     expect(isCanonicalDailyMissionsRequest(request('GET',exact))).toBe(false);

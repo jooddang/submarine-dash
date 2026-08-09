@@ -1,8 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { withProductionControl } from './../_lib/productionControls.js';
-import { getUserIdForSession } from '../_lib/auth.js';
+import { getCanonicalSessionToken, getUserIdForSession } from '../_lib/auth.js';
 import { getUpstashRedisClient } from '../_lib/redis.js';
 import { getAchievementState } from '../_lib/achievements.js';
+import { readRoadcrosserCanonicalBootstrap } from '../_lib/roadcrosserAuth.js';
 import { ACHIEVEMENT_CATALOG } from '../../shared/achievements.js';
 
 export const config = { runtime: 'nodejs' };
@@ -15,13 +16,23 @@ async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    const userId = await getUserIdForSession(req);
-
     let unlocked: Record<string, number> = {};
-    if (userId) {
-      const ro = getUpstashRedisClient(true);
-      const state = await getAchievementState(ro, userId);
-      unlocked = state.unlocked;
+    const canonicalToken = getCanonicalSessionToken(req);
+    if (canonicalToken) {
+      const canonical = await readRoadcrosserCanonicalBootstrap(canonicalToken);
+      const candidate = canonical.achievements?.unlocked;
+      if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+        unlocked = Object.fromEntries(Object.entries(candidate).filter((entry): entry is [string, number] => (
+          typeof entry[1] === 'number' && Number.isFinite(entry[1]) && entry[1] > 0
+        )));
+      }
+    } else {
+      const userId = await getUserIdForSession(req);
+      if (userId) {
+        const ro = getUpstashRedisClient(true);
+        const state = await getAchievementState(ro, userId);
+        unlocked = state.unlocked;
+      }
     }
 
     const achievements = ACHIEVEMENT_CATALOG.map((a: any) => ({
