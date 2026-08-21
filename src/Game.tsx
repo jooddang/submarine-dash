@@ -7,7 +7,7 @@ import { createBubble, spawnBackgroundEntity } from "./entities";
 import { drawSwordfish, drawUrchin, drawBackgroundEntities, drawTurtleShell } from "./drawing";
 import { HUD, MenuOverlay, InputNameOverlay, GameOverOverlay, DailyMissionsPanel, DolphinStreakRewardOverlay, DolphinWeeklyWinnerRewardOverlay, InventoryPanel, SkinPanel, AchievementsPanel } from "./components/UIOverlays";
 import { getSkinDef, drawSubmarine, updateTrailParticles, drawTrailParticles, isGoldenTubeEligible, GOLDEN_TUBE_EXTRA_CHARGES, GOLDEN_TUBE_EXTRA_SCORE_BONUS, DEFAULT_SKIN_ID, preloadSkinImages, type TrailParticle, type SkinDef } from "./skins";
-import { authAPI, dolphinMutationAccessState, inventoryAPI, isReadOnlyCanonicalSession, isRunOutboxPersistenceError, leaderboardAPI, missionsAPI, achievementsAPI, type DailyMissionsResponse, type AuthUser, type UserAchievementSummary } from "./api";
+import { authAPI, dolphinMutationAccessState, inventoryAPI, isReadOnlyCanonicalSession, isRunOutboxPersistenceError, leaderboardAPI, missionsAPI, achievementsAPI, gameActivityAPI, type DailyMissionsResponse, type AuthUser, type UserAchievementSummary } from "./api";
 import { DailyRequestGuard, latestDailyResult } from "./dailyRequestGuard";
 import { runLeaderboardSubmission } from "./leaderboardSubmission";
 import turtleRescueImg from "../turtle.png";
@@ -865,6 +865,7 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
     setAchievementsOpen(false);
     gameStateRef.current = "PLAYING";
     setGameState("PLAYING");
+    void gameActivityAPI.report({ eventId: crypto.randomUUID(), event: 'game_started', detail: authUserRef.current?.canonical ? 'canonical' : 'guest' });
     scoreRef.current = 0;
     setScore(0);
     setLevel(1);
@@ -1319,6 +1320,12 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
 
   const gameOver = () => {
     const finalScore = scoreRef.current;
+    void gameActivityAPI.report({
+      eventId: crypto.randomUUID(),
+      event: 'game_died',
+      score: finalScore,
+      detail: deathCauseRef.current ?? 'unknown',
+    });
     didSubmitRef.current = false;
     setCoinsEarnedLastRun(0);
     const au = authUserRef.current;
@@ -1446,6 +1453,12 @@ export const DeepDiveGame: React.FC<{ onPvpClick?: () => void; onOnlinePvpClick?
         : undefined,
       onUnauthorized: resetAuthenticatedUserState,
       onSuccess: (result) => {
+        void gameActivityAPI.report({
+          eventId: scorePublicationKeyRef.current ?? crypto.randomUUID(),
+          event: 'leaderboard_name_submitted',
+          score: scoreRef.current,
+          displayName: name,
+        });
         setLeaderboard(result.leaderboard);
         leaderboardRef.current = result.leaderboard;
         setLastSubmittedId(result.entry.id);

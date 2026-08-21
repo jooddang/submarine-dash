@@ -21,6 +21,7 @@ export const PRODUCTION_ROUTE_INVENTORY = Object.freeze([
   route('api/auth/register.ts', { POST: ROUTE_CLASS.DURABLE_MUTATION }, ['sd:user:*', 'sd:loginId:*', 'sd:session:*', 'sd:rl:*']),
   route('api/auth/roadcrosser/callback.ts', { POST: ROUTE_CLASS.EPHEMERAL_MUTATION }, []),
   route('api/auth/roadcrosser/start.ts', { GET: ROUTE_CLASS.EPHEMERAL_MUTATION }, []),
+  route('api/game-events.ts', { POST: ROUTE_CLASS.EPHEMERAL_MUTATION }, []),
   route('api/health.ts', { GET: ROUTE_CLASS.READ_ONLY }, []),
   route('api/internal/roadcrosser/verify-legacy-password.ts', { POST: ROUTE_CLASS.READ_ONLY }, ['sd:loginId:*', 'sd:user:*'], false),
   route('api/inventory/dolphin/consume.ts', { POST: ROUTE_CLASS.DURABLE_MUTATION }, ['sd:user:*:dolphin:*']),

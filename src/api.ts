@@ -143,6 +143,23 @@ export const leaderboardAPI = {
   }
 };
 
+export const gameActivityAPI = {
+  async report(event: {
+    eventId: string;
+    event: 'game_started' | 'game_died' | 'leaderboard_name_submitted';
+    score?: number;
+    displayName?: string;
+    detail?: string;
+  }): Promise<void> {
+    await fetch(`${API_BASE_URL}/api/game-events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(event),
+      keepalive: true,
+    }).catch(() => undefined);
+  },
+};
+
 export const authAPI = {
   beginRoadcrosserConnect(): void {
     const target = `${API_BASE_URL}/api/auth/roadcrosser/start`;

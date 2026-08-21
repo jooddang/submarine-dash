@@ -24,6 +24,7 @@ import {
 import { localRouteClassification, requiresDurableAdmission } from '../../shared/productionRouteInventory.js';
 import { productionRuntimeProbe } from '../../shared/productionRuntimeProbe.js';
 import crypto from 'node:crypto';
+import { sendGameEvent } from '../../api/_lib/telegram.js';
 
 // Load environment variables from parent directory
 dotenv.config({ path: '../.env' });
@@ -36,6 +37,9 @@ const WEEKLY_DOLPHIN_CLAIM_KEY_PREFIX = 'sd:reward:weeklyWinnerDolphin:claimed';
 const DOLPHIN_GRANT_KEY_PREFIX = 'sd:reward:dolphin:grant'; // legacy back-compat
 const MAX_ENTRIES = 5;
 const CLEAR_ALLOWED = process.env.ALLOW_LEADERBOARD_CLEAR === 'true';
+
+const GAME_EVENT_TYPES = new Set(['game_started', 'game_died', 'leaderboard_name_submitted']);
+const GAME_EVENT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // Auth (shared prefix with Vercel functions)
 const KEY_PREFIX = 'sd:';
@@ -1637,6 +1641,28 @@ app.get('/api/achievements/users', async (req, res) => {
     console.error('GET /api/achievements/users error:', e);
     return res.status(500).json({ error: 'Internal server error' });
   }
+});
+
+app.post('/api/game-events', async (req, res) => {
+  const body = req.body || {};
+  const valid = GAME_EVENT_UUID.test(String(body.eventId || ''))
+    && GAME_EVENT_TYPES.has(String(body.event || ''))
+    && (body.score === undefined || (Number.isInteger(body.score) && body.score >= 0 && body.score <= 1_000_000))
+    && (body.displayName === undefined || (typeof body.displayName === 'string' && body.displayName.length <= 64))
+    && (body.detail === undefined || (typeof body.detail === 'string' && body.detail.length <= 160));
+  if (!valid) return res.status(400).json({ error: 'Invalid game event' });
+  try {
+    await sendGameEvent({
+      eventId: String(body.eventId),
+      event: String(body.event),
+      ...(typeof body.score === 'number' ? { score: body.score } : {}),
+      ...(typeof body.displayName === 'string' ? { displayName: body.displayName } : {}),
+      ...(typeof body.detail === 'string' ? { detail: body.detail } : {}),
+    });
+  } catch (error) {
+    console.warn('submarine_telegram_event_failed', error instanceof Error ? error.message : 'unknown');
+  }
+  return res.status(202).json({ accepted: true });
 });
 
 // GET /api/leaderboard - Get top 5 scores
